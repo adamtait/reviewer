@@ -124,7 +124,7 @@ func TestMultiLineSpans(t *testing.T) {
 
 func TestMarkerRoundTrip(t *testing.T) {
 	fp := "a3f9c2"
-	body := "Some review text.\n" + Marker(fp) + "\n"
+	body := "Some review text.\n" + Marker(fp, "") + "\n"
 	if got := ParseMarker(body); got != fp {
 		t.Fatalf("want %q, got %q", fp, got)
 	}
@@ -132,7 +132,7 @@ func TestMarkerRoundTrip(t *testing.T) {
 	if got := ParseMarker("Looks good to me!"); got != "" {
 		t.Fatalf("want no fingerprint from a human comment, got %q", got)
 	}
-	if !strings.Contains(Marker(fp), "<!--") {
+	if !strings.Contains(Marker(fp, ""), "<!--") {
 		t.Fatal("the marker must be invisible in rendered markdown")
 	}
 }

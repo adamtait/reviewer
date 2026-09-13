@@ -33,6 +33,9 @@ type options struct {
 	rulesDir     string
 	write        bool
 	noInvalidate bool
+	since        string
+	repo         string
+	format       string
 	yes          bool
 	version      bool
 }
@@ -54,6 +57,9 @@ flags:
   --force           with init, replace files that already exist
   --rules DIR       with rules test, the rule directory (default: .review/rules)
   --write           with baseline, record the measurement
+  --since WINDOW    with metrics, how far back to look: 7d, 2w, 36h (default: 7d)
+  --repo OWNER/NAME with metrics, the repository, overriding config
+  --format NAME     with metrics, markdown or csv (default: markdown)
   --no-invalidate   skip the model lane's second, disproving pass. For debugging
                     what the first pass produces; the run says its findings are
                     unchecked
@@ -66,6 +72,9 @@ flags:
   --version         print the version and exit
 
 subcommands:
+  metrics           acceptance by rule: how many of this tool's findings anybody
+                    acted on, so a rule nobody wants can be deleted on evidence
+
   baseline --write  record the type-coverage ratchet's mark, which future runs
                     compare against
 
@@ -91,6 +100,7 @@ A usage error exits 2.
 // --dry-run unparsed and report it as a stray argument.
 var subcommands = map[string]bool{
 	"init": true, "watch": true, "version": true, "rules": true, "baseline": true,
+	"metrics": true,
 }
 
 // twoWordSubcommands take a second bare word. Recognised before flag parsing for
@@ -139,6 +149,9 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.rulesDir, "rules", "", "")
 	fs.BoolVar(&o.write, "write", false, "")
 	fs.BoolVar(&o.noInvalidate, "no-invalidate", false, "")
+	fs.StringVar(&o.since, "since", "", "")
+	fs.StringVar(&o.repo, "repo", "", "")
+	fs.StringVar(&o.format, "format", "", "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
@@ -176,6 +189,10 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("--rules applies to `rules test`; a review reads the rule directory from config")}
 	case o.write && o.subcommand != "baseline":
 		return options{}, errUsage{fmt.Errorf("--write applies to baseline; a review never writes to the repository")}
+	case (o.since != "" || o.format != "") && o.subcommand != "metrics":
+		return options{}, errUsage{fmt.Errorf("--since and --format apply to metrics")}
+	case o.repo != "" && o.subcommand != "metrics":
+		return options{}, errUsage{fmt.Errorf("--repo applies to metrics; a review reads the repository from config")}
 	case o.yes && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--yes applies to init, which is the only subcommand that asks anything")}
 	}

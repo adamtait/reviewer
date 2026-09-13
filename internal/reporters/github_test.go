@@ -132,7 +132,7 @@ func TestOnlyHighConfidenceIsPostedInline(t *testing.T) {
 func TestAlreadyPostedFindingsAreNotRepeated(t *testing.T) {
 	f := &fakeGitHub{
 		reviewComments: []ghclient.ReviewComment{
-			{ID: 1, Body: "domain must not import infra\n" + fingerprint.Marker("aaa111")},
+			{ID: 1, Body: "domain must not import infra\n" + fingerprint.Marker("aaa111", "")},
 		},
 	}
 	var out bytes.Buffer
@@ -164,7 +164,7 @@ func TestAPromotedFindingMovesFromTheSummaryToInline(t *testing.T) {
 	f := &fakeGitHub{
 		issueComments: []ghclient.IssueComment{{
 			ID:   9,
-			Body: SummaryMarker + "\n- a thing " + fingerprint.Marker("aaa111"),
+			Body: SummaryMarker + "\n- a thing " + fingerprint.Marker("aaa111", ""),
 		}},
 	}
 	var out bytes.Buffer
@@ -312,7 +312,7 @@ func TestSummaryShape(t *testing.T) {
 		t.Fatal("evidence is why a model finding is worth showing; it must not be hidden further")
 	}
 	for _, f := range findings {
-		if !strings.Contains(body, fingerprint.Marker(f.Fingerprint)) {
+		if !strings.Contains(body, fingerprint.Marker(f.Fingerprint, f.RuleID)) {
 			t.Fatalf("every listed finding needs its marker so it is not later posted as new: %q", body)
 		}
 	}
@@ -417,7 +417,7 @@ func TestResolveStaleThreads(t *testing.T) {
 		return ghclient.ReviewThread{
 			ID: "thread-" + fp,
 			Comments: []ghclient.ReviewComment{{
-				Body: "a finding\n" + fingerprint.Marker(fp),
+				Body: "a finding\n" + fingerprint.Marker(fp, ""),
 				User: ghclient.User{Login: "reviewer[bot]"},
 			}},
 		}
@@ -453,7 +453,7 @@ func TestResolveStaleThreads(t *testing.T) {
 			threads: []ghclient.ReviewThread{{
 				ID: "quoted",
 				Comments: []ghclient.ReviewComment{{
-					Body: "quoting the bot: " + fingerprint.Marker("f00d11"),
+					Body: "quoting the bot: " + fingerprint.Marker("f00d11", ""),
 					User: ghclient.User{Login: "alice"},
 				}},
 			}},
@@ -490,7 +490,7 @@ func TestResolutionIsOffByDefault(t *testing.T) {
 	f := &fakeGitHub{threads: []ghclient.ReviewThread{{
 		ID: "t1",
 		Comments: []ghclient.ReviewComment{{
-			Body: "old finding\n" + fingerprint.Marker("f00d11"),
+			Body: "old finding\n" + fingerprint.Marker("f00d11", ""),
 			User: ghclient.User{Login: "reviewer[bot]"},
 		}},
 	}}}
@@ -507,7 +507,7 @@ func TestDryRunResolvesNothing(t *testing.T) {
 	f := &fakeGitHub{threads: []ghclient.ReviewThread{{
 		ID: "t1",
 		Comments: []ghclient.ReviewComment{{
-			Body: "old finding\n" + fingerprint.Marker("f00d11"),
+			Body: "old finding\n" + fingerprint.Marker("f00d11", ""),
 			User: ghclient.User{Login: "reviewer[bot]"},
 		}},
 	}}}
@@ -531,7 +531,7 @@ func TestAnUntrustworthyRunResolvesNothing(t *testing.T) {
 	f := &fakeGitHub{threads: []ghclient.ReviewThread{{
 		ID: "t1",
 		Comments: []ghclient.ReviewComment{{
-			Body: "old finding\n" + fingerprint.Marker("f00d11"),
+			Body: "old finding\n" + fingerprint.Marker("f00d11", ""),
 			User: ghclient.User{Login: "reviewer[bot]"},
 		}},
 	}}}
@@ -555,7 +555,7 @@ func TestAnUntrustworthyRunResolvesNothing(t *testing.T) {
 func TestOneFailedResolutionDoesNotSkipTheOthers(t *testing.T) {
 	thread := func(id, fp string) ghclient.ReviewThread {
 		return ghclient.ReviewThread{ID: id, Comments: []ghclient.ReviewComment{{
-			Body: "old\n" + fingerprint.Marker(fp), User: ghclient.User{Login: "reviewer[bot]"},
+			Body: "old\n" + fingerprint.Marker(fp, ""), User: ghclient.User{Login: "reviewer[bot]"},
 		}}}
 	}
 	f := &fakeGitHub{
@@ -583,7 +583,7 @@ func TestIdentityFallsBackToConfigurationThenSkips(t *testing.T) {
 	threads := []ghclient.ReviewThread{{
 		ID: "t1",
 		Comments: []ghclient.ReviewComment{{
-			Body: "old\n" + fingerprint.Marker("f00d11"),
+			Body: "old\n" + fingerprint.Marker("f00d11", ""),
 			User: ghclient.User{Login: "github-actions[bot]"},
 		}},
 	}}

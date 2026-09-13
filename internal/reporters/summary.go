@@ -68,7 +68,7 @@ func summary(findings []finding.Finding, gateReason string) string {
 			if end != start {
 				where = fmt.Sprintf("%s:%d-%d", f.File, start, end)
 			}
-			fmt.Fprintf(&b, "- `%s` — %s %s\n", where, oneLine(f.Message), fingerprint.Marker(f.Fingerprint))
+			fmt.Fprintf(&b, "- `%s` — %s %s\n", where, oneLine(f.Message), fingerprint.Marker(f.Fingerprint, f.RuleID))
 			if f.Evidence != "" {
 				// Evidence is why a model-lane finding is worth showing at all, so
 				// it is never hidden a second level down.

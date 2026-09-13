@@ -35,3 +35,33 @@ added to the template data struct but never assigned, because the edit that was 
 the struct literal did not match after gofmt realigned it. The template rendered `--base ` with nothing
 after it and dropped the lane B section, and the build was clean. Found by reading the generated file,
 not by any test; every scripted edit now asserts it changed something.
+
+## PR-42 — the metrics command
+
+**The rule id now travels in the comment marker**, not only in the comment's visible text. The visible
+text is markdown a human can edit, and parsing a `<sub>` tag out of it would be a scrape rather than a
+measurement. `<!-- rv:a3f9c2 conventions/no-console -->`. The id is optional in the pattern, so a
+comment written before it was added still parses and still dedupes — it is counted under a visible
+`(rule not recorded)` row rather than dropped, which keeps the totals adding up.
+
+**Acceptance is resolved ÷ (resolved + open), with outdated excluded.** That is the definition the
+reviewer's question asks for, and the exclusion is the load-bearing part: an outdated thread means
+GitHub detached the comment because the code moved, so nobody decided anything about it. Counting it as
+a rejection would punish rules that fire on fast-moving branches.
+
+**`n/a`, never 0%, for a rule with nothing decided.** Reporting zero is how a rule that has not had the
+chance yet gets deleted for being new — and the whole point of the table is to delete the right ones.
+A rule with nothing decided also sorts *last*, because putting it at the top of a worst-first table
+reads as an indictment.
+
+**CSV is unrounded and markdown is not.** The table is for reading; the CSV is for a spreadsheet, where
+a pre-rounded number cannot be re-aggregated. A rule with nothing decided gets an empty field rather
+than a number, so nothing averages "n/a" into a zero.
+
+**Only threads this tool started are counted**, read from the first comment. A human quoting a marker
+in a reply does not make their conversation ours to measure.
+
+**The honest limitation, recorded in the ADR rather than in a comment nobody reads:** "resolved" means
+somebody clicked resolve, not that the finding was right. A team that resolves threads to clear the
+sidebar produces flattering numbers. What survives that is the *ordering* — the habit is uniform across
+rules — which is what the table is sorted by.

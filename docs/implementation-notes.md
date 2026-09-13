@@ -92,3 +92,26 @@ can undo. That path returns an error rather than guessing.
 **A test-data bug worth recording:** my first version of these tests used `gone111` as a fingerprint, and
 they failed. Fingerprints are hex, and `g`, `o` and `n` are not — the marker regex correctly refused it.
 The code was right and the fixture was wrong, which is the better way round.
+
+## PR-21 — the composite action and self-review
+
+**The action requires a checksum, not just a version.** A pinned version without one trusts whoever can
+move a tag; an input with `required: true` makes the omission a configuration error rather than a silent
+weakening. Both inputs are documented with *why* they are required, in the action's own metadata, because
+that is what someone reads before adding it to their workflow.
+
+**It checks `fetch-depth: 0` rather than assuming it.** Without full history there is no merge base, and
+the diff would silently cover the wrong commits — a wrong answer rather than an error. The action fails
+with the fix in the message.
+
+**No `continue-on-error`.** `reviewer` exits 0 whatever it finds (ADR-0009), so if the step fails the tool
+itself is broken and that should be visible. Adding `continue-on-error` would hide exactly the failures
+worth knowing about.
+
+**Self-review builds the binary from the pull request rather than downloading a release.** A regression
+should be caught on the pull request that introduces it, not on the one after the release.
+
+**This repository now has its own `.review/config.yaml`,** which is the one legitimate instance of that
+file living here: this repository is also a repository under review. It names `api.github.com`, which the
+seam test permits because the test walks Go source — configuration is precisely the channel ADR-0004
+requires such a value to arrive through, and a comment in the file says so.

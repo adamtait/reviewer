@@ -1,0 +1,16 @@
+# This repository's own review configuration, used by the self-review workflow.
+#
+# It is the one .review/config.yaml that legitimately lives here, because this
+# repository is also a repository under review. It contains no internal detail —
+# there is none to contain, which is the point of ADR-0004.
+plugins:
+  - id: typescript
+    command: node
+    args: ["plugins/typescript/dist/main.js"]
+
+analyzers:
+  timeout: 5m
+
+github:
+  apiBaseUrl: https://api.github.com
+  repo: adamtait/reviewer

@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: MIT
+name: reviewer
+description: Advisory code review on a pull request. Never fails a build.
+author: Adam Tait
+
+inputs:
+  version:
+    description: >
+      The reviewer release to use, without a leading "v". Pin this: a floating
+      version means a tool you did not choose can comment on your pull requests.
+    required: true
+  checksum:
+    description: >
+      The SHA-256 of the downloaded archive, from the release's checksums file.
+      Required, because a pinned version without a checksum trusts whoever can
+      move a tag.
+    required: true
+  base:
+    description: The ref to diff against. Defaults to the pull request's base.
+    required: false
+    default: ""
+  reporter:
+    description: text, rdjson or github.
+    required: false
+    default: github
+  dry-run:
+    description: Print what would be posted and post nothing.
+    required: false
+    default: "false"
+  working-directory:
+    description: The repository root to review.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    # fetch-depth: 0 is the caller's responsibility and is checked rather than
+    # assumed: without full history there is no merge base, and the diff would
+    # silently cover the wrong commits.
+    - name: Check the checkout has history
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if ! git rev-parse --verify --quiet "origin/${BASE_REF}" >/dev/null; then
+          echo "::error::reviewer needs the base branch in the checkout." \
+               "Add 'with: {fetch-depth: 0}' to actions/checkout."
+          exit 1
+        fi
+      env:
+        BASE_REF: ${{ inputs.base || github.base_ref }}
+
+    - name: Install reviewer
+      shell: bash
+      run: |
+        set -euo pipefail
+        os=linux arch=amd64
+        case "$(uname -s)" in Darwin) os=darwin;; esac
+        case "$(uname -m)" in arm64|aarch64) arch=arm64;; esac
+
+        archive="reviewer_${VERSION}_${os}_${arch}.tar.gz"
+        url="https://github.com/adamtait/reviewer/releases/download/v${VERSION}/${archive}"
+
+        curl --fail --silent --show-error --location --output "$archive" "$url"
+        echo "${CHECKSUM}  ${archive}" | sha256sum --check --status \
+          || { echo "::error::checksum mismatch for ${archive}"; exit 1; }
+
+        tar -xzf "$archive" reviewer
+        install -m 0755 reviewer "${RUNNER_TEMP}/reviewer"
+        echo "${RUNNER_TEMP}" >> "$GITHUB_PATH"
+      env:
+        VERSION: ${{ inputs.version }}
+        CHECKSUM: ${{ inputs.checksum }}
+
+    - name: Review
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # reviewer exits 0 whatever it finds (ADR-0009), so there is no
+      # continue-on-error here: if this step fails, the tool itself is broken.
+      run: |
+        reviewer \
+          --base "origin/${BASE_REF}" \
+          --reporter "${REPORTER}" \
+          --pr "${PR_NUMBER}" \
+          ${DRY_RUN:+--dry-run}
+      env:
+        BASE_REF: ${{ inputs.base || github.base_ref }}
+        REPORTER: ${{ inputs.reporter }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        DRY_RUN: ${{ inputs.dry-run == 'true' && '1' || '' }}

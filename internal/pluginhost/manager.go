@@ -328,3 +328,24 @@ func closeAll(files ...*os.File) {
 		}
 	}
 }
+
+// Unavailable returns the analyzers that declined to run, so the run can say why
+// once rather than silently doing less than the user expects.
+func (m *Manager) Unavailable() []Registered {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var out []Registered
+	for _, c := range m.conns {
+		if c.dead {
+			continue
+		}
+		for _, d := range c.descriptors {
+			if d.Available {
+				continue
+			}
+			out = append(out, Registered{Descriptor: d, PluginID: c.id})
+		}
+	}
+	return out
+}

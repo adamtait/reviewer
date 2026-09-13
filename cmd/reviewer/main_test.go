@@ -4,19 +4,203 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/adamtait/reviewer/internal/testfixture"
 )
 
-func TestVersionFlag(t *testing.T) {
+func noEnv(string) string { return "" }
+
+func TestParse(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		check func(*testing.T, options, error)
+	}{
+		{"defaults", nil, func(t *testing.T, o options, err error) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o.base != "main" || o.reporter != "text" || o.root != "." {
+				t.Fatalf("unexpected defaults: %+v", o)
+			}
+		}},
+		{"version flag", []string{"--version"}, func(t *testing.T, o options, err error) {
+			if err != nil || !o.version {
+				t.Fatalf("want the version flag set, got %+v %v", o, err)
+			}
+		}},
+		{"version subcommand", []string{"version"}, func(t *testing.T, o options, err error) {
+			if err != nil || !o.version {
+				t.Fatalf("want the version subcommand accepted, got %+v %v", o, err)
+			}
+		}},
+		{"comma lists", []string{"--only", "tsc, eslint ,"}, func(t *testing.T, o options, err error) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(o.only, "|") != "tsc|eslint" {
+				t.Fatalf("want whitespace and empties trimmed, got %v", o.only)
+			}
+		}},
+		{"only and skip together", []string{"--only", "a", "--skip", "b"}, wantUsageError("not both")},
+		{"staged and pr together", []string{"--staged", "--pr", "7"}, wantUsageError("different things")},
+		{"negative pr", []string{"--pr", "-1"}, wantUsageError("positive")},
+		{"stray argument", []string{"lint"}, wantUsageError(`unexpected argument "lint"`)},
+		{"unknown flag", []string{"--nope"}, wantUsageError("")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := parse(tc.args, new(bytes.Buffer))
+			tc.check(t, o, err)
+		})
+	}
+}
+
+func wantUsageError(substr string) func(*testing.T, options, error) {
+	return func(t *testing.T, _ options, err error) {
+		t.Helper()
+		var u errUsage
+		if !errors.As(err, &u) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+		if substr != "" && !strings.Contains(err.Error(), substr) {
+			t.Fatalf("want an error containing %q, got %v", substr, err)
+		}
+	}
+}
+
+func TestVersionPrintsTheProtocol(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"--version"}, &stdout, &stderr); err != nil {
-		t.Fatalf("--version returned an error: %v", err)
+	if err := run(context.Background(), []string{"--version"}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stdout.String(), "reviewer ") {
-		t.Fatalf("want a version line on stdout, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), "plugin protocol") {
+		t.Fatalf("want the protocol version reported, got %q", stdout.String())
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("want nothing on stderr, got %q", stderr.String())
+}
+
+// The plan's proof for this PR: a real repository, no plugins configured, a clean
+// exit and an honest report that nothing ran.
+func TestReviewWithNoPluginsConfigured(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "text"},
+		&stdout, &stderr, noEnv)
+	if err != nil {
+		t.Fatalf("a repository with no configuration must review cleanly, got %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "no analyzers are configured") {
+		t.Fatalf("want the empty configuration called out, got %q", out)
+	}
+	if !strings.Contains(out, "no findings") {
+		t.Fatalf("want an explicit empty result, got %q", out)
+	}
+}
+
+// End to end through a real plugin process: the shell example reports a finding
+// on README.md, which the diff filter then drops because the fixture's change
+// does not touch that file. Both halves matter.
+func TestReviewEndToEndThroughAPlugin(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "..", "..", "examples", "plugins", "shell-hello", "plugin.sh")
+
+	writeConfig(t, repo.Root, "plugins:\n  - id: shell-hello\n    command: "+script+"\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "text"},
+		&stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	out := stdout.String()
+	if strings.Contains(out, "no analyzers are configured") {
+		t.Fatalf("the plugin should have registered an analyzer:\n%s\nstderr:\n%s", out, stderr.String())
+	}
+	// README.md is unchanged in this fixture, so the finding is correctly dropped.
+	if !strings.Contains(out, "outside the diff") {
+		t.Fatalf("want the out-of-diff finding accounted for, got:\n%s", out)
+	}
+	if !strings.Contains(stderr.String(), "shell-hello: started") {
+		t.Fatalf("want the plugin's diagnostics in the run log, got %q", stderr.String())
+	}
+}
+
+func TestReviewReportsAMissingPluginWithoutFailing(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	writeConfig(t, repo.Root, "plugins:\n  - id: ghost\n    command: definitely-not-installed-xyz\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatalf("a missing plugin must not fail the review, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), "warning: plugin ghost") {
+		t.Fatalf("want the plugin failure surfaced, got %q", stdout.String())
+	}
+}
+
+func TestRDJSONReporterProducesParseableOutput(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "rdjson"},
+		&stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("rdjson output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if doc["source"] == nil {
+		t.Fatalf("want a source block, got %v", doc)
+	}
+}
+
+func TestUnknownReporterIsAUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"--reporter", "yaml"}, &stdout, &stderr, noEnv)
+	var u errUsage
+	if !errors.As(err, &u) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+}
+
+// --pr is parsed but not yet wired to the GitHub client. It must say so rather
+// than silently reviewing the working tree instead.
+func TestPRFlagSaysItIsNotWiredUpYet(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--pr", "7"}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "not wired up yet") {
+		t.Fatalf("want an explicit not-yet message, got %q", stdout.String())
+	}
+}
+
+func writeConfig(t *testing.T, root, body string) {
+	t.Helper()
+	dir := filepath.Join(root, ".review")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

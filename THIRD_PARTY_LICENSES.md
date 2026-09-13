@@ -18,12 +18,15 @@ enforced, not merely observed, by the denylist in `tools/checklicenses`.
 
 ## npm packages
 
-The TypeScript plugin's dependency tree, added in PR-13. Until then this section
-is intentionally empty rather than absent, so its absence is never mistaken for
-"not checked".
+The TypeScript plugin's dependency tree. All development-only so far: the plugin
+ships compiled JavaScript and has no runtime dependencies of its own, resolving
+`typescript` and `eslint` from the repository under review instead (ADR-0020).
 
 | Package | Version | License | Why |
 |---|---|---|---|
+| `typescript` | 5.9.3 | Apache-2.0 | Compiles the plugin, and is the analyzer engine for `tsc`, typescript-eslint and type-coverage. Dev-only here; the *repository under review* supplies the version actually used for analysis. |
+| `@types/node` | 22.20.2 | MIT | Node type definitions. Dev-only. |
+| `undici-types` | 6.21.0 | MIT | Transitive dependency of `@types/node`. Dev-only. |
 
 ## External binaries
 

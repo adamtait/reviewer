@@ -1,0 +1,19 @@
+{
+  "name": "@adamtait/reviewer-plugin-typescript",
+  "version": "0.1.0",
+  "description": "TypeScript analyzers for reviewer, served over the plugin protocol",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/serve.js",
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/**/*.test.js",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -2,3 +2,6 @@
 /reviewer
 node_modules/
 *.tsbuildinfo
+# The plugin compiled. Rebuilt by `npm run build`, and by `make check`
+# before the tests that need it, so a tracked copy is only ever a stale one.
+plugins/typescript/dist/

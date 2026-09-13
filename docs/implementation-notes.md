@@ -62,3 +62,35 @@ unsafe one.
 text output; keeping them unconditional is a small decision with a reason worth writing down: the
 type-aware lint latency kill criterion is measured in minutes of wall clock, and a number nobody knows
 to ask for is a number nobody measures.
+
+## PR-13 — the TypeScript plugin scaffold
+
+**`console.log` is reassigned to stderr on startup.** Stdout is the protocol channel, and ESLint and
+dependency-cruiser both write to stdout under some configurations. Trusting six analyzers and their
+transitive dependencies never to print would be trusting the one thing that silently corrupts the
+stream. `protectStdout()` runs before any analyzer.
+
+**The protocol is mirrored by hand in TypeScript rather than generated from the Go types.** Eleven
+fields; a generator plus its drift check is more machinery than the drift. What keeps the two honest is
+`TestTypeScriptPluginHandshake` on the Go side, which drives the real Node plugin from the real Go
+host — so `make check` now builds the plugin, because a *skipped* conformance test would hide exactly
+the drift it exists to catch.
+
+**Node's built-in test runner, not vitest.** The plugin's own tests need no framework, and every
+dependency in this package is one the license inventory has to carry.
+
+**`exactOptionalPropertyTypes` is on**, which rejected `{analyzer: possiblyUndefined}` and forced
+conditional spreads. Kept rather than relaxed: the protocol distinguishes an absent field from a
+present-but-undefined one, and the strict setting is what makes that distinction visible in the types.
+
+## A latent bug in PR-09, exposed here
+
+Filling in the npm section of `THIRD_PARTY_LICENSES.md` broke the license check: `reconcile` compared
+the *whole* inventory against each ecosystem, so every Go module was reported as "no longer a
+dependency" of the npm tree, and vice versa. It passed until now only because the npm section was
+empty.
+
+Fixed by making the inventory section-aware — Go modules, npm packages, external binaries and
+development tools are parsed and reconciled separately. That also improved ADR-0011's enforcement:
+the copyleft exemption for spawned binaries is now a property of which *section* a row is in, rather
+than a hardcoded list of names that a fourth external binary would have silently missed.

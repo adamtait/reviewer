@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/adamtait/reviewer/pkg/finding"
 	"github.com/adamtait/reviewer/pkg/plugin"
@@ -42,6 +43,10 @@ const Binary = "opengrep"
 // own. Acceptance is measured per ruleId (ADR-0024), so the namespace is ours and
 // stays stable across Opengrep upgrades and across a rule being renamed upstream.
 const Namespace = "conventions/"
+
+// probeTimeout bounds the version check. Generous for a binary that starts, and
+// short enough that a wedged one does not stall a review.
+const probeTimeout = 10 * time.Second
 
 // ErrUnavailable means the scan could not be performed. Unlike the secrets
 // scanner, nothing fails closed on this: a convention rule that could not run
@@ -180,6 +185,12 @@ func scan(ctx context.Context, binary, root, rulesDir string, targets []string) 
 		"--metrics=off",
 		"--config", rulesDir,
 		"--disable-version-check",
+		// End of options. A repository can track a file whose name begins with a
+		// dash — git allows it and the diff parser passes it through verbatim — and
+		// without this separator that filename becomes a flag on the scanner's
+		// command line. A second `--config` alone would let a fork's pull request
+		// supply its own rule pack to the scan reviewing it.
+		"--",
 	}
 	args = append(args, targets...)
 
@@ -235,8 +246,9 @@ func RuleFiles(root, rulesDir string) ([]string, error) {
 	return rules, nil
 }
 
-// analysable is the changed files a pattern matcher can look at: present, textual,
-// and with something in them.
+// analysable is the paths to hand the scanner. Deleted and binary files are
+// already gone by the time a request reaches here — diff.ToPluginFiles drops both
+// — so this only normalises separators and skips an empty path.
 func analysable(changed []plugin.ChangedFile) []string {
 	var out []string
 	for _, f := range changed {
@@ -331,7 +343,12 @@ func Probe(binary string) (path, version string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("%s is not installed or not on PATH", binary)
 	}
-	out, err := exec.Command(path, "--version").Output()
+	// Bounded: Probe runs at the top of every review, including every poll of the
+	// watch loop, and a binary that hangs on --version would hang the tool with
+	// nothing to interrupt it.
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
 		return path, "", fmt.Errorf("%s is installed but would not run: %v", binary, err)
 	}

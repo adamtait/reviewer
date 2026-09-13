@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
@@ -64,6 +66,12 @@ func baseline(ctx context.Context, o options, stdout, stderr io.Writer, getenv f
 		return err
 	}
 
+	// Recorded before, so success is decided by the file changing rather than by
+	// the analyzer having said something. Every failure path in that analyzer also
+	// returns a warning — no tsconfig, an unreadable one, nothing to measure — so
+	// "it said something" cannot tell a recorded baseline from a refusal.
+	before := stamp(cfg.Root)
+
 	// No changed files: the measurement is over the whole program, and a baseline
 	// taken from a diff would be a baseline for that diff.
 	_, warnings, err := host.Analyze(ctx, owner, typeCoverageAnalyzer, plugin.AnalyzeRequest{
@@ -76,11 +84,29 @@ func baseline(ctx context.Context, o options, stdout, stderr io.Writer, getenv f
 
 	// The analyzer reports what it wrote, because it is the only component that
 	// knows the number.
-	if len(warnings) == 0 {
-		return errCheckFailed{fmt.Errorf("the analyzer recorded nothing and said nothing")}
-	}
 	for _, w := range warnings {
 		fmt.Fprintln(stdout, w)
 	}
+
+	if after := stamp(cfg.Root); after == before {
+		return errCheckFailed{fmt.Errorf(
+			"nothing was recorded to %s; the analyzer's reason is above",
+			baselinePath)}
+	}
 	return nil
+}
+
+// baselinePath is where the ratchet's mark lives, mirroring the analyzer that
+// writes it. Named here only so this command can check that a write happened.
+const baselinePath = ".review/type-coverage-baseline.json"
+
+// stamp identifies the baseline file's current state. Size and modification time
+// rather than a hash: the question is whether this command's own call wrote it,
+// and a rewrite with identical content is a recorded baseline either way.
+func stamp(root string) string {
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(baselinePath)))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", info.Size(), info.ModTime().UnixNano())
 }

@@ -78,10 +78,10 @@ func TestAnUnreachableDatabaseIsUnavailableRatherThanClean(t *testing.T) {
 func TestOnlyIntroducedAdvisoriesAreReported(t *testing.T) {
 	root := gitRepo(t)
 	// Committed first: this is the lockfile as it was.
-	writeFile(t, root, "package-lock.json", "before\n")
+	writeFile(t, root, "package-lock.json", "before\n"+multiLockfile)
 	git(t, root, "add", "-A")
 	git(t, root, "commit", "-q", "-m", "base")
-	writeFile(t, root, "package-lock.json", "after\n")
+	writeFile(t, root, "package-lock.json", multiLockfile)
 
 	// The stand-in answers differently depending on which file it is handed: the
 	// working tree copy has two advisories, the base copy has one of them.
@@ -93,7 +93,8 @@ func TestOnlyIntroducedAdvisoriesAreReported(t *testing.T) {
 		`  printf '%s' '`+headReport+`'`+"\n"+
 		"fi\nexit 1\n")
 
-	findings, _, err := Analyze(context.Background(), request(root, "package-lock.json"), binary)
+	req := request(root, "package-lock.json")
+	findings, _, err := Analyze(context.Background(), req, binary)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,10 +108,13 @@ func TestOnlyIntroducedAdvisoriesAreReported(t *testing.T) {
 	if f.RuleID != "deps/npm" {
 		t.Errorf("RuleID = %q", f.RuleID)
 	}
-	// The fix is a version bump in the manifest, not an edit inside the lockfile,
-	// so the comment lands at the top of the file rather than at an internal line.
-	if f.File != "package-lock.json" || f.Line != 1 {
-		t.Errorf("location = %s:%d", f.File, f.Line)
+	// The finding has to land on a line the change touched, or the core's diff
+	// filter drops it and the analyzer reports into a void (ADR-0007).
+	if f.File != "package-lock.json" {
+		t.Errorf("file = %s", f.File)
+	}
+	if !onAChangedLine(req, f.File, f.Line) {
+		t.Errorf("line %d is outside the diff, where the core drops it", f.Line)
 	}
 	if err := f.Validate(); err != nil {
 		t.Errorf("the finding does not validate: %v", err)
@@ -124,7 +128,7 @@ func TestANewLockfileIsEntirelyIntroduced(t *testing.T) {
 	writeFile(t, root, "README.md", "x\n")
 	git(t, root, "add", "-A")
 	git(t, root, "commit", "-q", "-m", "base")
-	writeFile(t, root, "package-lock.json", "after\n")
+	writeFile(t, root, "package-lock.json", multiLockfile)
 
 	binary := script(t, "#!/bin/sh\nprintf '%s' '"+headReport+"'\nexit 1\n")
 
@@ -146,10 +150,10 @@ func TestANewLockfileIsEntirelyIntroduced(t *testing.T) {
 // trip for a question nobody asked.
 func TestACleanHeadSkipsTheBaseScan(t *testing.T) {
 	root := gitRepo(t)
-	writeFile(t, root, "package-lock.json", "before\n")
+	writeFile(t, root, "package-lock.json", "before\n"+multiLockfile)
 	git(t, root, "add", "-A")
 	git(t, root, "commit", "-q", "-m", "base")
-	writeFile(t, root, "package-lock.json", "after\n")
+	writeFile(t, root, "package-lock.json", multiLockfile)
 
 	calls := filepath.Join(t.TempDir(), "calls")
 	binary := script(t, "#!/bin/sh\necho call >> "+calls+"\nprintf '{\"results\": []}'\nexit 0\n")
@@ -207,6 +211,21 @@ const headReport = `{"results":[{"packages":[` +
 	`{"package":{"name":"minimist","version":"1.2.0","ecosystem":"npm"},"vulnerabilities":[{"id":"GHSA-new","summary":"Prototype pollution."}]}` +
 	`]}]}`
 
+// onAChangedLine mirrors what the core's diff filter will do to a finding.
+func onAChangedLine(req plugin.AnalyzeRequest, file string, line int) bool {
+	for _, c := range req.Changed {
+		if filepath.ToSlash(c.Path) != file {
+			continue
+		}
+		for _, r := range c.Ranges {
+			if line >= r[0] && line <= r[1] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 const baseReport = `{"results":[{"packages":[` +
 	`{"package":{"name":"lodash","version":"4.17.15","ecosystem":"npm"},"vulnerabilities":[{"id":"GHSA-old","summary":"Prototype pollution."}]}` +
 	`]}]}`
@@ -220,14 +239,161 @@ const realLockfile = `{
 }
 `
 
+// A lockfile whose entries sit on their own lines, so each package has a distinct
+// line to be anchored at — the shape npm actually writes.
+const multiLockfile = `{
+  "name": "t",
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/lodash": {
+      "version": "4.17.15"
+    },
+    "node_modules/minimist": {
+      "version": "1.2.0"
+    }
+  }
+}
+`
+
+// Two advisories against two packages must not share a line. Identity is
+// {ruleId, file, snippet} with the line excluded (ADR-0015), so two findings on
+// one line are one finding and the GitHub reporter posts only the first.
+func TestEachPackageIsAnchoredAtItsOwnLine(t *testing.T) {
+	root := gitRepo(t)
+	writeFile(t, root, "package-lock.json", strings.NewReplacer(
+		"4.17.15", "4.17.21", "1.2.0", "1.2.6").Replace(multiLockfile))
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-q", "-m", "base")
+	writeFile(t, root, "package-lock.json", multiLockfile)
+
+	binary := script(t, "#!/bin/sh\n"+
+		"case \"$1\" in --version) echo stub; exit 0;; esac\n"+
+		"for arg in \"$@\"; do case \"$arg\" in */package-lock.json) target=\"$arg\";; esac; done\n"+
+		"if grep -q 4.17.21 \"$target\" 2>/dev/null; then printf '{\"results\":[]}'; else\n"+
+		`  printf '%s' '`+headReport+`'`+"\nfi\nexit 1\n")
+
+	req := request(root, "package-lock.json")
+	findings, _, err := Analyze(context.Background(), req, binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("want one finding per package, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Line == findings[1].Line {
+		t.Errorf("both packages anchored at line %d; the second would never be posted", findings[0].Line)
+	}
+	for _, f := range findings {
+		if !onAChangedLine(req, f.File, f.Line) {
+			t.Errorf("%s:%d is outside the diff", f.File, f.Line)
+		}
+	}
+}
+
+// Several advisories against one package become one comment naming all of them,
+// rather than several findings that collapse to one by identity.
+func TestAdvisoriesAgainstOnePackageAreOneFinding(t *testing.T) {
+	root := gitRepo(t)
+	writeFile(t, root, "package-lock.json", "{\n  \"node_modules/lodash\": {\n    \"version\": \"4.17.21\"\n  }\n}\n")
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-q", "-m", "base")
+	writeFile(t, root, "package-lock.json", "{\n  \"node_modules/lodash\": {\n    \"version\": \"4.17.15\"\n  }\n}\n")
+
+	const two = `{"results":[{"packages":[{"package":{"name":"lodash","version":"4.17.15","ecosystem":"npm"},` +
+		`"vulnerabilities":[{"id":"GHSA-aaa","summary":"One."},{"id":"GHSA-bbb","summary":"Two."}]}]}]}`
+	binary := script(t, "#!/bin/sh\ncase \"$1\" in --version) echo stub; exit 0;; esac\n"+
+		"for arg in \"$@\"; do case \"$arg\" in */package-lock.json) target=\"$arg\";; esac; done\n"+
+		"if grep -q 4.17.15 \"$target\" 2>/dev/null; then printf '%s' '"+two+"'; else printf '{\"results\":[]}'; fi\nexit 1\n")
+
+	findings, _, err := Analyze(context.Background(), request(root, "package-lock.json"), binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("want one comment for the package, got %d: %+v", len(findings), findings)
+	}
+	for _, id := range []string{"GHSA-aaa", "GHSA-bbb"} {
+		if !strings.Contains(findings[0].Message, id) {
+			t.Errorf("the message loses %s: %q", id, findings[0].Message)
+		}
+	}
+}
+
+// The diff is taken against the merge base (ADR-0007). Reading the previous
+// lockfile from the base branch's tip instead makes an advisory the change
+// inherited look like one it introduced.
+func TestTheBaseScanUsesTheMergeBaseNotTheBranchTip(t *testing.T) {
+	root := gitRepo(t)
+	vulnerable := "{\n  \"node_modules/lodash\": {\n    \"version\": \"4.17.15\"\n  }\n}\n"
+	writeFile(t, root, "package-lock.json", vulnerable)
+	writeFile(t, root, "README.md", "x\n")
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-q", "-m", "merge base, already vulnerable")
+
+	// The branch changes the lockfile without changing lodash.
+	git(t, root, "checkout", "-q", "-b", "work")
+	writeFile(t, root, "package-lock.json", vulnerable+"\n")
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-q", "-m", "unrelated lockfile edit")
+
+	// main then moves on and fixes lodash.
+	git(t, root, "checkout", "-q", "main")
+	writeFile(t, root, "package-lock.json", "{\n  \"node_modules/lodash\": {\n    \"version\": \"4.17.21\"\n  }\n}\n")
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "-q", "-m", "fix on main")
+	git(t, root, "checkout", "-q", "work")
+
+	const report = `{"results":[{"packages":[{"package":{"name":"lodash","version":"4.17.15","ecosystem":"npm"},` +
+		`"vulnerabilities":[{"id":"GHSA-old","summary":"Inherited."}]}]}]}`
+	binary := script(t, "#!/bin/sh\ncase \"$1\" in --version) echo stub; exit 0;; esac\n"+
+		"for arg in \"$@\"; do case \"$arg\" in */package-lock.json) target=\"$arg\";; esac; done\n"+
+		"if grep -q 4.17.15 \"$target\" 2>/dev/null; then printf '%s' '"+report+"'; else printf '{\"results\":[]}'; fi\nexit 1\n")
+
+	req := request(root, "package-lock.json")
+	req.Base = "main"
+	findings, warnings, err := Analyze(context.Background(), req, binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("the branch inherited this advisory and cannot fix it; got %+v (%v)", findings, warnings)
+	}
+}
+
 // --- helpers ---
 
+// request builds an analyze request for one lockfile.
+//
+// The changed ranges are the lockfile's real entry lines, not `{{1, 1}}`. An
+// earlier version of this helper claimed line 1 was changed, which made every
+// assertion about a finding's location vacuous — a lockfile's opening brace is
+// never in a dependency bump's diff, so findings anchored there are dropped by
+// the core's filter and nobody ever sees them.
 func request(root string, paths ...string) plugin.AnalyzeRequest {
 	req := plugin.AnalyzeRequest{Root: root}
 	for _, p := range paths {
-		req.Changed = append(req.Changed, plugin.ChangedFile{Path: p, Ranges: [][2]int{{1, 1}}})
+		req.Changed = append(req.Changed, plugin.ChangedFile{Path: p, Ranges: entryLines(root, p)})
 	}
 	return req
+}
+
+// entryLines are the lines of a fixture lockfile that name a package, which is
+// what a dependency bump's diff actually covers.
+func entryLines(root, path string) [][2]int {
+	body, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil {
+		return [][2]int{{1, 1}}
+	}
+	var out [][2]int
+	for i, line := range strings.Split(string(body), "\n") {
+		if strings.Contains(line, "\"version\"") || strings.Contains(line, "node_modules/") {
+			out = append(out, [2]int{i + 1, i + 1})
+		}
+	}
+	if len(out) == 0 {
+		return [][2]int{{1, 1}}
+	}
+	return out
 }
 
 func script(t *testing.T, body string) string {

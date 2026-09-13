@@ -106,6 +106,15 @@ export const typecovAnalyzer: Analyzer = {
     }
 
     const at = attribute(req, measured);
+    if (at === undefined) {
+      return {
+        findings: [],
+        warnings: [
+          `${ID}: coverage fell from ${percent(previous.coverage)} to ${percent(measured.coverage)}, ` +
+            "and there is no changed line to report it against",
+        ],
+      };
+    }
     const findings: Finding[] = [
       {
         fingerprint: "",
@@ -211,7 +220,10 @@ export function measure(root: string): Measurement {
  * lines. That is also the most useful place for it: the file the reviewer has to
  * look at anyway.
  */
-function attribute(req: AnalyzeRequest, measured: Measurement): { file: string; line: number; anys: number } {
+function attribute(
+  req: AnalyzeRequest,
+  measured: Measurement,
+): { file: string; line: number; anys: number } | undefined {
   let best: { file: string; line: number; anys: number } | undefined;
 
   for (const changed of req.changed) {
@@ -235,7 +247,10 @@ function attribute(req: AnalyzeRequest, measured: Measurement): { file: string; 
   if (first !== undefined && first.ranges[0] !== undefined) {
     return { file: toSlash(first.path), line: first.ranges[0][0], anys: 0 };
   }
-  return { file: BASELINE_PATH, line: 1, anys: 0 };
+  // Nothing to attach it to. Reporting against the baseline file would be a
+  // location the core always drops, which is worse than saying nothing: the
+  // analyzer would look like it was working and nobody would ever see a finding.
+  return undefined;
 }
 
 function toSlash(p: string): string {

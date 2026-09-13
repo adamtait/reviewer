@@ -63,8 +63,20 @@ interface KnipSymbol {
   col?: number;
 }
 
+/**
+ * Knip reports a named issue with the line it sits on — for a dependency, the line
+ * in package.json that declares it; for an unlisted import, the import statement.
+ *
+ * Verified against knip 6.35.1. An earlier version of this analyzer assumed the
+ * line was absent and re-derived it by searching the file for the package name,
+ * which finds the first occurrence anywhere — an `overrides` or `resolutions`
+ * block above `dependencies` wins, and the finding lands on a line the change did
+ * not touch, where the core's diff filter drops it.
+ */
 interface KnipNamed {
   name: string;
+  line?: number;
+  col?: number;
 }
 
 export const knipAnalyzer: Analyzer = {
@@ -121,24 +133,31 @@ export const knipAnalyzer: Analyzer = {
         });
       }
 
-      for (const dep of issues.dependencies ?? []) {
-        const at = declarationLine(req.root, file, dep.name);
-        if (at === undefined || !touched(file, at)) continue;
-        findings.push({
-          fingerprint: "",
-          ruleId: "deps/unused-dependency",
-          lane: "deterministic",
-          confidence: "medium",
-          severity: "warning",
-          file,
-          line: at,
-          message: `\`${dep.name}\` is declared here and nothing imports it.`,
-        });
+      for (const [kind, deps] of [
+        ["dependencies", issues.dependencies ?? []],
+        ["devDependencies", issues.devDependencies ?? []],
+      ] as [string, KnipNamed[]][]) {
+        for (const dep of deps) {
+          const at = dep.line ?? 0;
+          if (!touched(file, at)) continue;
+          findings.push({
+            fingerprint: "",
+            ruleId: "deps/unused-dependency",
+            lane: "deterministic",
+            confidence: "medium",
+            severity: "warning",
+            file,
+            line: at,
+            message:
+              `\`${dep.name}\` is declared as a ${kind === "devDependencies" ? "dev " : ""}` +
+              "dependency here and nothing imports it.",
+          });
+        }
       }
 
       for (const dep of issues.unlisted ?? []) {
-        const line = 1;
-        if (!touched(file, line) && !touchedAnywhere(req, file)) continue;
+        const at = dep.line ?? 0;
+        if (!touched(file, at)) continue;
         findings.push({
           fingerprint: "",
           ruleId: "deps/undeclared-dependency",
@@ -147,7 +166,7 @@ export const knipAnalyzer: Analyzer = {
           confidence: "high",
           severity: "error",
           file,
-          line,
+          line: at,
           message:
             `\`${dep.name}\` is imported here but is not a declared dependency. It works today ` +
             "because something else installed it, and it will stop working when that changes.",
@@ -266,31 +285,6 @@ function changedLines(req: AnalyzeRequest): (file: string, line: number) => bool
     if (spans === undefined || line < 1) return false;
     return spans.some(([start, end]) => line >= start && line <= end);
   };
-}
-
-function touchedAnywhere(req: AnalyzeRequest, file: string): boolean {
-  return req.changed.some((c) => toSlash(c.path) === file);
-}
-
-/**
- * Finds the line where a dependency is declared, so the finding lands on it.
- *
- * Knip reports unused dependencies against package.json without a line. Reporting
- * at line 1 would put every one of them outside the diff, where the core's filter
- * drops them — so the analyzer would appear to work and report nothing.
- */
-function declarationLine(root: string, file: string, name: string): number | undefined {
-  try {
-    const body = fs.readFileSync(path.join(root, file), "utf8");
-    const lines = body.split("\n");
-    const needle = `"${name}"`;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]?.includes(needle) === true) return i + 1;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 function toSlash(p: string): string {

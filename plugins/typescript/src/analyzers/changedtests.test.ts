@@ -20,7 +20,7 @@ const vitestInstalled = fs.existsSync(path.join(PLUGIN_MODULES, "vitest"));
  * committed clean and then edited: a repository where everything is committed has
  * nothing changed, and neither runner would select a single test.
  */
-function fixture(breaks: "the test" | "the source"): string {
+function fixture(breaks: "the test" | "the source" | "nothing"): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "changedtests-"));
   write(root, "package.json", '{"name":"fixture","version":"1.0.0","type":"module"}');
   write(root, "vitest.config.ts", 'import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { includeTaskLocation: true } });\n');
@@ -47,7 +47,9 @@ function fixture(breaks: "the test" | "the source"): string {
   git("commit", "-q", "-m", "base");
 
   // The uncommitted change under review.
-  if (breaks === "the test") {
+  if (breaks === "nothing") {
+    // Committed and clean: nothing for either runner to select.
+  } else if (breaks === "the test") {
     write(root, "src/order.test.ts", TEST_FILE.map((l) => l.replace("toBe(3)", "toBe(99)")).join("\n"));
   } else {
     write(root, "src/order.ts", "export function total(amounts: number[]): number {\n  return amounts.length;\n}\n");
@@ -149,4 +151,57 @@ test("a runner that produces no report is a warning, never silence", async () =>
   assert.deepEqual(findings, []);
   assert.match(warnings?.[0] ?? "", /without a report/);
   assert.match(warnings?.[0] ?? "", /boom/);
+});
+
+test("a base ref this checkout cannot resolve is a warning, never a clean bill", { skip: !vitestInstalled }, async () => {
+  const root = fixture("the test");
+
+  const { findings, warnings } = await changedTestsAnalyzer.run({
+    root,
+    changed: [{ path: "src/order.test.ts", ranges: [[1, 11]] }],
+    contextLines: 0,
+    base: "origin/does-not-exist",
+  });
+
+  // Both runners accept an unresolvable ref, select nothing, exit 0 and report
+  // that every test passed. Reported as clean, that is a silent all-green for a
+  // run that executed nothing.
+  assert.deepEqual(findings, []);
+  assert.match(warnings?.[0] ?? "", /no ref `origin\/does-not-exist`/);
+});
+
+test("a selection that picks nothing is stated rather than read as passing", { skip: !vitestInstalled }, async () => {
+  const root = fixture("nothing");
+  // A changed file the runner will not associate with any test.
+  write(root, "docs/notes.md", "nothing to run here\n");
+
+  const { findings, warnings } = await changedTestsAnalyzer.run({
+    root,
+    changed: [{ path: "docs/notes.md", ranges: [[1, 1]] }],
+    contextLines: 0,
+    base: "HEAD",
+  });
+
+  assert.deepEqual(findings, []);
+  assert.match(warnings?.[0] ?? "", /selected no tests/);
+});
+
+test("a relocated failure prefers a source file over a manifest", { skip: !vitestInstalled }, async () => {
+  const root = fixture("the source");
+
+  const { findings } = await changedTestsAnalyzer.run({
+    root,
+    // Git's path order puts the config first, which is exactly the trap.
+    changed: [
+      { path: ".review/config.yaml", ranges: [[1, 1]] },
+      { path: "src/order.ts", ranges: [[2, 2]] },
+    ],
+    contextLines: 0,
+  });
+
+  assert.ok(findings.length >= 1, JSON.stringify(findings, null, 1));
+  for (const f of findings) {
+    assert.equal(f.file, "src/order.ts", "a test failure on line 1 of a YAML file helps nobody");
+    assert.equal(f.line, 2);
+  }
 });

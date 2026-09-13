@@ -68,7 +68,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		return baseline(ctx, o, stdout, stderr, getenv)
 	}
 	if o.subcommand == "rules test" {
-		return rulesTest(ctx, o, stdout, stderr)
+		return rulesTest(ctx, o, stdout, stderr, getenv)
 	}
 	if o.subcommand == "init" {
 		return initialize(o, stdin, stdout, stderr)

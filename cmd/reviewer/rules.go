@@ -24,19 +24,29 @@ import (
 // "every rule has a negative case" is this project's rule, not Opengrep's: a rule
 // with only a positive case is a rule nobody has checked for false positives, and a
 // false positive is how a rule pack loses its audience.
-func rulesTest(ctx context.Context, o options, stdout, stderr io.Writer) error {
+func rulesTest(ctx context.Context, o options, stdout, stderr io.Writer, getenv func(string) string) error {
 	root, err := filepath.Abs(o.root)
 	if err != nil {
 		return err
 	}
+	// The repository's own configuration, not the compiled-in default: a
+	// repository that sets rules.dir would otherwise get "no rule files" from the
+	// one command whose job is to check its pack, while the analyzer reading the
+	// same config found them.
+	cfg, _, err := config.Resolve(o.root, o.config, getenv)
+	if err != nil {
+		return errUsage{err}
+	}
 	dir := o.rulesDir
 	if dir == "" {
-		dir = config.Defaults().Rules.Dir
+		dir = cfg.Rules.Dir
 	}
 
 	pack, err := opengrep.LoadPack(root, dir)
 	if err != nil {
-		return err
+		// A rules directory that cannot be read is a pack that is not ready, which
+		// is this command's failure status rather than its success one.
+		return errCheckFailed{err}
 	}
 	if len(pack.Rules) == 0 && len(pack.Problems) == 0 {
 		return errUsage{fmt.Errorf("no rule files in %s", dir)}
@@ -60,7 +70,7 @@ func rulesTest(ctx context.Context, o options, stdout, stderr io.Writer) error {
 	// The patterns themselves. Delegated, because deciding whether a pattern
 	// matches is Opengrep's job and reimplementing the judgement would mean this
 	// tool and the analyzer could disagree about the same rule (ADR-0011).
-	switch result := runEngineTest(ctx, root, dir, o); {
+	switch result := runEngineTest(ctx, root, dir, cfg); {
 	case result.skipped != "":
 		// Loud, not silent. `rules test` reporting success while never executing a
 		// pattern is the one outcome that would make it worse than nothing.
@@ -91,15 +101,13 @@ type engineResult struct {
 	output  string
 }
 
-func runEngineTest(ctx context.Context, root, dir string, o options) engineResult {
+func runEngineTest(ctx context.Context, root, dir string, cfg config.Config) engineResult {
 	binary := opengrep.Binary
-	if o.config != "" {
-		// A pinned path comes from config like every other tool path (ADR-0004).
-		if cfg, _, err := config.Resolve(root, o.config, func(string) string { return "" }); err == nil {
-			if tool, ok := cfg.Tools[opengrep.ID]; ok && tool.Path != "" {
-				binary = tool.Path
-			}
-		}
+	// A pinned path comes from config like every other tool path (ADR-0004). Read
+	// from the already-resolved config, so the answer does not depend on whether
+	// --config was typed.
+	if tool, ok := cfg.Tools[opengrep.ID]; ok && tool.Path != "" {
+		binary = tool.Path
 	}
 	path, err := exec.LookPath(binary)
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/adamtait/reviewer/pkg/finding"
 	"github.com/adamtait/reviewer/pkg/plugin"
@@ -36,6 +37,10 @@ const Order = 40
 // Binary is the executable name. Overridden from config when a repository pins a
 // path; never a compiled-in absolute path (ADR-0004).
 const Binary = "osv-scanner"
+
+// probeTimeout bounds the version check. Generous for a binary that starts, and
+// short enough that a wedged one does not stall a review.
+const probeTimeout = 10 * time.Second
 
 // ErrUnavailable means the scan could not be performed.
 var ErrUnavailable = errors.New("osv-scanner could not be run")
@@ -124,6 +129,8 @@ func Analyze(ctx context.Context, req plugin.AnalyzeRequest, binary string) ([]f
 		return nil, nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 
+	lines := changedLines(req.Changed)
+
 	var (
 		findings []finding.Finding
 		warnings []string
@@ -152,9 +159,7 @@ func Analyze(ctx context.Context, req plugin.AnalyzeRequest, binary string) ([]f
 			continue
 		}
 
-		for _, a := range introduced(head, before) {
-			findings = append(findings, describe(a, lockfile))
-		}
+		findings = append(findings, describe(req.Root, introduced(head, before), lockfile, lines[lockfile])...)
 	}
 	return findings, warnings, nil
 }
@@ -186,6 +191,13 @@ func scanBase(ctx context.Context, binary, root, base, lockfile string) ([]advis
 		// A staged review compares the index against HEAD, so HEAD is what the
 		// lockfile looked like before.
 		ref = "HEAD"
+	} else if merged := mergeBase(ctx, root, ref); merged != "" {
+		// The merge base, not the base branch's tip. The diff is taken with
+		// `--merge-base` (ADR-0007), and reading the previous lockfile from the
+		// tip instead makes the two disagree: when the base branch has moved on,
+		// advisories this change inherited look like advisories it introduced,
+		// which is exactly the noise this analyzer exists to avoid.
+		ref = merged
 	}
 
 	show := exec.CommandContext(ctx, "git", "show", ref+":"+lockfile)
@@ -216,6 +228,19 @@ func scanBase(ctx context.Context, binary, root, base, lockfile string) ([]advis
 		return nil, nil, err
 	}
 	return scanFile(ctx, binary, root, target)
+}
+
+// mergeBase resolves the commit the diff was taken from. An empty result means
+// git could not answer — a shallow clone, or a ref this checkout does not have —
+// and the caller falls back to the ref as given.
+func mergeBase(ctx context.Context, root, ref string) string {
+	cmd := exec.CommandContext(ctx, "git", "merge-base", ref, "HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // scanFile runs osv-scanner over one manifest.
@@ -292,32 +317,211 @@ func introduced(head, base []advisory) []advisory {
 	return out
 }
 
-// describe turns an advisory into a finding against the lockfile.
+// describe turns the introduced advisories into findings: **one per package**,
+// listing every advisory against it.
 //
-// Line 1, deliberately. The lockfile line where a package's entry sits is not
-// where a human fixes this — the fix is a version bump in the manifest — and
-// pointing at a lockfile's internals invites someone to hand-edit one.
-func describe(a advisory, lockfile string) finding.Finding {
-	return finding.Finding{
-		RuleID:     "deps/" + strings.ToLower(a.ecosystemSlug()),
-		Lane:       finding.LaneDeterministic,
-		Confidence: finding.ConfidenceHigh,
-		Severity:   finding.SeverityError,
-		File:       lockfile,
-		Line:       1,
-		Message: fmt.Sprintf("This change introduces %s@%s, which %s affects. %s "+
-			"Bump it in the manifest and regenerate the lockfile.",
-			a.pkg, a.version, a.vulnID, a.summary),
+// Two things force that grouping, and both were found the hard way.
+//
+// The location has to be a line the change touched, or the core's diff filter
+// drops the finding and the analyzer reports into a void (ADR-0007). Line 1 of a
+// lockfile is never in the diff — a dependency bump does not change the opening
+// brace — so every finding this analyzer produced was discarded.
+//
+// And identity is `{ruleId, file, snippet}` (ADR-0015), with the line deliberately
+// excluded. Two advisories sharing a rule id, a file and a line are therefore the
+// same finding, and the GitHub reporter posts one of them. Grouping by package
+// makes that correct rather than lossy: one comment per package, naming every
+// advisory against it, anchored at the line that package's entry changed on.
+func describe(root string, advisories []advisory, lockfile string, changed []intRange) []finding.Finding {
+	type group struct {
+		pkg, version, ecosystem string
+		ids                     []string
+		summaries               []string
 	}
+	order := []string{}
+	groups := map[string]*group{}
+	for _, a := range advisories {
+		key := a.ecosystem + "|" + a.pkg + "|" + a.version
+		g, ok := groups[key]
+		if !ok {
+			g = &group{pkg: a.pkg, version: a.version, ecosystem: a.ecosystem}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.ids = append(g.ids, a.vulnID)
+		if a.summary != "" {
+			g.summaries = append(g.summaries, a.summary)
+		}
+	}
+
+	// Anchored, then merged by line. Two packages that still resolve to the same
+	// line would be one finding by identity (ADR-0015) and the second would never
+	// be posted, so they are combined into one comment that names both rather than
+	// silently losing one.
+	byLine := map[int][]*group{}
+	lineOrder := []int{}
+	for _, key := range order {
+		g := groups[key]
+		line := anchor(filepath.Join(root, filepath.FromSlash(lockfile)), g.pkg, g.version, changed)
+		if line == 0 {
+			// Nothing in this lockfile's diff mentions the package, so there is no
+			// line a reviewer would recognise. Dropping it is honest; reporting it
+			// somewhere arbitrary is not.
+			continue
+		}
+		if _, seen := byLine[line]; !seen {
+			lineOrder = append(lineOrder, line)
+		}
+		byLine[line] = append(byLine[line], g)
+	}
+
+	out := make([]finding.Finding, 0, len(lineOrder))
+	for _, line := range lineOrder {
+		at := byLine[line]
+		parts := make([]string, 0, len(at))
+		var summaries []string
+		for _, g := range at {
+			parts = append(parts, fmt.Sprintf("%s@%s (%s)", g.pkg, g.version, joinIDs(g.ids)))
+			summaries = append(summaries, g.summaries...)
+		}
+		out = append(out, finding.Finding{
+			RuleID:     "deps/" + ecosystemSlug(at[0].ecosystem),
+			Lane:       finding.LaneDeterministic,
+			Confidence: finding.ConfidenceHigh,
+			Severity:   finding.SeverityError,
+			File:       lockfile,
+			Line:       line,
+			Message: fmt.Sprintf("This change introduces %s, %s a known vulnerability. %sBump %s in "+
+				"the manifest and regenerate the lockfile.",
+				strings.Join(parts, " and "), carries(len(at)), summaryOf(summaries),
+				subject(len(at))),
+		})
+	}
+	return out
 }
 
-func (a advisory) ecosystemSlug() string {
-	if a.ecosystem == "" {
+// lookback is how far above a changed line to search for the package it belongs
+// to. A lockfile entry is a handful of lines; twenty covers the longest npm entry
+// and stops well short of reaching the previous package.
+const lookback = 20
+
+// anchor finds the changed line in the lockfile that belongs to one package. Read
+// from the working tree, because that is what the diff's line numbers refer to.
+//
+// Three passes, cheapest and most certain first, because the format varies: go.sum
+// puts the module and version on one line, while package-lock.json puts the
+// version several lines below the `"node_modules/lodash":` key that names it — so
+// a version bump's changed line contains neither the package name nor anything
+// else distinguishing it from the next package's.
+//
+// Getting this right is what stops two packages from sharing a line. Identity is
+// `{ruleId, file, snippet}` (ADR-0015), so two findings on one line are one
+// finding, and the second one is never posted.
+func anchor(lockfile, pkg, version string, changed []intRange) int {
+	body, err := os.ReadFile(lockfile)
+	if err != nil {
+		return firstChanged(changed)
+	}
+	lines := strings.Split(string(body), "\n")
+	at := func(n int) string {
+		if n < 1 || n > len(lines) {
+			return ""
+		}
+		return lines[n-1]
+	}
+
+	// 1. A changed line naming both the package and the version: the entry itself.
+	// 2. A changed line naming the package.
+	named := 0
+	for _, r := range changed {
+		for n := r.start; n <= r.end; n++ {
+			line := at(n)
+			if line == "" || !strings.Contains(line, pkg) {
+				continue
+			}
+			if strings.Contains(line, version) {
+				return n
+			}
+			if named == 0 {
+				named = n
+			}
+		}
+	}
+	if named != 0 {
+		return named
+	}
+
+	// 3. A changed line inside the package's block: the nearest line above it that
+	// names the package, within one entry's worth of lines.
+	for _, r := range changed {
+		for n := r.start; n <= r.end; n++ {
+			if at(n) == "" {
+				continue
+			}
+			for back := n - 1; back >= 1 && back >= n-lookback; back-- {
+				if strings.Contains(at(back), pkg) {
+					return n
+				}
+			}
+		}
+	}
+	return firstChanged(changed)
+}
+
+func firstChanged(changed []intRange) int {
+	if len(changed) == 0 {
+		return 0
+	}
+	return changed[0].start
+}
+
+// intRange is one changed span, as the protocol delivers it.
+type intRange struct{ start, end int }
+
+func changedLines(files []plugin.ChangedFile) map[string][]intRange {
+	out := map[string][]intRange{}
+	for _, f := range files {
+		path := filepath.ToSlash(f.Path)
+		for _, r := range f.Ranges {
+			out[path] = append(out[path], intRange{start: r[0], end: r[1]})
+		}
+	}
+	return out
+}
+
+func joinIDs(ids []string) string {
+	if len(ids) == 1 {
+		return ids[0]
+	}
+	return strings.Join(ids[:len(ids)-1], ", ") + " and " + ids[len(ids)-1]
+}
+
+func carries(n int) string {
+	if n == 1 {
+		return "which has"
+	}
+	return "which have"
+}
+
+func subject(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
+}
+
+func summaryOf(summaries []string) string {
+	if len(summaries) == 0 {
+		return ""
+	}
+	return summaries[0] + " "
+}
+
+func ecosystemSlug(ecosystem string) string {
+	if ecosystem == "" {
 		return "vulnerable-dependency"
 	}
-	slug := strings.ToLower(a.ecosystem)
-	slug = strings.ReplaceAll(slug, " ", "-")
-	return slug
+	return strings.ReplaceAll(strings.ToLower(ecosystem), " ", "-")
 }
 
 func summary(v vulnerability) string {
@@ -354,7 +558,12 @@ func Probe(binary string) (path, version string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("%s is not installed or not on PATH", binary)
 	}
-	out, err := exec.Command(path, "--version").Output()
+	// Bounded: Probe runs at the top of every review, including every poll of the
+	// watch loop, and a binary that hangs on --version would hang the tool with
+	// nothing to interrupt it.
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
 		return path, "", fmt.Errorf("%s is installed but would not run: %v", binary, err)
 	}

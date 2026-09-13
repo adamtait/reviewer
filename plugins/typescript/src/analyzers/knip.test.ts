@@ -140,3 +140,55 @@ test("output that is not a report is a warning, never silence", async () => {
   assert.deepEqual(findings, []);
   assert.match(warnings?.[0] ?? "", /without a report/);
 });
+
+test("an undeclared import is reported at the import, not at line 1", { skip: !knipInstalled }, async () => {
+  const root = fixture();
+  write(root, "src/entry.ts", [
+    'import { used } from "./index.js";',
+    'import leftPad from "left-pad";',
+    "export const main = leftPad(String(used()), 3);",
+    "",
+  ].join("\n"));
+  // package.json declares left-pad, so make it undeclared.
+  write(root, "package.json", JSON.stringify({ name: "fixture", version: "1.0.0", type: "module" }, null, 2));
+
+  const { findings } = await knipAnalyzer.run(
+    request(root, [{ path: "src/entry.ts", ranges: [[2, 2]] }]),
+  );
+
+  const unlisted = findings.filter((f) => f.ruleId === "deps/undeclared-dependency");
+  assert.equal(unlisted.length, 1, JSON.stringify(findings));
+  // At line 1 the core's diff filter drops it on every real pull request, and the
+  // analyzer looks like it works while reporting nothing.
+  assert.equal(unlisted[0]?.line, 2);
+  assert.equal(unlisted[0]?.file, "src/entry.ts");
+  assert.equal(unlisted[0]?.confidence, "high");
+});
+
+test("an unused dependency uses Knip's own line, not the first name match", { skip: !knipInstalled }, async () => {
+  const root = fixture();
+  // `left-pad` appears in overrides first. Searching the file for the name finds
+  // line 6; the declaration the change touched is further down.
+  write(root, "package.json", [
+    "{",
+    '  "name": "fixture",',
+    '  "version": "1.0.0",',
+    '  "type": "module",',
+    '  "overrides": {',
+    '    "left-pad": "1.3.0"',
+    "  },",
+    '  "dependencies": {',
+    '    "left-pad": "^1.3.0"',
+    "  }",
+    "}",
+    "",
+  ].join("\n"));
+
+  const { findings } = await knipAnalyzer.run(
+    request(root, [{ path: "package.json", ranges: [[9, 9]] }]),
+  );
+
+  const unused = findings.filter((f) => f.ruleId === "deps/unused-dependency");
+  assert.equal(unused.length, 1, JSON.stringify(findings));
+  assert.equal(unused[0]?.line, 9, "the declaration, not the overrides entry above it");
+});

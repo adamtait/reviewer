@@ -12,7 +12,7 @@
  * Nothing is being judged: the repository's own test said no.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +21,18 @@ import type { AnalyzeRequest, Finding } from "../protocol.js";
 
 export const ID = "changed-tests";
 export const ORDER = 70;
+
+/** Prefix for the temporary directory each run writes its report into. */
+const TEMP_PREFIX = "reviewer-tests-";
+
+/**
+ * How long a report directory may survive before it is treated as abandoned.
+ *
+ * The `finally` that removes one does not run when the plugin's process group is
+ * killed on an analyzer timeout, so a wedged run leaks a directory. Reaping older
+ * ones at the start of each run is the only cleanup a killed process can get.
+ */
+const STALE_AFTER_MS = 60 * 60 * 1000;
 
 /** The runners this analyzer knows how to drive. */
 type Runner = "vitest" | "jest";
@@ -71,9 +83,22 @@ export const changedTestsAnalyzer: Analyzer = {
       return { findings: [], warnings: [] };
     }
 
-    const outputFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "reviewer-tests-")), "report.json");
+    const base = (req.base ?? "").trim();
+    if (base !== "" && !resolves(req.root, base)) {
+      // Both runners accept a ref they cannot resolve, select nothing, exit 0 and
+      // write a report saying every test passed. Reporting that as a clean run is
+      // the fail-open-to-silence outcome ADR-0013 exists to prevent, so the ref is
+      // checked before the runner is given it.
+      return {
+        findings: [],
+        warnings: [`${ID}: ${runner.name} cannot select tests: this checkout has no ref \`${base}\``],
+      };
+    }
+
+    reapStaleReports();
+    const outputFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), TEMP_PREFIX)), "report.json");
     try {
-      const result = await execute(runner.bin, argsFor(runner.name, req.base, outputFile), req.root);
+      const result = await execute(runner.bin, argsFor(runner.name, base, outputFile), req.root);
 
       let report: TestReport;
       try {
@@ -91,7 +116,17 @@ export const changedTestsAnalyzer: Analyzer = {
         };
       }
 
-      return { findings: toFindings(req, report), warnings: [] };
+      const findings = toFindings(req, report);
+      if (findings.length === 0 && (report.testResults ?? []).length === 0) {
+        // The runner ran and selected nothing. With a change in hand that is worth
+        // saying: it means the selection disagreed with the diff, and silence
+        // would read as "the tests pass".
+        return {
+          findings,
+          warnings: [`${ID}: ${runner.name} selected no tests for this change`],
+        };
+      }
+      return { findings, warnings: [] };
     } finally {
       fs.rmSync(path.dirname(outputFile), { recursive: true, force: true });
     }
@@ -105,8 +140,8 @@ export const changedTestsAnalyzer: Analyzer = {
  * uncommitted work, which is exactly what a staged review is looking at. Jest has
  * `--onlyChanged` for the same case.
  */
-function argsFor(runner: Runner, base: string | undefined, outputFile: string): string[] {
-  const ref = (base ?? "").trim();
+function argsFor(runner: Runner, base: string, outputFile: string): string[] {
+  const ref = base.trim();
   if (runner === "vitest") {
     return [
       "run",
@@ -170,11 +205,10 @@ function place(req: AnalyzeRequest, at: { file: string; line: number }, message:
   let line = at.line;
   let prefix = "";
   if (!inDiff) {
-    const first = req.changed[0];
-    const firstRange = first?.ranges[0];
-    if (first !== undefined && firstRange !== undefined) {
-      file = toSlash(first.path);
-      line = firstRange[0];
+    const host = relocate(req, at.file);
+    if (host !== undefined) {
+      file = host.file;
+      line = host.line;
       prefix = `${at.file}:${at.line} — `;
     }
   }
@@ -190,6 +224,61 @@ function place(req: AnalyzeRequest, at: { file: string; line: number }, message:
     line,
     message: prefix + message,
   };
+}
+
+/**
+ * Picks a changed file to carry a failure whose assertion is outside the diff.
+ *
+ * Order matters: `req.changed` is in git's path order, so the first entry is
+ * routinely a lockfile, a changelog or a config file — a test failure reported on
+ * line 1 of a YAML file is not something a reviewer can act on. Preference goes to
+ * the source file the test is named after, then to any changed source file, and
+ * only then to whatever is there.
+ */
+function relocate(req: AnalyzeRequest, testFile: string): { file: string; line: number } | undefined {
+  const stem = path.basename(testFile).replace(/\.(test|spec)\.[cm]?[jt]sx?$/i, "");
+
+  const at = (c: AnalyzeRequest["changed"][number]): { file: string; line: number } | undefined => {
+    const range = c.ranges[0];
+    return range === undefined ? undefined : { file: toSlash(c.path), line: range[0] };
+  };
+
+  const sources = req.changed.filter((c) => SOURCE.test(c.path));
+  const named = sources.find((c) => path.basename(c.path).replace(/\.[cm]?[jt]sx?$/i, "") === stem);
+  return at(named ?? sources[0] ?? req.changed[0] ?? ({} as never));
+}
+
+/** What counts as source rather than configuration or a manifest. */
+const SOURCE = /\.[cm]?[jt]sx?$/i;
+
+/** Removes report directories a killed run left behind. */
+function reapStaleReports(): void {
+  const tmp = os.tmpdir();
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(tmp);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - STALE_AFTER_MS;
+  for (const name of entries) {
+    if (!name.startsWith(TEMP_PREFIX)) continue;
+    const full = path.join(tmp, name);
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { recursive: true, force: true });
+    } catch {
+      // Someone else's, or already gone. Not this run's problem.
+    }
+  }
+}
+
+/** Whether this checkout can resolve a ref to a commit. */
+function resolves(root: string, ref: string): boolean {
+  const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+    cwd: root,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  return result.status === 0;
 }
 
 function describe(assertion: AssertionResult, message: string): string {

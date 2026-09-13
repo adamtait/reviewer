@@ -341,3 +341,29 @@ func repoRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+// A repository can track a file whose name begins with a dash, and the diff parser
+// passes it through verbatim. Without an end-of-options separator that filename
+// becomes a flag on the scanner's command line — a second `--config` alone would
+// let a fork's pull request supply the rule pack used to review it.
+func TestChangedFilenamesCannotBecomeFlags(t *testing.T) {
+	root := t.TempDir()
+	writeRule(t, root, "conventions.yaml")
+
+	binary, argsLog := fakeOpengrep(t, output{}, "", 0)
+	_, _, err := Analyze(context.Background(),
+		request(root, "--config=attacker.yaml", "normal.ts"), binary, ".review/rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := readFile(t, argsLog)
+	separator := strings.Index(args, " -- ")
+	if separator < 0 {
+		t.Fatalf("no end-of-options separator in: %s", args)
+	}
+	hostile := strings.Index(args, "--config=attacker.yaml")
+	if hostile < separator {
+		t.Errorf("a repository filename reached the scanner as a flag: %s", args)
+	}
+}

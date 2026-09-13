@@ -863,3 +863,98 @@ func TestWriteBelongsToBaselineOnly(t *testing.T) {
 		t.Fatalf("a review never writes to the repository; want a usage error, got %v", err)
 	}
 }
+
+// `rules test` must read the repository's own configuration, not the compiled-in
+// default: otherwise the command whose job is to check a pack reports "no rule
+// files" for a pack the analyzer beside it finds without difficulty.
+func TestRulesTestReadsTheConfiguredDirectory(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"conventions/one.yaml": "rules:\n  - id: one\n    message: m\n",
+		"conventions/one.ts":   "// ruleid: one\nconst a = 1;\n// ok: one\nconst b = 2;\n",
+		".review/config.yaml":  "rules:\n  dir: conventions\ngate:\n  secretsAnalyzers: [gitleaks]\n",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"rules", "test", "--root", root}, &stdout, &stderr, noEnv)
+
+	// Opengrep is not installed here, so the check fails on the engine — but it
+	// must have found the pack first.
+	if !strings.Contains(stdout.String(), "1 rule,") {
+		t.Fatalf("want the configured directory read, got:\n%s%v", stdout.String(), err)
+	}
+	var usageErr errUsage
+	if errors.As(err, &usageErr) {
+		t.Fatalf("a configured pack that exists is not misuse: %v", err)
+	}
+}
+
+// The ref an analyzer reads previous file contents from has to be the ref the diff
+// was taken against. On a pull request those differ: the diff uses the pull
+// request's own base and --base keeps its default, so an analyzer answering "did
+// this change introduce X" would answer about a different branch entirely.
+func TestTheAnalyzeRequestCarriesTheRefTheDiffUsed(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "frames.log")
+	_ = root
+
+	recorder := filepath.Join(t.TempDir(), "recorder.sh")
+	body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"rec","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[{"id":"rec","lane":"deterministic","order":10,"available":true}]}\n' ;;
+    *'"type":"analyze"'*)  echo "$frame" >> "` + log + `"
+                           printf '{"type":"findings","analyzer":"rec","findings":[]}\n' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(recorder, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, repo.Root, "plugins:\n  - id: rec\n    command: "+recorder+"\nanalyzers:\n  skip: [gitleaks, opengrep, osv]\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+
+	frames, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("the plugin was never asked to analyze anything: %v", err)
+	}
+	if !strings.Contains(string(frames), `"base":"`+repo.Base+`"`) {
+		t.Errorf("want the diff's own base in the analyze frame, got:\n%s", frames)
+	}
+}
+
+// A staged review compares the index against HEAD, and an empty base is how the
+// protocol says so. Sending "main" there would make an analyzer read the wrong
+// previous contents on every pre-commit run.
+func TestAStagedReviewCarriesNoBase(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	o := options{staged: true, base: defaultBase, root: repo.Root}
+	files, base, err := changedFiles(context.Background(), o, config.Config{Root: repo.Root}, config.Secrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = files
+	if base != "" {
+		t.Errorf("want no base for a staged review, got %q", base)
+	}
+}

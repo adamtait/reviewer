@@ -149,3 +149,16 @@ test("a repository with no tsconfig is a warning, not a crash", async () => {
   assert.deepEqual(findings, []);
   assert.ok((warnings?.length ?? 0) > 0);
 });
+
+test("a regression with nothing to attach to is a warning, not an invisible finding", async () => {
+  const root = repo(LOOSE);
+  writeBaseline(root, { identifiers: 100, anys: 0, coverage: 1, anysByFile: new Map() });
+
+  // No changed files: a diff of only deletions, or only binary files.
+  const { findings, warnings } = await typecovAnalyzer.run(request(root, undefined, []));
+
+  // Reporting against the baseline file would be a location the core always
+  // drops, which looks like a working analyzer that never finds anything.
+  assert.deepEqual(findings, []);
+  assert.match(warnings?.[0] ?? "", /no changed line to report it against/);
+});

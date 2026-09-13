@@ -1,0 +1,19 @@
+<!-- SPDX-License-Identifier: MIT -->
+# Architecture decision records
+
+One file per architecturally significant decision. Format: `template.md`. Process: ADR-0000.
+
+**Append-only.** An `Accepted` ADR is never edited; a decision that turns out wrong is superseded by
+a new, higher-numbered ADR. `tools/checkadrs` enforces this, along with numbering, index sync and
+two-way supersession links. Run it with `go run ./tools/checkadrs`.
+
+An ADR lands in the same pull request as the code that first implements its decision. Decisions that
+precede any code land in PR-00.
+
+## Index
+
+| ADR | Title | Status | Implemented by |
+|---|---|---|---|
+| [0000](0000-record-architecture-decisions.md) | Record architecture decisions in an append-only log | Accepted | PR-00 |
+| [0001](0001-license-mit-with-spdx-headers.md) | License the project MIT with per-file SPDX headers | Accepted | PR-00 |
+| [0002](0002-go-core-typescript-plugin.md) | Implement the core in Go and reach TypeScript tooling through a plugin | Accepted | PR-00 |

@@ -8,7 +8,11 @@
 plugins:
   - id: typescript
     command: node
-    args: ["node_modules/@adamtait/reviewer-plugin-typescript/dist/serve.js"]
+    # dist/main.js is the executable. The package's "main" field names
+    # dist/serve.js, which is the library it is built from: a config pointing
+    # there starts a process that exits 0 without answering the handshake, and
+    # the review reports "no analyzers ran" with nothing else wrong.
+    args: ["node_modules/@adamtait/reviewer-plugin-typescript/dist/main.js"]
 
 analyzers:
   # Bounds a single analyzer. On expiry its process group is killed and the run

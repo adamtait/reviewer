@@ -26,10 +26,22 @@ func TestShellPluginConformance(t *testing.T) {
 
 	var in bytes.Buffer
 	w := plugin.NewWriter(&in)
+	// A real diff, not an empty one. An analyze request with no changed files
+	// cannot distinguish a plugin that anchors its findings from one that reports
+	// at a fixed location — and the fixed-location plugin is the one whose
+	// findings the core silently drops (ADR-0007).
+	req := &plugin.AnalyzeRequest{
+		Root: ".",
+		Changed: []plugin.ChangedFile{
+			{Path: "src/cart.ts", Status: "added", Ranges: [][2]int{{4, 9}, {20, 21}}},
+			{Path: "src/order.ts", Status: "modified", Ranges: [][2]int{{2, 2}}},
+		},
+	}
+
 	for _, f := range []plugin.Frame{
 		{Type: plugin.TypeHello, Protocol: plugin.Protocol, Host: "conformance-test"},
 		{Type: plugin.TypeDescribe},
-		{Type: plugin.TypeAnalyze, Analyzer: "shell-hello", Request: &plugin.AnalyzeRequest{Root: "."}},
+		{Type: plugin.TypeAnalyze, Analyzer: "shell-hello", Request: req},
 		{Type: plugin.TypeBye},
 	} {
 		if err := w.Write(f); err != nil {
@@ -87,8 +99,35 @@ func TestShellPluginConformance(t *testing.T) {
 		t.Fatalf("the example plugin emitted an invalid finding: %v", err)
 	}
 
+	// Valid is not the same as visible. This is the assertion the documentation
+	// tells every plugin author to write, so the example a stranger copies had
+	// better pass it: before it did, the example reported at README.md:1 and the
+	// core dropped its finding on every real run.
+	if !onAChangedLine(req.Changed, f.File, f.Line) {
+		t.Errorf("the example plugin reported %s at %s:%d, which is outside the diff "+
+			"and would be dropped by the core", f.RuleID, f.File, f.Line)
+	}
+
 	// Diagnostics belong on stderr; stdout is the protocol channel.
 	if !strings.Contains(stderr.String(), "shell-hello: started") {
 		t.Fatalf("want the plugin's own logging on stderr, got %q", stderr.String())
 	}
+}
+
+// onAChangedLine is the check the core applies before anything reaches a reader
+// (ADR-0007). Restated here rather than imported so that this file stays a
+// description of what a plugin author has to satisfy, independent of where the
+// core happens to implement it.
+func onAChangedLine(changed []plugin.ChangedFile, file string, line int) bool {
+	for _, c := range changed {
+		if c.Path != file {
+			continue
+		}
+		for _, r := range c.Ranges {
+			if line >= r[0] && line <= r[1] {
+				return true
+			}
+		}
+	}
+	return false
 }

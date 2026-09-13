@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/adamtait/reviewer/internal/installer"
 )
@@ -29,7 +30,11 @@ func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Asked before the plan is built, because the answer changes what the plan
 	// says. A prompt after the plan would be asking someone to approve a plan and
 	// then altering it.
-	provider, err := installer.ChooseProvider(stdin, stdout, o.provider, o.yes)
+	//
+	// But only when there is someone there to answer, and only when the answer is
+	// going to be used. `--provider` is honoured in every case; it is the question
+	// that is conditional, not the choice.
+	provider, err := installer.ChooseProvider(stdin, stdout, o.provider, !shouldAsk(o, stdin))
 	if err != nil && !errors.Is(err, installer.ErrNoProviderChosen) {
 		// A name that is not a provider is misuse: installing something other than
 		// what was asked for would be worse than refusing.
@@ -46,6 +51,10 @@ func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	if o.dryRun {
 		fmt.Fprintln(stderr, "reviewer: --dry-run, nothing written")
+		if o.provider == "" {
+			fmt.Fprintln(stderr, "reviewer: the real run asks which model access path to configure, "+
+				"or pass --provider to see that part of the plan too")
+		}
 		return nil
 	}
 	if len(plan.Problems) > 0 {
@@ -69,4 +78,44 @@ func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	fmt.Fprintln(stdout)
 	return report.Write(stdout)
+}
+
+// shouldAsk reports whether the provider question can be both answered and used.
+//
+// Two ways it cannot. A dry run writes nothing, so the answer is discarded — and
+// asking for it is how the first command in the README came to block. And a stdin
+// that is not a terminal has nobody behind it: the reader already treats an
+// immediate EOF as "not interactive", but an open pipe with no writer never
+// reaches EOF, so it waits for input that will never arrive. That is a hang in
+// any harness that leaves stdin attached, with no output to explain it, on the
+// one command a stranger runs first.
+//
+// Neither case is an error. The model lane is off either way (ADR-0021); what is
+// lost is a configured provider, and `--provider` supplies that without a
+// question.
+func shouldAsk(o options, stdin io.Reader) bool {
+	switch {
+	case o.yes, o.dryRun:
+		return false
+	default:
+		return isTerminal(stdin)
+	}
+}
+
+// isTerminal reports whether a reader is a character device — a terminal, rather
+// than a pipe, a file or /dev/null.
+//
+// Deliberately not golang.org/x/term: this is the whole of what that dependency
+// would be used for, and a direct dependency is a thing every consumer of this
+// module acquires (ADR-0002).
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }

@@ -130,9 +130,16 @@ func TestAMissingScannerIsReportedNotFatal(t *testing.T) {
 	}
 }
 
-// End to end through a real plugin process: the shell example reports a finding
-// on README.md, which the diff filter then drops because the fixture's change
-// does not touch that file. Both halves matter.
+// End to end through a real plugin process: the shell example must produce a
+// finding a reader can actually see.
+//
+// This test used to assert the opposite — the example reported at README.md:1,
+// the diff filter dropped it, and the drop was the assertion. That made the
+// documentation's own example a demonstration of the trap it warns about: a
+// stranger who copied it got a plugin that logged findings and showed none, which
+// reads as a broken plugin rather than as diff scoping. The example now anchors
+// to a changed line, and the drop path is covered by a plugin written to be wrong
+// on purpose, below.
 func TestReviewEndToEndThroughAPlugin(t *testing.T) {
 	repo := testfixture.Build(t, "tiny-ts-repo")
 	root, err := os.Getwd()
@@ -153,12 +160,60 @@ func TestReviewEndToEndThroughAPlugin(t *testing.T) {
 	if strings.Contains(out, "no analyzers are configured") {
 		t.Fatalf("the plugin should have registered an analyzer:\n%s\nstderr:\n%s", out, stderr.String())
 	}
-	// README.md is unchanged in this fixture, so the finding is correctly dropped.
-	if !strings.Contains(out, "outside the diff") {
-		t.Fatalf("want the out-of-diff finding accounted for, got:\n%s", out)
+	if strings.Contains(out, "outside the diff") {
+		t.Fatalf("the example plugin reported outside the diff, so nobody sees it:\n%s", out)
+	}
+	if !strings.Contains(out, "example/shell-plugin-ran") {
+		t.Fatalf("want the example plugin's finding in the report, got:\n%s", out)
 	}
 	if !strings.Contains(stderr.String(), "shell-hello: started") {
 		t.Fatalf("want the plugin's diagnostics in the run log, got %q", stderr.String())
+	}
+}
+
+// A plugin that reports outside the diff has its findings dropped and counted.
+//
+// The plugin here is written to be wrong on purpose. Covering this with a
+// deliberately broken plugin rather than with the example keeps the two claims
+// separate: the core drops out-of-diff findings, and the example does not produce
+// any. Tying them together is how the example stayed wrong.
+func TestFindingsOutsideTheDiffAreDroppedAndCounted(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	script := filepath.Join(t.TempDir(), "wrong.sh")
+	// Answers the handshake, then reports at a location the fixture's change does
+	// not touch. NOT_A_FILE.md exists in no fixture, so this can never accidentally
+	// start landing inside a diff.
+	body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '%s\n' '{"type":"hello","protocol":1,"plugin":"wrong","version":"0"}' ;;
+    *'"type":"describe"'*) printf '%s\n' '{"type":"describe","analyzers":[{"id":"wrong","lane":"deterministic","order":900,"available":true}]}' ;;
+    *'"type":"analyze"'*)  printf '%s\n' '{"type":"findings","analyzer":"wrong","findings":[{"fingerprint":"","ruleId":"example/out-of-diff","lane":"deterministic","confidence":"high","severity":"error","file":"NOT_A_FILE.md","line":1,"message":"reported where nobody is looking"}]}' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeConfig(t, repo.Root, "plugins:\n  - id: wrong\n    command: sh\n    args: [\""+script+"\"]\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "text"},
+		&stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	out := stdout.String()
+	if strings.Contains(out, "example/out-of-diff") {
+		t.Errorf("a finding outside the diff reached the report:\n%s", out)
+	}
+	// Dropped silently is the failure mode that cost this project five analyzers,
+	// so the count has to be visible.
+	if !strings.Contains(out, "outside the diff") {
+		t.Errorf("the drop was not accounted for in the report:\n%s", out)
 	}
 }
 

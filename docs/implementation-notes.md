@@ -76,3 +76,29 @@ passed in CI" eventually diverge, and the first symptom is a red build on a gree
 **Done:** `Makefile` introduced at PR-04 with `make check` as the whole gate; CI calls the same
 targets. The `tools` target pins the same staticcheck and addlicense versions CI installs, with a
 comment saying the two must match — a real duplication that is cheaper than a bootstrap script.
+
+### Discovery: `cmd.StdoutPipe` cannot be used with a concurrent `cmd.Wait`
+
+**Plan:** PR-04a specifies spawn, handshake, graceful bye then process-group kill, with four
+fault-injection cases including "dies mid-frame".
+
+**Problem found by the mid-frame test:** the host calls `cmd.Wait()` in a goroutine so it can observe
+an exit while a read is outstanding. `exec.Cmd.StdoutPipe` documents that this is incorrect — `Wait`
+closes those pipes as soon as the process exits, so a plugin that writes half a frame and dies hands
+the host `read |0: file already closed` instead of the half-frame. The distinction matters: one says
+"the plugin is broken and here is what it wrote", the other says nothing useful at all.
+
+**Done:** the host creates its own `os.Pipe` for each stream, assigns the child's ends to
+`cmd.Stdin/Stdout/Stderr`, and closes the parent's copies of the child ends after `Start` so EOF still
+propagates. The parent keeps the read ends, so buffered bytes survive the child's death.
+
+### Deviation: the handshake deadline is derived, not fixed at 30s
+
+**Plan:** implied a fixed handshake timeout.
+
+**Problem:** a fixed 30s made the fault-injection suite take 30 seconds, because "never handshakes" is
+a test that can only end by timing out. A slow test suite is a suite that stops being run.
+
+**Done:** the handshake deadline is the plugin's own timeout, capped at 30 seconds. A plugin that
+cannot introduce itself within its analysis budget will not analyze anything either, and the cap keeps
+a cold Node boot on a CI runner from being called a failure. The suite now runs in under a second.

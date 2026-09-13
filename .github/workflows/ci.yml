@@ -19,11 +19,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go build ./...
-      - run: go vet ./...
-      - run: gofmt -l . | tee /dev/stderr | (! read)
-        name: gofmt
-      - run: go test ./...
+      - run: make build
+      - run: make vet
+      - run: make fmt-check
+      - run: make test
 
   lint:
     runs-on: ubuntu-latest
@@ -34,9 +33,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
-      - run: staticcheck ./...
+      - run: make staticcheck
       - run: go install github.com/google/addlicense@v1.1.1
-      - run: addlicense -check -l mit -c "Adam Tait" -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.json' .
+      - run: make license-check
 
   adrs:
     runs-on: ubuntu-latest

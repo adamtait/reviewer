@@ -62,3 +62,17 @@ direction fails the build, which is what the generator would have bought.
 from Go and can drift in *content* while field names stay in sync. Judged acceptable: those are the
 parts a human reads, and a plugin author reading a stale description is a smaller failure than a
 plugin author missing a field entirely.
+
+### Addition: a Makefile as the single source of the check commands
+
+**Plan:** CI commands listed inline in `.github/workflows/ci.yml`; a `Makefile` appears only at PR-08
+for the git hooks.
+
+**Why changed:** the `addlicense` invocation needs a non-trivial ignore list (prose, YAML, JSON,
+testdata, and the example config a user copies into their own repo — none of which should carry an
+SPDX header). Having that list live only in the workflow guarantees that "it passed locally" and "it
+passed in CI" eventually diverge, and the first symptom is a red build on a green branch.
+
+**Done:** `Makefile` introduced at PR-04 with `make check` as the whole gate; CI calls the same
+targets. The `tools` target pins the same staticcheck and addlicense versions CI installs, with a
+comment saying the two must match — a real duplication that is cheaper than a bootstrap script.

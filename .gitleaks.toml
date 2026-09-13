@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+#
+# Gate on this repository's own history (ADR-0010). Everything gitleaks ships
+# with, plus an allowlist narrow enough that the fixture's deliberate fake
+# credential passes and a real one does not.
+#
+# This is not the configuration used to scan repositories under review — that
+# one lives in the destination repository. This file protects the publishability
+# of this repository.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "internal-hostname"
+description = "An internal or corporate hostname must never enter this repository (ADR-0004)"
+regex = '''(?i)\b[a-z0-9-]+\.(?:corp|internal|intranet|local|lan)\b'''
+tags = ["internal", "hostname"]
+
+
+
+[allowlist]
+description = "Global allowlist"
+
+# Fixture credentials are fabricated values in a real-looking format. They are
+# the input the gitleaks analyzer is tested against, so they have to look real
+# enough to match, and they are confined to testdata to keep the exception
+# narrow.
+paths = [
+  '''^testdata/''',
+  '''^\.gitleaks\.toml$''',
+]
+
+# The example config documents variable names, never values.
+regexes = [
+  '''REVIEW_MODEL_API_KEY''',
+  '''REVIEW_MODEL_BASE_URL''',
+]

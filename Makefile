@@ -10,7 +10,7 @@ SHELL := /bin/sh
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
                   -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**'
 
-.PHONY: check build vet fmt-check test staticcheck license-check adrs tools hooks
+.PHONY: check build vet fmt-check test staticcheck license-check adrs tools hooks secrets
 
 check: build vet fmt-check test staticcheck license-check adrs
 
@@ -44,4 +44,9 @@ tools:
 # Opt in to the pre-commit secret scan. Not installed automatically: a hook that
 # appears without being asked for is a hook people disable.
 hooks:
-	@echo "installed by PR-08"
+	git config core.hooksPath .githooks
+	@echo "pre-commit secret scan enabled. Disable with: git config --unset core.hooksPath"
+
+# Scan this repository's entire history, which is what CI does.
+secrets:
+	gitleaks detect --source . --config .gitleaks.toml --log-opts=--all --redact

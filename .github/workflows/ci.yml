@@ -48,3 +48,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go run ./tools/checkadrs -base origin/${{ github.base_ref || 'main' }}
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the whole history, not just this push
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml

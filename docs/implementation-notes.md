@@ -102,3 +102,21 @@ a test that can only end by timing out. A slow test suite is a suite that stops 
 **Done:** the handshake deadline is the plugin's own timeout, capped at 30 seconds. A plugin that
 cannot introduce itself within its analysis budget will not analyze anything either, and the cap keeps
 a cold Node boot on a CI runner from being called a failure. The suite now runs in under a second.
+
+### Correction: the fixture's fake credential was undetectable
+
+**Plan:** PR-10's exit criterion is that the fixture yields
+`secrets/generic-api-key src/config.ts:4`.
+
+**Problem:** the credential I first wrote into the fixture (`sk-live-…`, with hyphens) matches no
+gitleaks rule. Verified by scanning it directly: "no leaks found". The fixture would have given the
+secrets analyzer nothing to find, PR-10's tests would have passed vacuously, and the secrets gate —
+the one safety property in the whole system — would have been built on a test that never fired.
+
+**Done:** replaced with a fabricated value in a format gitleaks genuinely matches, verified by
+scanning before committing. `testdata/MANIFEST.md` now says not to replace it with an
+obviously-fake placeholder, and says why.
+
+**Worth knowing:** my first probe of the hook used AWS's canonical documentation key
+(`AKIAIOSFODNN7EXAMPLE`) and gitleaks correctly ignored it — those are in its default allowlist. The
+gate does work; testing it needs a plausible fake, not a famous one.

@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Refuse to commit a credential. ADR-0010: nothing internal or secret may enter
+# this repository's history in the first place, because removing it afterwards
+# means a rewrite that invalidates every clone.
+#
+# Install with `make hooks`. Bypass with `git commit --no-verify` if you are
+# certain; CI scans the full history regardless, so a bypass is visible.
+
+set -eu
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed; skipping the secret scan." >&2
+  echo "pre-commit: install it, or run 'make hooks' again after doing so." >&2
+  exit 0
+fi
+
+if ! gitleaks protect --staged --redact --config .gitleaks.toml; then
+  echo >&2
+  echo "pre-commit: a credential-shaped string is staged. Remove it rather than" >&2
+  echo "pre-commit: allowlisting it, unless it is a fabricated fixture value." >&2
+  exit 1
+fi

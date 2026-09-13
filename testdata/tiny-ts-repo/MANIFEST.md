@@ -12,6 +12,11 @@ between the two commits is the change under review.
 | `src/infra/http.ts` | calls `send()` without awaiting the promise | typescript-eslint |
 | `src/config.ts` | a credential-shaped string literal | gitleaks |
 
-The key in `src/config.ts` is a fabricated value in a real-looking format. It is
-allowlisted in `.gitleaks.toml` so the scan of this repository's own history
-stays clean while the scan of the fixture still fires.
+The key in `src/config.ts` is fabricated, but in a format gitleaks genuinely
+matches — verified, because a fixture secret that no scanner detects gives the
+secrets analyzer nothing to find and makes its tests vacuous. Do not replace it
+with an obviously-fake placeholder.
+
+`testdata/` is allowlisted in this repository's `.gitleaks.toml`, so scanning
+this repository's own history stays clean while scanning the fixture as a
+destination repository still fires.

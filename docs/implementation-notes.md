@@ -36,3 +36,27 @@ a URL in an error message is precisely what ends up in a CI log, and the cost of
 **Reads and writes are separate interfaces.** The read interface is `Client`; writes arrive in PR-18 as
 their own type. A reader of this package can see that reviewing a pull request needs no write access at
 all, and there is a test that fails if someone widens the read interface.
+
+## PR-18 — the GitHub reporter
+
+**The comment reads like a review comment, and there is a test enforcing that.** No emoji, no "Automated
+review" banner, no heading. It competes for attention with human comments on the same pull request and
+should not announce itself as different; the rule id in small text at the bottom is what someone searches
+for when they want to argue with the rule. `TestBodyShape` fails on `🤖`, "Automated" and "AI-generated".
+
+**Dedupe reads the summary comment as well as the inline ones.** A finding can move between the collapsed
+summary and an inline comment — that is the whole point of promoting a category once its acceptance rate
+justifies it — and reading only inline comments would post it again as if new. The summary carries a
+marker per finding it lists, and `ParseAllMarkers` collects them.
+
+**Dedupe also applies within a single run.** Two findings that normalise to one identity post once. Not
+hypothetical: a rule firing twice on a duplicated block is exactly what the snippet-based identity in
+ADR-0015 collapses.
+
+**`Side: "RIGHT"` is set explicitly by the reporter rather than defaulted by the client.** Commenting on
+the LEFT side attaches to code the pull request deleted, which is a silent wrong answer, and the call
+site is where that choice should be visible. The client keeps the default as a safety net.
+
+**A failed comment does not lose the others.** GitHub rejects a comment whose line it does not consider
+part of the diff, which happens when the diff we computed and the diff GitHub computed disagree at an
+edge. Each failure is a warning; the rest still post.

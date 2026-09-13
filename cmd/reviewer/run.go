@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/diff"
 	"github.com/adamtait/reviewer/internal/fingerprint"
+	"github.com/adamtait/reviewer/internal/ghclient"
 	"github.com/adamtait/reviewer/internal/pluginhost"
 	"github.com/adamtait/reviewer/internal/reporters"
 	"github.com/adamtait/reviewer/internal/sequencer"
@@ -26,12 +28,12 @@ import (
 // not start, an analyzer that times out and a repository with no configuration
 // are all warnings on an otherwise successful run (ADR-0009, ADR-0013).
 func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv func(string) string) error {
-	cfg, _, err := config.Resolve(o.root, o.config, getenv)
+	cfg, secrets, err := config.Resolve(o.root, o.config, getenv)
 	if err != nil {
 		return err
 	}
 
-	rep, err := reporter(o.reporter, stdout, stderr)
+	rep, err := reporter(ctx, o, cfg, secrets, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -141,16 +143,54 @@ func unavailable(host *pluginhost.Manager) []string {
 	return out
 }
 
-func reporter(name string, out, log io.Writer) (reporters.Reporter, error) {
-	for _, r := range []reporters.Reporter{
-		reporters.Text{Out: out},
-		reporters.RDJSON{Out: out, Log: log},
-	} {
-		if r.Name() == name {
-			return r, nil
-		}
+func reporter(ctx context.Context, o options, cfg config.Config, secrets config.Secrets,
+	out, log io.Writer) (reporters.Reporter, error) {
+
+	switch o.reporter {
+	case "text":
+		return reporters.Text{Out: out}, nil
+	case "rdjson":
+		return reporters.RDJSON{Out: out, Log: log}, nil
+	case "github":
+		return githubReporter(ctx, o, cfg, secrets, out, log)
+	default:
+		return nil, errUsage{fmt.Errorf("unknown reporter %q; want text, rdjson or github", o.reporter)}
 	}
-	return nil, errUsage{fmt.Errorf("unknown reporter %q; want text or rdjson", name)}
+}
+
+// githubReporter assembles the reporter that writes to a pull request. Every
+// failure here is a usage error rather than a run failure: being asked to comment
+// on a pull request and silently not doing it is worse than saying why.
+func githubReporter(ctx context.Context, o options, cfg config.Config, secrets config.Secrets,
+	out, log io.Writer) (reporters.Reporter, error) {
+
+	if o.pr == 0 {
+		return nil, errUsage{errors.New("--reporter github needs --pr to say which pull request to comment on")}
+	}
+	client, err := ghclient.New(cfg.GitHub.APIBaseURL, secrets.GitHubToken, "reviewer/"+version)
+	if err != nil {
+		return nil, errUsage{err}
+	}
+	repo, err := parseRepo(cfg.GitHub.Repo)
+	if err != nil {
+		return nil, errUsage{err}
+	}
+	pr, err := client.GetPullRequest(ctx, repo, o.pr)
+	if err != nil {
+		return nil, errUsage{fmt.Errorf("reading pull request %d: %w", o.pr, err)}
+	}
+	return reporters.GitHub{
+		Client: client, Writer: client, Repo: repo, Number: o.pr,
+		HeadSHA: pr.Head.SHA, DryRun: o.dryRun, Out: out, Log: log,
+	}, nil
+}
+
+func parseRepo(spec string) (ghclient.Repo, error) {
+	owner, name, ok := strings.Cut(strings.TrimSpace(spec), "/")
+	if !ok || owner == "" || name == "" {
+		return ghclient.Repo{}, fmt.Errorf("github.repo is %q, want owner/name", spec)
+	}
+	return ghclient.Repo{Owner: owner, Name: name}, nil
 }
 
 // timings formats the per-analyzer timings for the report. Latency is the risk

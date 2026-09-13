@@ -19,6 +19,7 @@ type options struct {
 	reporter string
 	only     []string
 	skip     []string
+	dryRun   bool
 	version  bool
 }
 
@@ -33,7 +34,8 @@ flags:
   --staged          review the staged changes instead of a branch diff
   --pr N            review pull request N
   --config PATH     configuration file (default: .review/config.yaml under --root)
-  --reporter NAME   text or rdjson (default: text)
+  --reporter NAME   text, rdjson or github (default: text)
+  --dry-run         with --reporter github, print what would be posted and post nothing
   --only IDs        run only these analyzers, comma-separated
   --skip IDs        run everything except these analyzers, comma-separated
   --version         print the version and exit
@@ -60,6 +62,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.reporter, "reporter", "text", "")
 	fs.StringVar(&only, "only", "", "")
 	fs.StringVar(&skip, "skip", "", "")
+	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
 	if err := fs.Parse(args); err != nil {

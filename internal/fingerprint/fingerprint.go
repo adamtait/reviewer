@@ -43,6 +43,17 @@ func ParseMarker(body string) string {
 	return m[1]
 }
 
+// ParseAllMarkers extracts every fingerprint in a body. The collapsed summary
+// comment lists many findings at once, so a finding later promoted from the
+// summary to an inline comment must still be recognised as already said.
+func ParseAllMarkers(body string) []string {
+	var out []string
+	for _, m := range markerRe.FindAllStringSubmatch(body, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
 // Compute derives a finding's identity from its rule, its file, and the
 // normalised source it points at.
 //

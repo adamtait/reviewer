@@ -1,0 +1,196 @@
+// SPDX-License-Identifier: MIT
+
+package reporters
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/adamtait/reviewer/internal/fingerprint"
+	"github.com/adamtait/reviewer/internal/ghclient"
+	"github.com/adamtait/reviewer/pkg/finding"
+)
+
+// GitHub posts findings as inline review comments on a pull request.
+//
+// Two rules decide what it does, and both are about not being muted:
+//
+//   - Only `high` confidence goes inline (ADR-0017). Everything else belongs in
+//     the collapsed summary, because an inline comment is a claim that the
+//     reviewer should stop and look.
+//   - Nothing already said is said again. Every comment carries an invisible
+//     fingerprint marker, and a run reads the existing comments first (ADR-0015,
+//     ADR-0016).
+type GitHub struct {
+	Client ghclient.Client
+	Writer ghclient.Writer
+	Repo   ghclient.Repo
+	Number int
+	// HeadSHA is the revision comments attach to. GitHub rejects a stale one
+	// rather than silently attaching to the wrong revision.
+	HeadSHA string
+	// DryRun prints what would be posted and posts nothing. The default for any
+	// invocation a human is watching.
+	DryRun bool
+	// Out receives the dry-run payload and the posting summary.
+	Out io.Writer
+	// Log receives warnings and skips, which have no place in a pull request.
+	Log io.Writer
+}
+
+func (g GitHub) Name() string { return "github" }
+
+func (g GitHub) Report(ctx context.Context, run Run) error {
+	out := g.Out
+	if out == nil {
+		out = io.Discard
+	}
+	if g.Log != nil {
+		for _, w := range run.Warnings {
+			fmt.Fprintf(g.Log, "warning: %s\n", w)
+		}
+		for _, s := range run.Skipped {
+			fmt.Fprintf(g.Log, "skipped: %s\n", s)
+		}
+	}
+
+	inline, deferred := partition(run.Findings)
+
+	// Read before writing. Without this the tool reposts everything on every
+	// push, which is the failure that makes a reviewer bot intolerable.
+	existing, err := g.existingFingerprints(ctx)
+	if err != nil {
+		return fmt.Errorf("reading existing comments: %w", err)
+	}
+
+	var posted, deduped int
+	for _, f := range inline {
+		if existing[f.Fingerprint] {
+			deduped++
+			continue
+		}
+		comment := g.commentFor(f)
+
+		if g.DryRun {
+			fmt.Fprintf(out, "would comment on %s:%d\n%s\n\n", comment.Path, comment.Line, comment.Body)
+			posted++
+			continue
+		}
+		if _, err := g.Writer.CreateReviewComment(ctx, g.Repo, g.Number, comment); err != nil {
+			// One comment failing — most often because the line is not in the
+			// diff GitHub thinks it is reviewing — must not lose the others.
+			fmt.Fprintf(logOr(g.Log, out), "warning: could not comment on %s:%d: %v\n", f.File, f.Line, err)
+			continue
+		}
+		// Remember it, so two findings that normalise to one identity within a
+		// single run do not both post.
+		existing[f.Fingerprint] = true
+		posted++
+	}
+
+	verb := "posted"
+	if g.DryRun {
+		verb = "would post"
+	}
+	fmt.Fprintf(out, "%d finding%s, %s %d, %d deduped, %d for the summary\n",
+		len(run.Findings), plural(len(run.Findings)), verb, posted, deduped, len(deferred))
+	return nil
+}
+
+// partition splits findings by what an inline comment means. High confidence asks
+// the reviewer to stop and look; anything less is context, and context that
+// interrupts is noise.
+func partition(findings []finding.Finding) (inline, deferred []finding.Finding) {
+	for _, f := range findings {
+		if f.Confidence == finding.ConfidenceHigh {
+			inline = append(inline, f)
+		} else {
+			deferred = append(deferred, f)
+		}
+	}
+	return inline, deferred
+}
+
+// existingFingerprints collects the identities this tool has already posted, from
+// both inline and conversation comments.
+func (g GitHub) existingFingerprints(ctx context.Context) (map[string]bool, error) {
+	seen := map[string]bool{}
+
+	comments, err := g.Client.ListReviewComments(ctx, g.Repo, g.Number)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range comments {
+		if fp := fingerprint.ParseMarker(c.Body); fp != "" {
+			seen[fp] = true
+		}
+	}
+
+	// The summary comment carries the fingerprints of everything it lists, so a
+	// finding promoted from summary to inline is not posted twice.
+	issues, err := g.Client.ListIssueComments(ctx, g.Repo, g.Number)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range issues {
+		for _, fp := range fingerprint.ParseAllMarkers(c.Body) {
+			seen[fp] = true
+		}
+	}
+	return seen, nil
+}
+
+func (g GitHub) commentFor(f finding.Finding) ghclient.NewReviewComment {
+	start, end := f.Span()
+	return ghclient.NewReviewComment{
+		Body:     Body(f),
+		CommitID: g.HeadSHA,
+		Path:     f.File,
+		Line:     end,
+		// Explicit rather than left to the client's default: RIGHT is the
+		// post-change side, and a comment on LEFT would land on code this pull
+		// request deleted.
+		Side:      "RIGHT",
+		StartLine: start,
+	}
+}
+
+// Body renders one finding as a comment.
+//
+// Deliberately plain: no heading, no emoji, no "🤖 Automated review" banner. The
+// comment competes for attention with human review comments and should read like
+// one. The rule id is included because it is what someone searches for when they
+// want to argue with the rule, and the marker is what lets the next run recognise
+// this comment as its own.
+func Body(f finding.Finding) string {
+	var b strings.Builder
+	b.WriteString(f.Message)
+
+	if f.Evidence != "" {
+		b.WriteString("\n\n")
+		b.WriteString(f.Evidence)
+	}
+	if f.Suggestion != "" {
+		b.WriteString("\n\n```suggestion\n")
+		b.WriteString(strings.TrimRight(f.Suggestion, "\n"))
+		b.WriteString("\n```")
+	}
+
+	b.WriteString("\n\n<sub>")
+	b.WriteString(f.RuleID)
+	if f.Confidence != finding.ConfidenceHigh {
+		fmt.Fprintf(&b, " · %s confidence", f.Confidence)
+	}
+	b.WriteString("</sub>\n")
+	b.WriteString(fingerprint.Marker(f.Fingerprint))
+	return b.String()
+}
+
+func logOr(log, fallback io.Writer) io.Writer {
+	if log != nil {
+		return log
+	}
+	return fallback
+}

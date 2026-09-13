@@ -408,3 +408,45 @@ func commit(t *testing.T, root, message string) {
 		}
 	}
 }
+
+func TestGitHubReporterRequiresAPullRequestNumber(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "github"},
+		&stdout, &stderr, noEnv)
+
+	var usage errUsage
+	if !errors.As(err, &usage) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+	// Being asked to comment on a pull request and silently not doing it is worse
+	// than saying why.
+	if !strings.Contains(err.Error(), "--pr") {
+		t.Fatalf("want the missing flag named, got %v", err)
+	}
+}
+
+func TestGitHubReporterRequiresAToken(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	writeConfig(t, repo.Root, "github:\n  apiBaseUrl: http://127.0.0.1:1\n  repo: o/r\n")
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "github", "--pr", "1"},
+		&stdout, &stderr, noEnv)
+	if err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("want a clear message about the missing token, got %v", err)
+	}
+}
+
+func TestParseRepo(t *testing.T) {
+	if _, err := parseRepo("owner/name"); err != nil {
+		t.Fatalf("owner/name must parse, got %v", err)
+	}
+	for _, bad := range []string{"", "owner", "/name", "owner/", "  "} {
+		if _, err := parseRepo(bad); err == nil {
+			t.Fatalf("%q must not parse as a repository", bad)
+		}
+	}
+}

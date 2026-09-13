@@ -77,6 +77,15 @@ tools:
 	go install github.com/google/addlicense@v1.1.1
 	./.github/scripts/install-tools.sh
 
+# Scans every object in the history for detail belonging to somewhere else.
+#
+# Not part of `check`: it asks about the repository rather than about your
+# change, so a finding is somebody's old commit and not something this commit can
+# fix. CI runs it against what a branch adds on every pull request, and against
+# the whole history on main.
+audit:
+	go run ./tools/audithistory --all
+
 # Opt in to the pre-commit secret scan. Not installed automatically: a hook that
 # appears without being asked for is a hook people disable.
 hooks:

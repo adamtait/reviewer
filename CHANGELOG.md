@@ -47,3 +47,6 @@ Everything so far. The first tagged release is `v0.1.0` (PR-46).
 - Two CI surfaces: a GitHub Action and a local poller.
 - `reviewer metrics`, reporting acceptance per rule, so a rule nobody acts on can
   be deleted on evidence.
+- `tools/audithistory`, which scans every object in the history — not the working
+  tree — for detail belonging to somewhere else and for files under a licence
+  incompatible with MIT. Run on every pull request and on `main`.

@@ -191,11 +191,24 @@ func TestRootIsNotSettableFromTheFile(t *testing.T) {
 // repository under review, which is exactly the channel the seam requires.
 func TestNoEndpointsInTheSource(t *testing.T) {
 	url := regexp.MustCompile(`https?://[a-zA-Z0-9]`)
-	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {
+	// The whole module, not this package's parent. The guard is stated as
+	// "nothing in the core names a host", but walking ".." from here covers
+	// internal/ alone — cmd/, pkg/ and tools/ were never checked by the test that
+	// says they are.
+	err := filepath.WalkDir("../..", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		// node_modules carries vendored JavaScript packages that ship Go files of
+		// their own; they are not this project's source. Skipped by name for the
+		// same reason the Makefile filters them out of the package list.
+		if d.IsDir() {
+			if d.Name() == "node_modules" || d.Name() == "dist" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		body, err := os.ReadFile(path)

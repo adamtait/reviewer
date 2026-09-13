@@ -111,6 +111,31 @@ jobs:
       - run: go run ./tools/checkadrs -base origin/${{ github.base_ref || 'main' }}
       - run: make licenses
 
+  # Nothing belonging to somewhere else, anywhere in the history.
+  #
+  # Publishing a repository publishes its history, so a value deleted in the next
+  # commit is still published. This reads git objects rather than the working
+  # tree, which is the only reading of "is this safe to publish" that is true.
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the audit is about history; a shallow clone has none
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # On a pull request, only what the branch adds — a few dozen blobs, so it
+      # runs on every push. The full history is audited on main, where it is the
+      # standing answer to "is this still safe to publish".
+      - name: Audit what this branch adds
+        if: github.event_name == 'pull_request'
+        run: go run ./tools/audithistory --base "origin/${{ github.base_ref }}"
+      - name: Audit the whole history
+        if: github.event_name != 'pull_request'
+        run: go run ./tools/audithistory --all
+
   plugin:
     runs-on: ubuntu-latest
     steps:
@@ -147,7 +172,7 @@ jobs:
     name: ci
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, lint, adrs, plugin, secrets]
+    needs: [test, lint, adrs, plugin, secrets, provenance]
     steps:
       - name: Fail unless every job succeeded
         # Explicitly not `!failure()`: a cancelled or skipped dependency would

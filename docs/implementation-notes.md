@@ -247,3 +247,70 @@ GitHub Release, no npm publish, no provenance attestation, and `NPM_TOKEN` does 
 yet. The spec's proof calls for a `v0.0.1-rc.1` tag on a scratch branch; that publishes to a
 public registry under a name this project does not own yet, so it is left for whoever holds
 the npm account. Every gate that would refuse such a tag has been run by hand.
+
+## PR-46 — Audit provenance
+
+### Shapes, not names
+
+The audit matches the *shape* of detail belonging to somewhere else — a hostname under a
+private suffix, an RFC 1918 address with a port, an absolute path inside a home directory,
+a link into a private workspace, a copyleft licence header — and never a name.
+
+Two reasons, and the second is the one that matters. Writing an organisation's internal
+hostnames into a public repository in order to prove the repository contains no internal
+hostnames is self-defeating (ADR-0004). And a name list only ever finds what somebody
+thought of; shapes keep working for the organisation nobody had in mind, which is every
+organisation that forks this.
+
+Credentials are deliberately out of scope: gitleaks already scans the full history in its
+own CI job, against rules maintained by people who do that for a living.
+
+### The first draft reported 45 findings, all noise
+
+`\b[a-z0-9.-]*\.(internal|corp|…|test)\b` matched every `order.test.ts` in the repository
+and every `SOURCE.test(path)` call. `.test` is a real special-use TLD and also how every
+test file here is named, so it is dropped entirely — a leaked `something.test` hostname is
+not a risk worth that false-positive rate.
+
+`.local` is the same problem one step down: a real mDNS suffix, and also how half the
+properties in any codebase are named. It is kept only where it carries a port or a path,
+which `config.local` never does. The tightened pattern requires a hostname to sit where a
+hostname can sit — after a scheme, an `@`, or an opening delimiter.
+
+This matters more than the count suggests. An audit whose output is all noise gets skipped,
+and then it is not an audit.
+
+### "0 findings" has to be earned
+
+A scanner whose patterns match nothing reports a clean history in exactly the words a clean
+history produces. That failure has happened five times in this project already, so the tool
+has a test asserting every pattern catches a genuine example, a second asserting ordinary
+code does not, and a third that the skip list stays short — the skip list being where an
+audit quietly stops looking.
+
+Verified beyond the unit tests: built a repository with a leak committed and then deleted,
+so the working tree is clean and the history is not. The audit finds it and exits 1. That
+is the whole reason the tool reads git objects rather than files.
+
+### A gap in the ADR-0004 guard
+
+`TestNoEndpointsInTheSource` says "nothing in the core may name a host" and walked `..`
+from `internal/config` — which is `internal/`. `cmd/`, `pkg/` and `tools/` were never
+checked by the test that claims to check them. Widened to the module root; the tree was
+already clean, so it cost nothing, and a probe file in `cmd/` confirms the widened guard
+actually reaches there.
+
+### Cost
+
+Distinct blobs, not commits: a file untouched for two hundred commits is one scan. The full
+history is 623 blobs and under two seconds, and a pull request's additions are a few dozen —
+so CI audits what a branch adds on every push, and the whole history on `main`.
+
+### Not done, and why
+
+The plan's PR-46 also flips the repository to public and tags `v0.1.0`. Neither is mine to
+do: visibility is a GitHub setting on an account I am not administering, and the tag
+triggers a real publish to npm under a scope whose ownership I cannot verify — the one
+action in this plan that is genuinely irreversible. The audit that was supposed to gate both
+is in place, clean, and running on every pull request, which is the part that had to exist
+first.

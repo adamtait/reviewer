@@ -94,6 +94,21 @@ change's description, an entry in `THIRD_PARTY_LICENSES.md`, and a licence
 An external binary spawned as a process is not a dependency in that sense, which is
 how Opengrep (LGPL-2.1) is usable at all. That boundary is asserted by a test.
 
+## Publishing safety
+
+`make audit` scans every object in the history — not the working tree — for
+hostnames, addresses and paths belonging to somewhere else, and for files under a
+licence this project cannot redistribute under MIT. Publishing a repository
+publishes its history, so a value deleted in the following commit is still
+published; "the working tree is clean" answers a different question.
+
+It matches shapes rather than names, deliberately. Writing an organisation's
+internal hostnames into a public repository to prove the repository contains none
+is self-defeating, and a name list only finds what somebody thought of.
+
+A finding is not automatically a leak. It is something to look at before this
+repository is published or a release is tagged.
+
 ## Releases
 
 A release is a tag, and only a tag. There is no manual publish step, no

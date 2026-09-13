@@ -1,0 +1,72 @@
+---
+name: code-review
+description: >
+  Review the change you are about to push or open a pull request for, using this
+  repository's own analyzers and conventions. Use this before pushing a branch and
+  before opening a pull request, and after making changes in response to review
+  comments.
+---
+
+# Reviewing a change in this repository
+
+This repository has a review tool configured. Run it before you push, so that what
+a human sees on the pull request is not the first time anyone looked at the change.
+
+## When to run it
+
+- **Before pushing a branch.** Findings you fix now cost nobody's attention.
+- **Before opening a pull request**, if the branch was already pushed.
+- **After changing anything in response to review comments**, because a fix
+  frequently introduces the next problem.
+
+Not on every file save. It spawns compilers and scanners, and a few seconds of
+somebody else's patience is the thing it is protecting.
+
+## How to run it
+
+```
+bash .agent/skills/code-review/scripts/review.sh --staged
+```
+
+That reviews what is staged. To review a whole branch against its base:
+
+```
+bash .agent/skills/code-review/scripts/review.sh --base {{ .DefaultBranch }}
+```
+
+## Reading the output
+
+The output separates two kinds of thing, and the difference decides what you do
+about each:
+
+**Facts.** Type errors, lint violations, layering violations, failing tests,
+unused exports, vulnerable dependencies, this repository's own convention rules.
+These came from a compiler or a pattern match. If one appears, the code has the
+problem — fix it, or say in the pull request why the rule does not apply here.
+
+**Suggestions.** Anything marked as medium or low confidence, and anything in the
+`arch/` or `quality/` categories. These came from a model reading your diff. They
+are frequently right and they are judgements. Read each one, act on the ones you
+agree with, and ignore the rest without ceremony. A suggestion you disagree with
+is not a finding you have to argue against.
+
+Confidence is the marker: high-confidence findings are facts about the code,
+everything else is an opinion about it.
+
+## What not to do
+
+- **Do not fix a finding by suppressing it.** Adding an ignore comment, widening a
+  type to `any`, or deleting a test to make the runner pass converts a visible
+  problem into an invisible one.
+- **Do not act on a finding about code this change did not touch.** The tool scopes
+  itself to the diff; if something slips through, it is not this change's to fix.
+- **Do not treat an empty result as permission.** It means nothing was found, which
+  is a much weaker statement than "this is good".
+{{- if .LaneBConfigured }}
+
+## A note on the model lane
+
+This repository has a model access path configured, so some findings may come from
+a model. It runs only after the secrets scan has passed, and it never runs at all
+if a credential was found in the diff.
+{{- end }}

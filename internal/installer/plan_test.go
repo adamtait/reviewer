@@ -13,7 +13,7 @@ func TestPlanForTheFixtureRepository(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
 	p := BuildPlan(mustDetect(t, root), "v0.1.0", Options{})
 
-	if got, want := p.Summary(), "5 files to create, 1 devDependency to add, 0 files to overwrite"; got != want {
+	if got, want := p.Summary(), "7 files to create, 1 devDependency to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if len(p.DevDependencies) != 1 {
@@ -35,7 +35,7 @@ func TestPlanForTheFixtureRepository(t *testing.T) {
 		".review/config.yaml",
 		".github/workflows/review.yml",
 		"no dependency-cruiser config",
-		"5 files to create",
+		"7 files to create",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("plan does not mention %q:\n%s", want, text)
@@ -52,7 +52,7 @@ func TestPlanLeavesExistingFilesAloneUnlessForced(t *testing.T) {
 	d := mustDetect(t, root)
 
 	plain := BuildPlan(d, "v0.1.0", Options{})
-	if got, want := plain.Summary(), "4 files to create, 1 devDependency to add, 0 files to overwrite"; got != want {
+	if got, want := plain.Summary(), "6 files to create, 1 devDependency to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if plain.Files[0].Action != Unchanged {
@@ -60,7 +60,7 @@ func TestPlanLeavesExistingFilesAloneUnlessForced(t *testing.T) {
 	}
 
 	forced := BuildPlan(d, "v0.1.0", Options{Force: true})
-	if got, want := forced.Summary(), "4 files to create, 1 devDependency to add, 1 file to overwrite"; got != want {
+	if got, want := forced.Summary(), "6 files to create, 1 devDependency to add, 1 file to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if forced.Files[0].Action != Overwrite {
@@ -76,7 +76,7 @@ func TestPlanAddsNoPluginToARepositoryWithoutTypeScript(t *testing.T) {
 	if len(p.DevDependencies) != 0 {
 		t.Errorf("nothing for the plugin to analyze; got %+v", p.DevDependencies)
 	}
-	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 files to overwrite"; got != want {
+	if got, want := p.Summary(), "7 files to create, 0 devDependencies to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if !mentions(p.Notes, "no tsconfig.json") {
@@ -103,7 +103,7 @@ func TestPlanNamesWhatItCouldNotFind(t *testing.T) {
 		t.Errorf("want the missing remote reported, got %v", p.Notes)
 	}
 	// A non-Node repository still gets a full install: the binary analyzers work.
-	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 files to overwrite"; got != want {
+	if got, want := p.Summary(), "7 files to create, 0 devDependencies to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }

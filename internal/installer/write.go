@@ -25,6 +25,7 @@ import (
 //
 //go:embed templates/config.yaml.tmpl templates/review.yml.tmpl
 //go:embed templates/review.gitignore.tmpl templates/env.example.tmpl
+//go:embed templates/SKILL.md.tmpl templates/review.sh.tmpl
 var templates embed.FS
 
 // checksumPlaceholder is what the generated workflow carries where the release
@@ -123,6 +124,10 @@ func renderOne(path string, data any) ([]byte, error) {
 		name = "review.yml.tmpl"
 	case ".review/.env.example":
 		name = "env.example.tmpl"
+	case ".agent/skills/code-review/SKILL.md":
+		name = "SKILL.md.tmpl"
+	case ".agent/skills/code-review/scripts/review.sh":
+		name = "review.sh.tmpl"
 	case ".review/rules/.gitkeep":
 		// Deliberately empty: git tracks the directory, nothing more.
 		return []byte{}, nil
@@ -168,7 +173,14 @@ func Install(p Plan, pluginVersion string) (Report, error) {
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return report, fmt.Errorf("creating %s: %w", filepath.Dir(f.Path), err)
 		}
-		if err := os.WriteFile(full, f.Content, 0o644); err != nil {
+		// Executable where the file is a script. A skill whose one command is not
+		// executable fails on its first use, with an error about permissions rather
+		// than about the review.
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(f.Path, ".sh") {
+			mode = 0o755
+		}
+		if err := os.WriteFile(full, f.Content, mode); err != nil {
 			return report, fmt.Errorf("writing %s: %w", f.Path, err)
 		}
 		if f.Action == Overwrite {
@@ -306,6 +318,12 @@ type data struct {
 	// ProviderEnv are the variables .env.example names.
 	ProviderEnv []string
 
+	// DefaultBranch is what the skill tells an agent to review against.
+	DefaultBranch string
+	// LaneBConfigured adds the skill's note about model-produced findings. Omitted
+	// otherwise, because a section explaining a lane nobody configured is a section
+	// that teaches the reader to skim.
+	LaneBConfigured bool
 	// Projects is written only for a repository that has them, so a single-package
 	// repository's generated config is byte-for-byte what it was before monorepo
 	// support existed.
@@ -339,6 +357,8 @@ func templateData(p Plan, pluginVersion string) data {
 		ProviderEnv:         p.Options.Provider.Env,
 		ProviderVars:        nonSecret(p.Options.Provider.Env),
 		Projects:            p.Projects,
+		DefaultBranch:       defaultBranch(d),
+		LaneBConfigured:     p.Options.Provider.ID != "",
 	}
 	out.InstallCommand = ciInstallCommand(out.PackageManager)
 	out.CacheKey = setupNodeCache(out.PackageManager)
@@ -379,6 +399,16 @@ func nonSecret(env []string) []string {
 		}
 	}
 	return out
+}
+
+// defaultBranch is what the skill suggests reviewing against. Detected rather than
+// assumed: a repository whose trunk is `master` or `develop` should not be handed a
+// command that fails.
+func defaultBranch(d Detected) string {
+	if d.DefaultBranch != "" {
+		return d.DefaultBranch
+	}
+	return "main"
 }
 
 func packageManagerOrNpm(manager string) string {

@@ -527,7 +527,7 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	if status := git("status", "--porcelain"); status != "" {
 		t.Errorf("--dry-run changed the repository:\n%s", status)
 	}
-	if !strings.Contains(stdout.String(), "5 files to create, 1 devDependency to add, 0 files to overwrite") {
+	if !strings.Contains(stdout.String(), "7 files to create, 1 devDependency to add, 0 files to overwrite") {
 		t.Errorf("want the plan summary on stdout, got:\n%s", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "nothing written") {
@@ -553,7 +553,7 @@ func TestInitThenReviewOnAFreshRepository(t *testing.T) {
 	if err := run(context.Background(), []string{"init", "--root", root, "--yes"}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "5 files created") {
+	if !strings.Contains(stdout.String(), "7 files created") {
 		t.Fatalf("want the file set written, got:\n%s", stdout.String())
 	}
 

@@ -28,3 +28,19 @@ secret string appears in no field of the finding.
 
 **Rule ids are namespaced as `secrets/<gitleaks rule>`.** Acceptance is measured per `ruleId`
 (ADR-0024), so the id has to survive a gitleaks upgrade renaming its own rules.
+
+## PR-11 — the secrets gate
+
+**The gate is structural, not a condition.** The plan described it as setting a `laneBBlocked` flag
+that skips lane-B analyzers. Implemented instead as two passes over the analyzer list with the gate
+between them: the model lane's analyzers are separated before anything runs, so there is no code path
+from a finding to a model call. A boolean checked inside one loop is one refactor away from being
+checked in the wrong place; a missing call site cannot be moved.
+
+**It matches the `secrets/` rule namespace, not the gitleaks analyzer id.** A second or replacement
+secrets scanner then closes the gate without the gate being taught about it.
+
+**The test is a spy plugin, not a mock.** A shell plugin declaring an `llm`-lane analyzer appends to a
+file every time it receives an `analyze` frame. The assertion is on what actually crossed the process
+boundary — zero invocations with the fixture's credential present, exactly one after it is removed and
+committed. A flag-level assertion would have passed even if the gate were checked after the call.

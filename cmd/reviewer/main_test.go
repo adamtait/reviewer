@@ -275,3 +275,136 @@ func TestFlagOverridesConfigSkip(t *testing.T) {
 		t.Fatalf("--only must override the file's skip, got:\n%s", stdout.String())
 	}
 }
+
+// PR-11's proof, and the most important test in the project: an analyzer in the
+// model lane must receive no analyze frame at all when the diff contains a
+// credential. The spy records every invocation to a file, so the assertion is
+// about what actually crossed the process boundary rather than about a flag.
+func TestTheModelLaneIsNotInvokedWhenTheDiffCarriesACredential(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks is not installed; the gate would fail closed for a different reason")
+	}
+
+	spyPlugin := func(t *testing.T, log string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "spy.sh")
+		body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"spy","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[{"id":"spy-llm","lane":"llm","order":500,"available":true}]}\n' ;;
+    *'"type":"analyze"'*)
+      echo "invoked" >> "` + log + `"
+      printf '{"type":"findings","analyzer":"spy-llm","findings":[]}\n' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	invocations := func(log string) int {
+		body, err := os.ReadFile(log)
+		if err != nil {
+			return 0
+		}
+		return strings.Count(string(body), "invoked")
+	}
+
+	t.Run("credential present: the model lane never runs", func(t *testing.T) {
+		repo := testfixture.Build(t, "tiny-ts-repo")
+		log := filepath.Join(t.TempDir(), "spy.log")
+		writeConfig(t, repo.Root, "plugins:\n  - id: spy\n    command: "+spyPlugin(t, log)+"\n")
+
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(),
+			[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+			t.Fatal(err)
+		}
+		if n := invocations(log); n != 0 {
+			t.Fatalf("the model lane was invoked %d times with a credential in the diff", n)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "secrets/") {
+			t.Fatalf("want the credential reported, got:\n%s", out)
+		}
+		// The developer has to be told what happened to their diff.
+		if !strings.Contains(out, "not sent anywhere") {
+			t.Fatalf("want the gate's reason in the report, got:\n%s", out)
+		}
+	})
+
+	t.Run("credential removed: the model lane runs", func(t *testing.T) {
+		repo := testfixture.Build(t, "tiny-ts-repo")
+		if err := os.Remove(filepath.Join(repo.Root, "src", "config.ts")); err != nil {
+			t.Fatal(err)
+		}
+		commit(t, repo.Root, "remove the credential")
+
+		log := filepath.Join(t.TempDir(), "spy.log")
+		writeConfig(t, repo.Root, "plugins:\n  - id: spy\n    command: "+spyPlugin(t, log)+"\n")
+
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(),
+			[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+			t.Fatal(err)
+		}
+		if n := invocations(log); n != 1 {
+			t.Fatalf("want the model lane invoked once on a clean diff, got %d\n%s\n%s",
+				n, stdout.String(), stderr.String())
+		}
+	})
+}
+
+// With no secrets scanner available the gate must fail closed: an unchecked diff
+// is not sent to a third party just because nothing checked it.
+func TestTheModelLaneIsNotInvokedWhenTheScanCouldNotRun(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	log := filepath.Join(t.TempDir(), "spy.log")
+	spy := filepath.Join(t.TempDir(), "spy.sh")
+	body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"spy","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[{"id":"spy-llm","lane":"llm","order":500,"available":true}]}\n' ;;
+    *'"type":"analyze"'*)  echo "invoked" >> "` + log + `"; printf '{"type":"findings","analyzer":"spy-llm","findings":[]}\n' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(spy, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, repo.Root,
+		"plugins:\n  - id: spy\n    command: "+spy+"\ntools:\n  gitleaks:\n    path: definitely-not-installed-xyz\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(log); err == nil && strings.Contains(string(body), "invoked") {
+		t.Fatalf("the model lane ran with no secrets scan performed:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "could not run") {
+		t.Fatalf("want the gate to explain that the scan did not happen, got:\n%s", stdout.String())
+	}
+}
+
+func commit(t *testing.T, root, message string) {
+	t.Helper()
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", message}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}

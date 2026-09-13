@@ -9,9 +9,11 @@ import (
 	"io"
 	"sort"
 
+	"github.com/adamtait/reviewer/internal/analyzers/gitleaks"
 	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/diff"
+	"github.com/adamtait/reviewer/internal/gate"
 	"github.com/adamtait/reviewer/internal/pluginhost"
 	"github.com/adamtait/reviewer/internal/reporters"
 	"github.com/adamtait/reviewer/pkg/finding"
@@ -73,14 +75,22 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		ContextLines: cfg.Analyzers.ContextLines,
 	}
 
-	var all []finding.Finding
-	for _, a := range analyzers {
-		found, warnings, err := host.Analyze(ctx, a.PluginID, a.ID, req)
-		if err != nil {
-			run.Warnings = append(run.Warnings, fmt.Sprintf("%s: %v", a.ID, err))
-			continue
-		}
-		run.Warnings = append(run.Warnings, warnings...)
+	// Two passes with the gate between them. Every deterministic analyzer runs
+	// first; only then, and only if nothing turned up a credential, may anything
+	// in the model lane run (ADR-0012). The ordering is structural rather than a
+	// check inside the loop, so there is no path from a finding to a model call.
+	deterministic, llm := splitByLane(analyzers)
+
+	all, scanned := runPass(ctx, host, deterministic, req, &run)
+
+	gateState := gate.Decide(all, scanned)
+	switch {
+	case gateState.Blocked && len(llm) > 0:
+		run.Skipped = append(run.Skipped, gateState.Reason)
+	case gateState.Blocked:
+		// Nothing in the model lane to block; saying so would be noise.
+	default:
+		found, _ := runPass(ctx, host, llm, req, &run)
 		all = append(all, found...)
 	}
 
@@ -105,6 +115,38 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 			"no analyzers are configured; see .review/config.yaml and `reviewer init`")
 	}
 	return rep.Report(ctx, run)
+}
+
+// splitByLane separates the analyzers the gate may block from those it may not.
+func splitByLane(in []pluginhost.Registered) (deterministic, llm []pluginhost.Registered) {
+	for _, a := range in {
+		if a.Lane == finding.LaneLLM {
+			llm = append(llm, a)
+		} else {
+			deterministic = append(deterministic, a)
+		}
+	}
+	return deterministic, llm
+}
+
+// runPass runs one lane's analyzers. It also reports whether a secrets analyzer
+// completed, which is what lets the gate tell "clean" from "not checked".
+func runPass(ctx context.Context, host *pluginhost.Manager, analyzers []pluginhost.Registered,
+	req plugin.AnalyzeRequest, run *reporters.Run) (found []finding.Finding, secretsScanned bool) {
+
+	for _, a := range analyzers {
+		results, warnings, err := host.Analyze(ctx, a.PluginID, a.ID, req)
+		if err != nil {
+			run.Warnings = append(run.Warnings, fmt.Sprintf("%s: %v", a.ID, err))
+			continue
+		}
+		if a.ID == gitleaks.ID {
+			secretsScanned = true
+		}
+		run.Warnings = append(run.Warnings, warnings...)
+		found = append(found, results...)
+	}
+	return found, secretsScanned
 }
 
 func changedFiles(ctx context.Context, o options, root string) ([]diff.File, error) {

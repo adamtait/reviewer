@@ -6,8 +6,9 @@ model-backed lane — which is **off in every generated config** and is turned o
 `laneB.enabled` in the destination repository's `.review/config.yaml`.
 
 `reviewer init` asks which access path to configure and writes the choice to `laneB.provider`.
-It never writes a credential: every secret is named in `.env.example` and read from the
-environment at run time.
+It never writes a credential: every variable is named in `.review/.env.example` and read from
+the environment at run time. That file lives under `.review/` rather than at the repository root
+so that the `.gitignore` `init` writes can cover the `.env` you copy it to.
 
 ## The six paths
 
@@ -49,10 +50,21 @@ wonder why the lane is quiet.
 
 The deterministic lane runs in CI on every path.
 
+## In CI: one secret, the rest as variables
+
+The API key is a credential and goes in a repository **secret**. The model name and, for
+`openai-compatible`, the base URL are configuration, and the generated workflow reads them as
+repository **variables** (`vars.REVIEW_MODEL_NAME`, `vars.REVIEW_MODEL_BASE_URL`). Both are read
+only from the environment — nothing is written into `.review/config.yaml` — so a workflow carrying
+the key alone would give the model lane a credential and nothing to call.
+
+Turning the lane on in CI is therefore: set the secret, set the variables, flip
+`laneB.enabled: true`. The workflow itself needs no edit.
+
 ## What is never written
 
-- No credential, on any path, by any command. `init` writes `.env.example`, which names variables
-  and assigns nothing.
+- No credential, on any path, by any command. `init` writes `.review/.env.example`, which names
+  variables and assigns nothing, and a `.gitignore` covering the `.env` you copy it to.
 - No endpoint, into this repository's source. `REVIEW_MODEL_BASE_URL` carries yours.
 - No model name, into this repository's source. Model names go stale faster than releases;
   `REVIEW_MODEL_NAME` carries yours, so changing it is not a commit.

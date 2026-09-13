@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/testfixture"
@@ -23,11 +24,12 @@ func TestInstallWritesTheFileSetAndIsIdempotent(t *testing.T) {
 	if len(first.Created) != 5 || len(first.Overwritten) != 0 || len(first.Unchanged) != 0 {
 		t.Fatalf("want five files created, got %+v", first)
 	}
-	if status := git("status", "--porcelain"); strings.Count(status, "\n") != 4 {
-		// Four untracked lines: .env.example, .github/, .review/ — git collapses
-		// new directories — plus nothing else. Anything more is a file the plan
-		// did not name.
-		t.Logf("status after install:\n%s", status)
+	// git collapses new directories, so the five files show as two untracked
+	// entries: .github/ and .review/. Anything else is a path the plan did not
+	// name, which is the guarantee --dry-run rests on.
+	if status := strings.Fields(git("status", "--porcelain")); len(status) != 4 {
+		t.Errorf("want exactly .github/ and .review/ untracked, got:\n%s",
+			git("status", "--porcelain"))
 	}
 
 	second := install(t, root)
@@ -142,7 +144,7 @@ func TestNothingWrittenLooksLikeACredential(t *testing.T) {
 
 	for _, path := range report.Created {
 		body := read(t, root, path)
-		if path == ".env.example" && assigned.MatchString(body) {
+		if path == ".review/.env.example" && assigned.MatchString(body) {
 			t.Errorf(".env.example assigns a value:\n%s", body)
 		}
 		if secretish.MatchString(body) {
@@ -152,10 +154,33 @@ func TestNothingWrittenLooksLikeACredential(t *testing.T) {
 }
 
 func TestTheGeneratedWorkflowUsesTheDetectedPackageManager(t *testing.T) {
-	for _, tc := range []struct{ lockfile, cache, install string }{
-		{"package-lock.json", "cache: npm", "run: npm ci"},
-		{"pnpm-lock.yaml", "cache: pnpm", "run: pnpm install --frozen-lockfile"},
-		{"yarn.lock", "cache: yarn", "run: yarn install --immutable"},
+	for _, tc := range []struct {
+		lockfile string
+		want     []string
+		absent   []string
+	}{
+		{
+			lockfile: "package-lock.json",
+			want:     []string{`cache: "npm"`, `run: "npm ci"`},
+			absent:   []string{"corepack"},
+		},
+		{
+			// corepack, before setup-node: pnpm is not on a hosted runner, and
+			// setup-node's cache resolution shells out to `pnpm store path`.
+			lockfile: "pnpm-lock.yaml",
+			want:     []string{"- run: corepack enable", `cache: "pnpm"`, `run: "pnpm install --frozen-lockfile"`},
+		},
+		{
+			lockfile: "yarn.lock",
+			want:     []string{"- run: corepack enable", `cache: "yarn"`, `run: "yarn install --immutable"`},
+		},
+		{
+			// actions/setup-node accepts npm, yarn and pnpm only. `cache: bun`
+			// fails the step outright, so bun gets no cache and a manual step.
+			lockfile: "bun.lockb",
+			want:     []string{`run: "bun install --frozen-lockfile"`},
+			absent:   []string{"cache:"},
+		},
 	} {
 		t.Run(tc.lockfile, func(t *testing.T) {
 			root := t.TempDir()
@@ -163,12 +188,20 @@ func TestTheGeneratedWorkflowUsesTheDetectedPackageManager(t *testing.T) {
 			write(t, root, "tsconfig.json", `{}`)
 			write(t, root, tc.lockfile, "")
 
-			install(t, root)
+			report := install(t, root)
 			body := read(t, root, ".github/workflows/review.yml")
-			for _, want := range []string{tc.cache, tc.install} {
+			for _, want := range tc.want {
 				if !strings.Contains(body, want) {
 					t.Errorf("want %q in the workflow:\n%s", want, body)
 				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(body, absent) {
+					t.Errorf("want no %q in the workflow:\n%s", absent, body)
+				}
+			}
+			if tc.lockfile == "bun.lockb" && !strings.Contains(strings.Join(report.Manual, "\n"), "installing bun") {
+				t.Errorf("want the missing bun named as an outstanding step, got %v", report.Manual)
 			}
 		})
 	}
@@ -183,7 +216,7 @@ func TestTheGeneratedWorkflowPinsAReleaseOrSaysItCannot(t *testing.T) {
 	if _, err := Install(plan, releaseV); err != nil {
 		t.Fatal(err)
 	}
-	if body := read(t, root, ".github/workflows/review.yml"); !strings.Contains(body, "adamtait/reviewer@v0.1.0") {
+	if body := read(t, root, ".github/workflows/review.yml"); !strings.Contains(body, "adamtait/reviewer@v0.1.0\n") {
 		t.Errorf("want the release pinned:\n%s", body)
 	}
 
@@ -259,4 +292,146 @@ func read(t *testing.T, root, path string) string {
 		t.Fatal(err)
 	}
 	return string(body)
+}
+
+// A repository can commit a symlink at any component of a path this installer
+// writes. Following it would put bytes outside the root while the report named an
+// in-repo path — an escape and a false statement about where the bytes went.
+func TestInstallRefusesToWriteThroughASymlink(t *testing.T) {
+	for _, tc := range []struct{ name, link, target string }{
+		{name: "a directory component", link: ".review", target: "../outside"},
+		{name: "the file itself", link: ".review/.env.example", target: "../../outside/taken.txt"},
+		// The dangerous case: a dangling link looks absent to a plain Stat, so it
+		// would be planned as "create" and then create the target.
+		{name: "a dangling link", link: ".github", target: "../outside/nothing-here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			root := filepath.Join(base, "repo")
+			outside := filepath.Join(base, "outside")
+			for _, dir := range []string{root, outside} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(t, root, "package.json", `{"name":"x"}`)
+			link := filepath.Join(root, filepath.FromSlash(tc.link))
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Fatal(err)
+			}
+
+			plan := BuildPlan(mustDetect(t, root), releaseV, Options{})
+			if len(plan.Problems) == 0 {
+				t.Fatal("want the symlink reported as a problem")
+			}
+			if _, err := Install(plan, releaseV); err == nil {
+				t.Fatal("want the install refused")
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("the install wrote outside the root: %v", entries)
+			}
+		})
+	}
+}
+
+// `.review` present as a regular file makes every path under it fail with ENOTDIR.
+// Classing those as "unchanged" turns an install that wrote no config at all into
+// one that reports success.
+func TestInstallRefusesAPathItCannotExamine(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "package.json", `{"name":"x"}`)
+	write(t, root, ".review", "not a directory\n")
+
+	plan := BuildPlan(mustDetect(t, root), releaseV, Options{})
+	// Two distinct causes: `.review` is not a directory, and neither is
+	// `.review/rules`. Four blocked paths must not become four problems.
+	if len(plan.Problems) != 2 {
+		t.Fatalf("want the problems deduplicated by cause, got %v", plan.Problems)
+	}
+	if _, err := Install(plan, releaseV); err == nil {
+		t.Fatal("want the install refused rather than reported as unchanged")
+	}
+}
+
+// The plan and the report must not disagree about outstanding work: two of these
+// steps decide whether the generated workflow runs at all, so a dry run that
+// omitted them would not be a preview.
+func TestTheDryRunPlanCarriesTheSameManualStepsAsTheInstall(t *testing.T) {
+	root := testfixture.Destination(t, "tiny-monorepo")
+	plan := BuildPlan(mustDetect(t, root), "dev", Options{})
+	if len(plan.Manual) == 0 {
+		t.Fatal("want the outstanding steps in the plan")
+	}
+
+	out := &strings.Builder{}
+	if err := plan.Write(out); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range plan.Manual {
+		if !strings.Contains(out.String(), step) {
+			t.Errorf("the plan does not print %q:\n%s", step, out.String())
+		}
+	}
+
+	report, err := Install(plan, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(report.Manual, "\n") != strings.Join(plan.Manual, "\n") {
+		t.Errorf("plan says %v, report says %v", plan.Manual, report.Manual)
+	}
+}
+
+// Everything interpolated into the generated YAML is repository content or derived
+// from it. A bare interpolation makes a directory called `a: b` into a mapping and
+// truncates a remote containing `#` at a comment, producing a config the tool
+// cannot read back.
+func TestGeneratedFilesSurviveHostileRepositoryContent(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	write(t, root, "package.json", `{"name":"root","workspaces":["packages/*"],"devDependencies":{"typescript":"^5"}}`)
+	write(t, root, "tsconfig.json", `{}`)
+	write(t, root, "packages/a: b/package.json", `{"name":"weird"}`)
+	write(t, root, `packages/quote"and#hash/package.json`, `{"name":"weirder"}`)
+	git := testfixture.Git(t, root)
+	git("init", "-q", "-b", "main")
+	git("remote", "add", "origin", `https://github.com/own#er/na"me.git`)
+
+	install(t, root)
+
+	cfg, _, err := config.Resolve(root, "", func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("the tool cannot read back the config it generated: %v", err)
+	}
+	if got := strings.Join(cfg.Projects, "|"); got != `packages/a: b|packages/quote"and#hash` {
+		t.Errorf("projects round-tripped as %q", got)
+	}
+	if cfg.GitHub.Repo != `own#er/na"me` {
+		t.Errorf("repo round-tripped as %q", cfg.GitHub.Repo)
+	}
+}
+
+func TestDurationString(t *testing.T) {
+	for _, tc := range []struct {
+		in   time.Duration
+		want string
+	}{
+		{2 * time.Minute, "2m"},
+		{90 * time.Second, "1m30s"},
+		{30 * time.Second, "30s"},
+		{time.Hour, "1h"},
+		{time.Hour + 30*time.Minute, "1h30m"},
+		{70 * time.Second, "1m10s"},
+	} {
+		if got := durationString(tc.in); got != tc.want {
+			t.Errorf("durationString(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }

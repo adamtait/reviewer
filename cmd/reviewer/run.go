@@ -114,7 +114,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	run.Skipped = append(run.Skipped, unavailable(host)...)
 	// Read before Close, so the reason a run found nothing is about what the
 	// plugins offered rather than about a shut-down host.
-	offered := len(host.Analyzers())
+	offered, unavailable := len(host.Analyzers()), len(host.Unavailable())
 
 	// Shut the plugins down before reading their warnings. Closing is where "did
 	// not exit within 5s, killing its process group" is recorded, and a deferred
@@ -123,20 +123,27 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	run.Warnings = append(run.Warnings, host.Warnings()...)
 
 	if result.Selected == 0 {
-		run.Warnings = append(run.Warnings, nothingRanReason(cfg, offered))
+		run.Warnings = append(run.Warnings, nothingRanReason(cfg, offered, unavailable))
 	}
 	return rep.Report(ctx, run)
 }
 
-// nothingRanReason explains a run with no analyzers. The three causes need three
-// different answers, and the wrong one sends a person to the wrong place: being
-// told to run `reviewer init` when the real problem is an uninstalled plugin, or
-// being told to install something when a skip list in the config removed
-// everything.
-func nothingRanReason(cfg config.Config, offered int) string {
+// nothingRanReason explains a run with no analyzers. The causes need different
+// answers, and the wrong one sends a person to the wrong place: being told to run
+// `reviewer init` when the real problem is an uninstalled binary, or being told to
+// install something when a skip list in the config removed everything.
+//
+// The last case is the rarest, not the default: the built-in plugin is always
+// registered, so a repository with an empty config still offers analyzers unless
+// every one of them declined.
+func nothingRanReason(cfg config.Config, offered, unavailable int) string {
 	switch {
 	case offered > 0:
 		return "no analyzers ran: every one offered was removed by only/skip"
+	case unavailable > 0:
+		return fmt.Sprintf(
+			"no analyzers ran: all %d declined, each for the reason listed above",
+			unavailable)
 	case len(cfg.Plugins) > 0:
 		return fmt.Sprintf(
 			"no analyzers ran: %d configured plugin(s) offered none; check they are installed",

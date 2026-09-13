@@ -34,14 +34,19 @@ func Affected(files []File, projects []string) []string {
 		}
 	}
 
-	hit := map[string]bool{}
+	hit, deleted := map[string]bool{}, map[string]bool{}
 	for _, f := range files {
+		owner, ok := ownerOf(f.Path, cleaned)
 		if f.Status == StatusDeleted {
-			// A deleted file's project has nothing left to analyze on its account.
-			// It stays out unless something else in it changed.
+			// A deleted file's project has nothing left to analyze on its account,
+			// so it does not join the set — but a deletion outside every project
+			// must not widen either, since there is nothing to analyze there. Its
+			// owner is remembered for the all-deletions case below.
+			if ok {
+				deleted[owner] = true
+			}
 			continue
 		}
-		owner, ok := ownerOf(f.Path, cleaned)
 		if !ok {
 			// A changed file belonging to no declared project — a root config, a
 			// workflow, a shared script — can affect anything. Widening to the
@@ -49,6 +54,13 @@ func Affected(files []File, projects []string) []string {
 			return nil
 		}
 		hit[owner] = true
+	}
+
+	if len(hit) == 0 {
+		// Every changed file was a deletion. An empty result would mean the whole
+		// repository, so a pull request that only removes a file from one project
+		// would be the widest possible scope — the opposite of the intent.
+		hit = deleted
 	}
 
 	out := make([]string, 0, len(hit))

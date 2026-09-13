@@ -2,3 +2,8 @@
 # reviewed, on this machine. Local state, not a shared fact about the repository.
 watch-state.json
 watch.log
+
+# .env.example says to copy it to .env and fill in. This is what stops the filled-in
+# copy from being committed — which is why the example lives here rather than at the
+# repository root, where no .gitignore this tool writes could cover it.
+.env

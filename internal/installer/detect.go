@@ -71,10 +71,22 @@ type packageJSON struct {
 
 // Detect inspects a repository. It never fails on a missing file: absence is an
 // answer, and the plan it produces says what it could not find.
+//
+// A root that is not an existing directory is a different matter. `init` creates
+// the directories it writes into, so a typo in --root would otherwise produce a
+// complete, successful-looking install somewhere nobody will ever look while the
+// real repository stays untouched.
 func Detect(root string) (Detected, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return Detected{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return Detected{}, fmt.Errorf("%s: %w", abs, err)
+	}
+	if !info.IsDir() {
+		return Detected{}, fmt.Errorf("%s is not a directory", abs)
 	}
 	d := Detected{Root: abs}
 
@@ -122,6 +134,16 @@ func readPackageJSON(root string) (packageJSON, error) {
 	return pkg, nil
 }
 
+// knownManagers is the closed set. The packageManager field is repository
+// content — an arbitrary string from a file this tool did not write — and it is
+// interpolated into a generated GitHub Actions workflow. A value outside this set
+// is discarded rather than passed through, so no package.json can contribute a
+// step to a workflow that holds `pull-requests: write` and a token.
+//
+// The closed set is also simply correct: these four are the managers the
+// generated workflow knows how to install with.
+var knownManagers = map[string]bool{"npm": true, "pnpm": true, "yarn": true, "bun": true}
+
 // detectPackageManager prefers the lockfile over the packageManager field: the
 // lockfile is what is actually there, and a stale packageManager field is common.
 func detectPackageManager(root string, pkg packageJSON) (manager, basis string) {
@@ -135,7 +157,7 @@ func detectPackageManager(root string, pkg packageJSON) (manager, basis string) 
 			return candidate.manager, candidate.lockfile
 		}
 	}
-	if name, _, ok := strings.Cut(pkg.PackageManager, "@"); ok && name != "" {
+	if name, _, ok := strings.Cut(pkg.PackageManager, "@"); ok && knownManagers[name] {
 		return name, "the packageManager field in package.json"
 	}
 	return "", ""

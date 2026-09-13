@@ -115,3 +115,22 @@ func TestAffectedIsNotWidenedByADeletionOutsideEveryProject(t *testing.T) {
 		t.Errorf("Affected() = %q, want the deletion ignored", got)
 	}
 }
+
+// A pull request that only deletes files must still narrow. An empty result means
+// "all projects", so without this a deletion in one workspace would be the widest
+// possible scope — the opposite of what narrowing is for.
+func TestAffectedWhenEveryChangeIsADeletion(t *testing.T) {
+	projects := []string{"packages/pkg-a", "packages/pkg-b"}
+
+	only := []File{{Path: "packages/pkg-a/src/old.ts", Status: StatusDeleted}}
+	if got := strings.Join(Affected(only, projects), ","); got != "packages/pkg-a" {
+		t.Errorf("Affected() = %q, want packages/pkg-a", got)
+	}
+
+	// Except when a deletion is outside every project: a removed root script can
+	// affect anything that referenced it.
+	outside := []File{{Path: "scripts/build.sh", Status: StatusDeleted}}
+	if got := Affected(outside, projects); len(got) != 0 {
+		t.Errorf("Affected() = %v, want the whole repository", got)
+	}
+}

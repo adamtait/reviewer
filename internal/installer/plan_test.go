@@ -13,7 +13,7 @@ func TestPlanForTheFixtureRepository(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
 	p := BuildPlan(mustDetect(t, root), "v0.1.0", Options{})
 
-	if got, want := p.Summary(), "5 files to create, 1 devDependency to add, 0 overwrites"; got != want {
+	if got, want := p.Summary(), "5 files to create, 1 devDependency to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if len(p.DevDependencies) != 1 {
@@ -52,7 +52,7 @@ func TestPlanLeavesExistingFilesAloneUnlessForced(t *testing.T) {
 	d := mustDetect(t, root)
 
 	plain := BuildPlan(d, "v0.1.0", Options{})
-	if got, want := plain.Summary(), "4 files to create, 1 devDependency to add, 0 overwrites"; got != want {
+	if got, want := plain.Summary(), "4 files to create, 1 devDependency to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if plain.Files[0].Action != Unchanged {
@@ -60,7 +60,7 @@ func TestPlanLeavesExistingFilesAloneUnlessForced(t *testing.T) {
 	}
 
 	forced := BuildPlan(d, "v0.1.0", Options{Force: true})
-	if got, want := forced.Summary(), "4 files to create, 1 devDependency to add, 1 overwrites"; got != want {
+	if got, want := forced.Summary(), "4 files to create, 1 devDependency to add, 1 file to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if forced.Files[0].Action != Overwrite {
@@ -76,7 +76,7 @@ func TestPlanAddsNoPluginToARepositoryWithoutTypeScript(t *testing.T) {
 	if len(p.DevDependencies) != 0 {
 		t.Errorf("nothing for the plugin to analyze; got %+v", p.DevDependencies)
 	}
-	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 overwrites"; got != want {
+	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 	if !mentions(p.Notes, "no tsconfig.json") {
@@ -93,12 +93,17 @@ func TestPlanNamesWhatItCouldNotFind(t *testing.T) {
 	}
 	// One Node-shaped note, not seven: once there is no package.json, every other
 	// such absence follows from it and repeating them buries the one that matters.
-	// The provider note is about a choice, not a gap, and is counted separately.
-	if got := len(gaps(mustDetect(t, root))); got != 1 {
-		t.Errorf("want a single explanation for the absences, got %d: %v", got, p.Notes)
+	if got := len(nodeGaps(mustDetect(t, root))); got != 1 {
+		t.Errorf("want a single explanation for the Node absences, got %d", got)
+	}
+	// The absences that are not Node-shaped are still reported, though. ADR-0020
+	// promises every absence with what it costs, and the GitHub remote is one the
+	// reporter cannot work without.
+	if !mentions(p.Notes, "no GitHub origin remote") {
+		t.Errorf("want the missing remote reported, got %v", p.Notes)
 	}
 	// A non-Node repository still gets a full install: the binary analyzers work.
-	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 overwrites"; got != want {
+	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 files to overwrite"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }

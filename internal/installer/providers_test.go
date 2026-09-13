@@ -150,7 +150,7 @@ func TestInstallWithAProviderWritesTheBlockAndNamesTheVariables(t *testing.T) {
 		t.Errorf("no model name may be written; got %q", cfg.LaneB.Model)
 	}
 
-	env := read(t, root, ".env.example")
+	env := read(t, root, ".review/.env.example")
 	for _, name := range gemini.Env {
 		if !strings.Contains(env, name+"=") {
 			t.Errorf(".env.example does not name %s:\n%s", name, env)
@@ -189,7 +189,7 @@ func TestInstallWithASubscriptionPath(t *testing.T) {
 	if !strings.Contains(wf, "no such session") {
 		t.Errorf("want the workflow to explain why the lane is quiet:\n%s", wf)
 	}
-	env := read(t, root, ".env.example")
+	env := read(t, root, ".review/.env.example")
 	if strings.Contains(env, "REVIEW_MODEL_API_KEY") {
 		t.Errorf("a subscription path needs no key; .env.example should not name one:\n%s", env)
 	}

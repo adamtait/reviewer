@@ -4,6 +4,7 @@ package installer
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,7 +19,12 @@ import (
 // templates are embedded rather than read from disk: `reviewer init` runs from a
 // downloaded binary with no source tree beside it.
 //
-//go:embed templates/*.tmpl
+// Named individually rather than globbed: templates/ also holds launchd.plist.tmpl,
+// which is documentation for the poller and has no place in the install path. A
+// glob would embed it as a payload nothing can render.
+//
+//go:embed templates/config.yaml.tmpl templates/review.yml.tmpl
+//go:embed templates/review.gitignore.tmpl templates/env.example.tmpl
 var templates embed.FS
 
 // checksumPlaceholder is what the generated workflow carries where the release
@@ -61,6 +67,27 @@ type Report struct {
 	Manual []string
 }
 
+// funcs are the only way a value reaches a generated file.
+//
+// Everything interpolated into the generated YAML is either repository content or
+// derived from it: a workspace directory name, a remote URL, a version string. A
+// bare interpolation of any of those produces YAML that means something other than
+// the string — a directory called `a: b` becomes a mapping, a remote containing
+// `#` truncates at a comment — or, in the workflow, an extra step.
+var funcs = template.FuncMap{"yaml": yamlScalar}
+
+// yamlScalar renders a string as a quoted YAML scalar. JSON's string encoding is a
+// valid YAML 1.2 double-quoted scalar, so the standard library does the escaping
+// rather than a hand-rolled quoter that would be wrong for some character nobody
+// thought of.
+func yamlScalar(value string) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
 // Render turns a plan into file contents. It renders every file the plan would
 // write and nothing else, so Install has no opportunity to invent a path.
 func Render(p Plan, pluginVersion string) ([]Rendered, error) {
@@ -94,7 +121,7 @@ func renderOne(path string, data any) ([]byte, error) {
 		name = "review.gitignore.tmpl"
 	case ".github/workflows/review.yml":
 		name = "review.yml.tmpl"
-	case ".env.example":
+	case ".review/.env.example":
 		name = "env.example.tmpl"
 	case ".review/rules/.gitkeep":
 		// Deliberately empty: git tracks the directory, nothing more.
@@ -103,7 +130,7 @@ func renderOne(path string, data any) ([]byte, error) {
 		return nil, nil
 	}
 
-	tmpl, err := template.New(name).ParseFS(templates, "templates/"+name)
+	tmpl, err := template.New(name).Funcs(funcs).ParseFS(templates, "templates/"+name)
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", name, err)
 	}
@@ -117,6 +144,13 @@ func renderOne(path string, data any) ([]byte, error) {
 // Install renders the plan and writes it. It writes only what the plan said, and
 // returns what it did.
 func Install(p Plan, pluginVersion string) (Report, error) {
+	if len(p.Problems) > 0 {
+		// Refused whole rather than in part: a problem means a write would land
+		// somewhere other than where the plan said, and there is no half of that
+		// worth performing.
+		return Report{}, fmt.Errorf("%s: %s",
+			plural(len(p.Problems), "problem", "problems"), strings.Join(p.Problems, "; "))
+	}
 	files, err := Render(p, pluginVersion)
 	if err != nil {
 		return Report{}, err
@@ -144,7 +178,9 @@ func Install(p Plan, pluginVersion string) (Report, error) {
 		}
 	}
 
-	report.Manual = manualSteps(p, pluginVersion)
+	// Taken from the plan, not recomputed, so that --dry-run and a real install
+	// cannot report different outstanding work.
+	report.Manual = p.Manual
 	return report, nil
 }
 
@@ -166,6 +202,10 @@ func manualSteps(p Plan, pluginVersion string) []string {
 		// package.json and the lockfile together, correctly.
 		steps = append(steps, fmt.Sprintf("%s  # adds the TypeScript analyzers",
 			installCommand(p.Detected.PackageManager, d)))
+	}
+	if p.Detected.PackageManager == "bun" {
+		steps = append(steps, "add a step installing bun to .github/workflows/review.yml: "+
+			"it is not on a hosted runner and actions/setup-node cannot install it")
 	}
 	for _, f := range p.Files {
 		if f.Path != ".github/workflows/review.yml" || f.Action == Unchanged {
@@ -216,12 +256,9 @@ func (r Report) Write(w io.Writer) error {
 	for _, path := range r.Unchanged {
 		fmt.Fprintf(b, "  unchanged    %s\n", path)
 	}
-	if len(r.Manual) > 0 {
-		fmt.Fprintf(b, "\n%s left to do:\n", plural(len(r.Manual), "step", "steps"))
-		for _, step := range r.Manual {
-			fmt.Fprintf(b, "  %s\n", step)
-		}
-	}
+	// Manual is deliberately not printed here. It belongs to the plan, which is
+	// printed immediately above this in the same invocation, and repeating three
+	// paragraphs makes the report harder to read rather than more complete.
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -237,10 +274,17 @@ type data struct {
 	Provider         string
 	Repo             string
 
-	NeedsNode        bool
-	NodeVersion      string
-	PackageManager   string
-	InstallCommand   string
+	NeedsNode      bool
+	NodeVersion    string
+	PackageManager string
+	InstallCommand string
+	// CacheKey is what actions/setup-node is told to cache, or empty when it has
+	// no support for the detected manager.
+	CacheKey string
+	// NeedsCorepack puts `corepack enable` before setup-node. pnpm and yarn are not
+	// on a hosted runner, and setup-node's own cache resolution shells out to the
+	// manager — so without this the cache step fails before the install runs.
+	NeedsCorepack    bool
 	ReviewerVersion  string
 	ReviewerChecksum string
 
@@ -251,6 +295,11 @@ type data struct {
 	// ProviderWorksInCI is false for the subscription paths, and the generated
 	// workflow says so where someone would otherwise wonder why the lane is quiet.
 	ProviderWorksInCI bool
+	// ProviderVars are the provider's non-secret variables. They go into the
+	// workflow as Actions variables: the model name and base URL are configuration,
+	// not credentials, and both are read only from the environment — so without
+	// them the lane has a key and nothing to call.
+	ProviderVars []string
 	// ProviderEnv are the variables .env.example names.
 	ProviderEnv []string
 
@@ -284,9 +333,12 @@ func templateData(p Plan, pluginVersion string) data {
 		NeedsModelSecret:  p.Options.Provider.NeedsAPIKey(),
 		ProviderWorksInCI: p.Options.Provider.ID == "" || p.Options.Provider.WorksInCI,
 		ProviderEnv:       p.Options.Provider.Env,
+		ProviderVars:      nonSecret(p.Options.Provider.Env),
 		Projects:          p.Projects,
 	}
 	out.InstallCommand = ciInstallCommand(out.PackageManager)
+	out.CacheKey = setupNodeCache(out.PackageManager)
+	out.NeedsCorepack = out.PackageManager == "pnpm" || out.PackageManager == "yarn"
 
 	if len(p.DevDependencies) > 0 {
 		out.Plugins = []config.Plugin{{
@@ -313,11 +365,35 @@ func workflowVersion(binaryVersion string) string {
 	return versionPlaceholder
 }
 
+// nonSecret splits the credential out of a provider's variables. The rest are
+// configuration and belong in Actions variables rather than secrets.
+func nonSecret(env []string) []string {
+	var out []string
+	for _, name := range env {
+		if name != config.EnvModelAPIKey {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 func packageManagerOrNpm(manager string) string {
 	if manager == "" {
 		return "npm"
 	}
 	return manager
+}
+
+// setupNodeCache is the manager actions/setup-node knows how to cache. It accepts
+// npm, yarn and pnpm and nothing else: `cache: bun` fails the step outright, so
+// bun gets no cache rather than a broken one.
+func setupNodeCache(manager string) string {
+	switch manager {
+	case "npm", "yarn", "pnpm":
+		return manager
+	default:
+		return ""
+	}
 }
 
 // ciInstallCommand is the reproducible-install form, which is not what a person
@@ -337,12 +413,15 @@ func ciInstallCommand(manager string) string {
 }
 
 // durationString writes a duration the way a person would in YAML: "2m", not
-// "2m0s".
+// "2m0s". Only a trailing whole-zero component is dropped, so "1m30s" survives —
+// trimming the literal "0s" would turn it into "1m3".
 func durationString(d time.Duration) string {
 	s := d.String()
-	s = strings.TrimSuffix(s, "0s")
-	if s == "" {
-		return d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
 	}
 	return s
 }

@@ -498,14 +498,14 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	git := testfixture.Git(t, root)
 
 	var stdout, stderr bytes.Buffer
-	if err := run(context.Background(), []string{"init", "--root", root, "--dry-run"}, &stdout, &stderr, noEnv); err != nil {
+	if err := run(context.Background(), []string{"init", "--root", root, "--dry-run", "--yes"}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
 
 	if status := git("status", "--porcelain"); status != "" {
 		t.Errorf("--dry-run changed the repository:\n%s", status)
 	}
-	if !strings.Contains(stdout.String(), "5 files to create, 1 devDependency to add, 0 overwrites") {
+	if !strings.Contains(stdout.String(), "5 files to create, 1 devDependency to add, 0 files to overwrite") {
 		t.Errorf("want the plan summary on stdout, got:\n%s", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "nothing written") {
@@ -528,7 +528,7 @@ func TestInitThenReviewOnAFreshRepository(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
 
 	var stdout, stderr bytes.Buffer
-	if err := run(context.Background(), []string{"init", "--root", root}, &stdout, &stderr, noEnv); err != nil {
+	if err := run(context.Background(), []string{"init", "--root", root, "--yes"}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stdout.String(), "5 files created") {
@@ -664,6 +664,48 @@ done
 		got := frames(t, root, "tsconfig.json")
 		if strings.Contains(got, `"projects"`) {
 			t.Errorf("a root change can affect anything; want no narrowing, got:\n%s", got)
+		}
+	})
+}
+
+// A refused install must be distinguishable from a successful one by exit status:
+// a script that runs `reviewer init && git add -A` has to be able to tell. ADR-0009
+// reserves a non-zero exit for misuse, and `init` is not a review.
+func TestInitRefusalsExitNonZero(t *testing.T) {
+	base := t.TempDir()
+
+	t.Run("a root that does not exist", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"init", "--root", filepath.Join(base, "typo"), "--yes"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+		// The phantom install is the failure this guards: a typo'd --root would
+		// otherwise be created and reported as a complete install.
+		if _, statErr := os.Stat(filepath.Join(base, "typo")); statErr == nil {
+			t.Error("init created the directory it was pointed at by mistake")
+		}
+	})
+
+	t.Run("a symlink in the way", func(t *testing.T) {
+		root := filepath.Join(base, "repo")
+		if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../../outside", filepath.Join(root, ".review")); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(), []string{"init", "--root", root, "--yes"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+		// The plan still prints, so the refusal says what it objected to.
+		if !strings.Contains(stdout.String(), "is a symlink") {
+			t.Errorf("want the reason printed, got:\n%s", stdout.String())
 		}
 	})
 }

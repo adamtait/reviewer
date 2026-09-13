@@ -19,7 +19,11 @@ import (
 func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 	detected, err := installer.Detect(o.root)
 	if err != nil {
-		return fmt.Errorf("inspecting %s: %w", o.root, err)
+		// Misuse: --root named something that is not a repository to install into.
+		// ADR-0009 reserves a non-zero exit for exactly this, and `init` is not a
+		// review — a script that runs `reviewer init && git add -A` has to be able
+		// to tell a refusal from a success.
+		return errUsage{fmt.Errorf("inspecting %s: %w", o.root, err)}
 	}
 
 	// Asked before the plan is built, because the answer changes what the plan
@@ -43,6 +47,11 @@ func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if o.dryRun {
 		fmt.Fprintln(stderr, "reviewer: --dry-run, nothing written")
 		return nil
+	}
+	if len(plan.Problems) > 0 {
+		// The plan has already printed them. Refusing is the point: every problem
+		// means a write would land somewhere other than where the plan said.
+		return errUsage{fmt.Errorf("refusing to install into %s", plan.Detected.Root)}
 	}
 
 	report, err := installer.Install(plan, version)

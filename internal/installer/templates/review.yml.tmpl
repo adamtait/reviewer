@@ -23,24 +23,38 @@ jobs:
           # commits, and the action refuses to run rather than guess.
           fetch-depth: 0
 {{- if .NeedsNode }}
+{{- if .NeedsCorepack }}
+
+      # Before setup-node: its cache resolution shells out to the package manager,
+      # and neither pnpm nor yarn is on a hosted runner until corepack provides it.
+      - run: corepack enable
+{{- end }}
 
       - uses: actions/setup-node@v4
         with:
-          node-version: {{ .NodeVersion }}
-          cache: {{ .PackageManager }}
-      - run: {{ .InstallCommand }}
+          node-version: {{ .NodeVersion | yaml }}
+{{- if .CacheKey }}
+          cache: {{ .CacheKey | yaml }}
+{{- end }}
+      - run: {{ .InstallCommand | yaml }}
 {{- end }}
 
       - uses: adamtait/reviewer@v{{ .ReviewerVersion }}
         with:
-          version: "{{ .ReviewerVersion }}"
-          checksum: "{{ .ReviewerChecksum }}"
+          version: {{ .ReviewerVersion | yaml }}
+          checksum: {{ .ReviewerChecksum | yaml }}
         env:
           GITHUB_TOKEN: ${{ "{{" }} secrets.GITHUB_TOKEN {{ "}}" }}
 {{- if .NeedsModelSecret }}
           # Absent on a fork's pull request, which is what skips the model lane.
           # Set this secret before turning laneB.enabled on in .review/config.yaml.
           REVIEW_MODEL_API_KEY: ${{ "{{" }} secrets.REVIEW_MODEL_API_KEY {{ "}}" }}
+{{- end }}
+{{- range .ProviderVars }}
+          # Configuration, not a credential: set it as a repository variable. The
+          # model lane reads it only from here, so without it the lane has a key
+          # and nothing to call.
+          {{ . }}: ${{ "{{" }} vars.{{ . }} {{ "}}" }}
 {{- end }}
 {{- if not .ProviderWorksInCI }}
           # The chosen model access path ({{ .Provider }}) drives a CLI signed in to

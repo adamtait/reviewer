@@ -3,8 +3,10 @@
 package installer
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,6 +75,15 @@ type Plan struct {
 	// Projects are the directories the repository divides into, written into the
 	// generated config so a change confined to one is analyzed as one.
 	Projects []string
+	// Problems make the install unsafe to perform. Install refuses while any
+	// remains, because every one of them means a write would land somewhere other
+	// than where the plan says.
+	Problems []string
+	// Manual is the steps a person has to take that this tool will not take for
+	// them. Part of the plan rather than of the report, so that --dry-run is a
+	// faithful preview: two of these decide whether the generated workflow runs
+	// at all.
+	Manual []string
 	// Options are the choices this plan was built with, carried so that rendering
 	// and reporting cannot disagree with what was planned.
 	Options Options
@@ -93,15 +104,14 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 	for _, f := range []struct{ path, purpose string }{
 		{".review/config.yaml", "what runs, against what, and how it is reported"},
 		{".review/rules/.gitkeep", "where this repository's own rule packs go"},
-		{".review/.gitignore", "keeps the poller's watermark out of version control"},
+		{".review/.gitignore", "keeps local state and your .env out of version control"},
 		{".github/workflows/review.yml", "runs the review on every pull request"},
-		{".env.example", "names the variables the model lane needs, never their values"},
+		{".review/.env.example", "names the variables the model lane needs, never their values"},
 	} {
-		p.Files = append(p.Files, File{
-			Path:    f.path,
-			Action:  actionFor(filepath.Join(d.Root, filepath.FromSlash(f.path)), force),
-			Purpose: f.purpose,
-		})
+		p.addProblem(unsafePath(d.Root, f.path))
+		action, problem := actionFor(d.Root, f.path, force)
+		p.addProblem(problem)
+		p.Files = append(p.Files, File{Path: f.path, Action: action, Purpose: f.purpose})
 	}
 
 	if d.HasPackageJSON && d.TSConfig != "" {
@@ -118,6 +128,7 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 	}
 
 	p.Projects = Projects(d)
+	p.Manual = manualSteps(p, pluginVersion)
 	p.Notes = append(p.Notes, gaps(d)...)
 	p.Notes = append(p.Notes, providerNotes(opts.Provider)...)
 	if projectsUnreadable(d, p.Projects) {
@@ -128,18 +139,70 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 	return p
 }
 
-// actionFor decides between creating, overwriting and leaving alone. A file the
-// installer cannot stat for any reason other than absence is treated as present:
-// the conservative reading, since the alternative is planning to overwrite
-// something that could not be examined.
-func actionFor(path string, force bool) Action {
-	if _, err := os.Stat(path); err != nil && os.IsNotExist(err) {
-		return Create
+// actionFor decides between creating, overwriting and leaving alone.
+//
+// Lstat, not Stat: a symlink is a thing that is there, and a dangling one would
+// otherwise read as absent and be "created" by writing through to its target.
+//
+// A path that cannot be examined for any reason other than absence is reported as
+// a problem rather than quietly treated as present. `.review` existing as a
+// regular file makes every path under it fail with ENOTDIR, and calling that
+// "unchanged" turns an install that wrote no config into one that reports success.
+func actionFor(root, rel string, force bool) (Action, string) {
+	_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+	switch {
+	case err == nil:
+		if force {
+			return Overwrite, ""
+		}
+		return Unchanged, ""
+	case errors.Is(err, fs.ErrNotExist):
+		return Create, ""
+	default:
+		// The cause, not the path that hit it: `.review` present as a regular file
+		// blocks four paths for one reason, and naming each of them four times
+		// buries how few distinct things are actually wrong.
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			return Unchanged, fmt.Sprintf("cannot write under %s: %v",
+				filepath.ToSlash(filepath.Dir(rel)), pathErr.Err)
+		}
+		return Unchanged, fmt.Sprintf("cannot examine %s: %v", rel, err)
 	}
-	if force {
-		return Overwrite
+}
+
+// unsafePath refuses to write through a symlink.
+//
+// Every path this installer writes is repository-relative, and a repository can
+// commit a symlink at any component of one: `.review -> ../../elsewhere`, or
+// `.review/config.yaml -> ~/.bashrc`. Following it would write outside the root
+// while the report named an in-repo path, which is both an escape and a lie about
+// where the bytes went. Dangling symlinks are the dangerous case, since they look
+// absent to a plain Stat.
+func unsafePath(root, rel string) string {
+	current := root
+	for _, segment := range strings.Split(rel, "/") {
+		current = filepath.Join(current, segment)
+		info, err := os.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			// Nothing exists from here down, so nothing can be followed.
+			return ""
+		}
+		if err != nil {
+			// Reported by actionFor, which examines the same path.
+			return ""
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			relative, relErr := filepath.Rel(root, current)
+			if relErr != nil {
+				relative = current
+			}
+			return fmt.Sprintf(
+				"%s is a symlink: writing through it would land outside this repository",
+				filepath.ToSlash(relative))
+		}
 	}
-	return Unchanged
+	return ""
 }
 
 var releaseVersion = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
@@ -177,7 +240,7 @@ func providerNotes(p Provider) []string {
 	}
 	if p.NeedsAPIKey() {
 		notes = append(notes, fmt.Sprintf(
-			"%s needs %s in the environment. .env.example names it; no value is written anywhere",
+			"%s needs %s in the environment. .review/.env.example names it; no value is written anywhere",
 			p.ID, config.EnvModelAPIKey))
 	}
 	return notes
@@ -186,12 +249,30 @@ func providerNotes(p Provider) []string {
 // gaps reports what the installer did not find and what each absence costs. Every
 // one of these is a working install that reviews less than the reader expects.
 func gaps(d Detected) []string {
+	notes := nodeGaps(d)
+	if d.Remote == "" {
+		notes = append(notes,
+			"no GitHub origin remote: set github.repo in .review/config.yaml by hand, or the "+
+				"GitHub reporter has nowhere to post")
+	}
+	if d.Nx {
+		notes = append(notes,
+			"nx.json is present: projects are read from the project.json files found under it")
+	}
+	return notes
+}
+
+// nodeGaps are the absences that only mean something in a Node project. Once
+// there is no package.json they all follow from that one fact, and printing seven
+// notes buries it — but the absences outside this set are still reported, because
+// ADR-0020 promises every absence with what it costs.
+func nodeGaps(d Detected) []string {
 	var notes []string
 	if !d.HasPackageJSON {
-		notes = append(notes,
-			"no package.json: this is not a Node project, so the TypeScript plugin will "+
-				"decline every analyzer; the binary analyzers still run")
-		return notes
+		return []string{
+			"no package.json: this is not a Node project, so the TypeScript plugin will " +
+				"decline every analyzer; the binary analyzers still run",
+		}
 	}
 	if d.PackageManager == "" {
 		notes = append(notes,
@@ -216,16 +297,22 @@ func gaps(d Detected) []string {
 			"neither vitest nor jest is a dependency: the changed-tests analyzer cannot say "+
 				"how to run the tests it asks for")
 	}
-	if d.Remote == "" {
-		notes = append(notes,
-			"no GitHub origin remote: set github.repo in .review/config.yaml by hand")
-	}
-	if d.Nx {
-		notes = append(notes,
-			"nx.json is present: project-level scoping is read from it, and until then the "+
-				"review runs against the whole repository with the diff filter applied")
-	}
 	return notes
+}
+
+// addProblem records a reason not to install, once. One symlinked `.review`
+// blocks four paths for the same reason, and saying so four times buries how few
+// distinct things are actually wrong.
+func (p *Plan) addProblem(problem string) {
+	if problem == "" {
+		return
+	}
+	for _, existing := range p.Problems {
+		if existing == problem {
+			return
+		}
+	}
+	p.Problems = append(p.Problems, problem)
 }
 
 // Counts of each action, for the one-line summary.
@@ -241,10 +328,10 @@ func (p Plan) count(a Action) int {
 
 // Summary is the line a reader checks before running init for real.
 func (p Plan) Summary() string {
-	return fmt.Sprintf("%s to create, %s to add, %d overwrites",
+	return fmt.Sprintf("%s to create, %s to add, %s to overwrite",
 		plural(p.count(Create), "file", "files"),
 		plural(len(p.DevDependencies), "devDependency", "devDependencies"),
-		p.count(Overwrite))
+		plural(p.count(Overwrite), "file", "files"))
 }
 
 func plural(n int, one, many string) string {
@@ -295,6 +382,20 @@ func (p Plan) Write(w io.Writer) error {
 		fmt.Fprintln(b, "\nnotes")
 		for _, note := range p.Notes {
 			fmt.Fprintf(b, "  - %s\n", note)
+		}
+	}
+
+	if len(p.Manual) > 0 {
+		fmt.Fprintf(b, "\n%s you will have to take:\n", plural(len(p.Manual), "step", "steps"))
+		for _, step := range p.Manual {
+			fmt.Fprintf(b, "  %s\n", step)
+		}
+	}
+
+	if len(p.Problems) > 0 {
+		fmt.Fprintf(b, "\n%s stopping this install:\n", plural(len(p.Problems), "problem", "problems"))
+		for _, problem := range p.Problems {
+			fmt.Fprintf(b, "  %s\n", problem)
 		}
 	}
 

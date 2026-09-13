@@ -46,7 +46,12 @@ type section int
 const (
 	sectionUnknown section = iota
 	sectionGo
+	// sectionNPM holds packages that are distributed inside the published npm
+	// package. Reconciled against the full transitive production tree.
 	sectionNPM
+	// sectionNPMDev holds direct development dependencies only. They are not
+	// distributed, so their transitive trees are not inventoried (ADR-0028).
+	sectionNPMDev
 	sectionBinaries
 	sectionTools
 )
@@ -57,6 +62,8 @@ func sectionOf(heading string) section {
 		return sectionGo
 	case "npm packages":
 		return sectionNPM
+	case "npm development dependencies":
+		return sectionNPMDev
 	case "external binaries":
 		return sectionBinaries
 	case "development tools":
@@ -114,17 +121,26 @@ func check(root string) (violations []string, summary string, err error) {
 	}
 	violations = append(violations, reconcile("go module", goMods, inv.namesIn(sectionGo))...)
 
-	npmPkgs, npmChecked, err := npmPackages(root)
+	// Two npm reads, for two different questions. The distributed tree is what
+	// ships to a user and is inventoried in full; development dependencies are
+	// not distributed, so only the direct ones are listed (ADR-0028).
+	npmProd, npmChecked, err := npmPackages(root, "--all", "--omit=dev")
+	if err != nil {
+		return nil, "", err
+	}
+	npmDev, _, err := npmPackages(root, "--depth=0")
 	if err != nil {
 		return nil, "", err
 	}
 	if npmChecked {
-		violations = append(violations, reconcile("npm package", npmPkgs, inv.namesIn(sectionNPM))...)
-	} else if listed := inv.namesIn(sectionNPM); len(listed) > 0 {
+		violations = append(violations, reconcile("distributed npm package", npmProd, inv.namesIn(sectionNPM))...)
+		violations = append(violations, reconcile("npm development dependency", npmDev, inv.namesIn(sectionNPMDev))...)
+	} else if listed := len(inv.namesIn(sectionNPM)) + len(inv.namesIn(sectionNPMDev)); listed > 0 {
 		violations = append(violations, fmt.Sprintf(
-			"THIRD_PARTY_LICENSES.md lists %d npm packages but the plugin's dependency tree could not be read", len(listed)))
+			"THIRD_PARTY_LICENSES.md lists %d npm packages but the plugin's dependency tree could not be read", listed))
 	}
 
+	npmPkgs := merge(npmProd, npmDev)
 	violations = append(violations, checkCopyleft(inv, goMods, npmPkgs)...)
 	violations = append(violations, checkBoundary(root, goMods, npmPkgs)...)
 
@@ -132,7 +148,7 @@ func check(root string) (violations []string, summary string, err error) {
 
 	npmNote := "npm: not yet present"
 	if npmChecked {
-		npmNote = fmt.Sprintf("npm: %d packages", len(npmPkgs))
+		npmNote = fmt.Sprintf("npm: %d distributed, %d direct dev", len(npmProd), len(npmDev))
 	}
 	return violations, fmt.Sprintf("Go: %d modules, %s, 0 copyleft, inventory in sync", len(goMods), npmNote), nil
 }
@@ -205,12 +221,12 @@ func goModules(root string) (map[string]string, error) {
 // npmPackages reads the TypeScript plugin's dependency tree. It reports
 // checked=false when the plugin does not exist yet, so the absence of an npm
 // section is never mistaken for an npm section that passed.
-func npmPackages(root string) (pkgs map[string]string, checked bool, err error) {
+func npmPackages(root string, args ...string) (pkgs map[string]string, checked bool, err error) {
 	dir := filepath.Join(root, "plugins", "typescript")
 	if _, statErr := os.Stat(filepath.Join(dir, "package.json")); statErr != nil {
 		return map[string]string{}, false, nil
 	}
-	cmd := exec.Command("npm", "ls", "--all", "--json")
+	cmd := exec.Command("npm", append([]string{"ls", "--json"}, args...)...)
 	cmd.Dir = dir
 	out, _ := cmd.Output() // npm exits non-zero on peer-dep warnings; the JSON is still good
 	if len(out) == 0 {
@@ -317,4 +333,16 @@ func checkBoundary(root string, goMods, npmPkgs map[string]string) []string {
 		}
 	}
 	return violations
+}
+
+// merge combines two dependency sets for the copyleft check, which cares about
+// every license present rather than about which tree it came from.
+func merge(sets ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, set := range sets {
+		for name, version := range set {
+			out[name] = version
+		}
+	}
+	return out
 }

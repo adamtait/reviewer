@@ -18,15 +18,30 @@ enforced, not merely observed, by the denylist in `tools/checklicenses`.
 
 ## npm packages
 
-The TypeScript plugin's dependency tree. All development-only so far: the plugin
-ships compiled JavaScript and has no runtime dependencies of its own, resolving
-`typescript` and `eslint` from the repository under review instead (ADR-0020).
+Packages distributed inside the published `@adamtait/reviewer-plugin-typescript`.
+Reconciled against the full transitive production tree.
+
+**This section is empty, and that is the design.** The plugin publishes compiled
+JavaScript with no runtime dependencies: every analyzer engine — `typescript`,
+`eslint`, `dependency-cruiser` — is resolved from the repository under review
+(ADR-0014, ADR-0020), so the plugin analyses your code with your versions.
 
 | Package | Version | License | Why |
 |---|---|---|---|
-| `typescript` | 5.9.3 | Apache-2.0 | Compiles the plugin, and is the analyzer engine for `tsc`, typescript-eslint and type-coverage. Dev-only here; the *repository under review* supplies the version actually used for analysis. |
-| `@types/node` | 22.20.2 | MIT | Node type definitions. Dev-only. |
-| `undici-types` | 6.21.0 | MIT | Transitive dependency of `@types/node`. Dev-only. |
+
+## npm development dependencies
+
+Direct development dependencies of the plugin. Not distributed, so their
+transitive trees are not inventoried — see ADR-0028 for why that line is drawn
+here and what it costs.
+
+| Package | Version | License | Why |
+|---|---|---|---|
+| `typescript` | 5.9.3 | Apache-2.0 | Compiles the plugin, and is the analyzer engine the plugin falls back to when the repository under review has none. |
+| `@types/node` | 22.20.2 | MIT | Node type definitions. |
+| `eslint` | 9.39.5 | MIT | The engine for the typescript-eslint analyzer, and the fallback copy for tests. |
+| `typescript-eslint` | 8.70.0 | MIT | Type-aware lint rules. |
+| `dependency-cruiser` | 16.10.4 | MIT | Architectural boundary analysis. |
 
 ## External binaries
 

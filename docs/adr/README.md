@@ -32,3 +32,4 @@ precede any code land in PR-00.
 | [0025](0025-ndjson-over-stdio.md) | Speak newline-delimited JSON over stdio | Accepted | PR-04 |
 | [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |
 | [0027](0027-builtin-plugins-over-in-memory-pipes.md) | Serve built-in analyzers over in-memory pipes | Accepted | PR-10 |
+| [0028](0028-inventory-distributed-dependencies-fully.md) | Inventory distributed dependencies in full, development dependencies at depth one | Accepted | PR-14 |

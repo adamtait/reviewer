@@ -2,14 +2,15 @@
 
 /** Entry point. Registers the analyzers this plugin provides and serves them. */
 
+import { eslintAnalyzer } from "./analyzers/eslint.js";
 import { tscAnalyzer } from "./analyzers/tsc.js";
 import { protectStdout, serve, type Analyzer } from "./serve.js";
 
 const analyzers: Analyzer[] = [
   tscAnalyzer,
-  // typescript-eslint lands in PR-14, dependency-cruiser in PR-15, Knip in
-  // PR-29, type-coverage in PR-31 and the changed-tests runner in PR-32. Each
-  // reuses the program tscAnalyzer already built.
+  eslintAnalyzer,
+  // dependency-cruiser lands in PR-15, Knip in PR-29, type-coverage in PR-31 and
+  // the changed-tests runner in PR-32.
 ];
 
 protectStdout();

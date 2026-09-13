@@ -121,3 +121,24 @@ EPIPE, and the race between our write and its exit decides whether the reported 
 its stream" or `write |1: broken pipe`. Both describe the same thing; only one is useful to someone
 reading a run log. The host now checks whether the process has already exited and reports that instead
 of leaking an errno. Loosening the assertion would have kept a bad message.
+
+## PR-14 — typescript-eslint
+
+**The rule set is the repository's, not ours.** Shipping our own rules would report things the
+repository has deliberately turned off, which is the fastest route to being muted. What the analyzer
+adds is surfacing the *type-aware* subset on the diff — those are the rules a repository most often has
+configured but does not run in CI because of what they cost.
+
+**Type-aware rules are high confidence; everything else is capped at medium.** A `no-floating-promises`
+finding is computed from the type graph, so it goes inline. A quote-style finding is a heuristic about
+preference and belongs in the collapsed summary (ADR-0017). The split is the `logic/` versus `lint/`
+rule-id namespace, which also keeps them separable in acceptance measurement without a second analyzer.
+
+**New decision: ADR-0028, what the license inventory covers.** Adding `eslint`, `typescript-eslint` and
+`dependency-cruiser` took the plugin's npm tree from 3 packages to 143. Inventorying all of them
+transitively produces a table nobody reads, churning on every update, whose diffs get approved without
+being looked at — an inventory that is skimmed is worth less than a smaller one that is read. The line
+is now drawn at what is *distributed*: the production tree in full (currently empty by design, since the
+plugin ships compiled JavaScript with no runtime dependencies), development dependencies at depth one
+only. The hole this leaves — a copyleft package inside a dev dependency's transitive tree — is stated in
+the ADR rather than glossed.

@@ -115,3 +115,38 @@ should be caught on the pull request that introduces it, not on the one after th
 file living here: this repository is also a repository under review. It names `api.github.com`, which the
 seam test permits because the test walks Go source — configuration is precisely the channel ADR-0004
 requires such a value to arrive through, and a comment in the file says so.
+
+## PR-22 — the local poller
+
+**`watch` does one pass and exits.** Scheduling belongs to launchd, systemd or cron, which already handle
+restarts, log rotation and machine sleep. A loop here would reimplement all three worse and add a process
+that can be wedged without anyone noticing.
+
+**The watermark stores a timestamp, not a flag.** That is what makes "reviewed once, and again when
+pushed" work. Three behaviours follow, each with a test: unchanged pull requests are skipped, a new push is
+reviewed again, and a *failed* review does not advance the watermark so the next poll retries it.
+
+**Drafts are skipped.** Commenting on one is interrupting someone who has not asked for an opinion yet.
+
+**The watermark is written atomically.** A poller killed mid-write would otherwise leave a truncated file
+and re-review everything on the next tick.
+
+**The launchd plist reads the token from a file rather than embedding it,** because a plist is
+world-readable and gets copied around.
+
+## The CI warning from the M1 review came true
+
+The M1 review flagged that `npm ci` running before the Go steps would let `go build ./...` traverse Go
+sources vendored inside npm packages, and called it "clean today; an eslint dependency bump can break CI".
+It is no longer clean today: `eslint` depends on `flatted`, which ships a Go package, and `go test ./...`
+was compiling and running it.
+
+I had fixed `fmt-check` for this and not `build`, `vet`, `test` or `staticcheck` — a partial fix, which is
+the worst kind. The Makefile now derives the package list once (`go list ./... | grep -v /node_modules/`)
+and every Go command uses it. Go's own tooling does not skip `node_modules`, so there is no setting that
+does this for us.
+
+**A flag-parsing bug the manual check caught.** `reviewer watch --dry-run` printed usage: Go's `flag`
+package stops at the first positional argument, so everything after `watch` was unparsed and reported as
+a stray argument. Subcommands are now recognised before parsing. Worth recording because every unit test
+passed — the bug only appeared when I ran the binary the way a person would.

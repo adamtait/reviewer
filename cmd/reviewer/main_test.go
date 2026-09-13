@@ -450,3 +450,25 @@ func TestParseRepo(t *testing.T) {
 		}
 	}
 }
+
+// Go's flag package stops at the first positional argument, so a subcommand has to
+// be recognised before parsing or every flag after it is reported as a stray
+// argument. `reviewer watch --dry-run` is the case that caught this.
+func TestSubcommandsAcceptFlagsAfterThem(t *testing.T) {
+	o, err := parse([]string{"watch", "--dry-run", "--root", "/tmp"}, new(bytes.Buffer))
+	if err != nil {
+		t.Fatalf("flags after a subcommand must parse, got %v", err)
+	}
+	if o.subcommand != "watch" || !o.dryRun || o.root != "/tmp" {
+		t.Fatalf("unexpected options: %+v", o)
+	}
+}
+
+func TestVersionSubcommandAndFlagAgree(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		o, err := parse(args, new(bytes.Buffer))
+		if err != nil || !o.version {
+			t.Fatalf("%v should request the version, got %+v %v", args, o, err)
+		}
+	}
+}

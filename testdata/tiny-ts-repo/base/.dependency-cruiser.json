@@ -1,0 +1,14 @@
+{
+  "forbidden": [
+    {
+      "name": "no-domain-to-infra",
+      "severity": "error",
+      "comment": "The domain layer must not reach into infrastructure; inject a port instead.",
+      "from": { "path": "^src/domain" },
+      "to": { "path": "^src/infra" }
+    }
+  ],
+  "options": {
+    "doNotFollow": { "path": "node_modules" }
+  }
+}

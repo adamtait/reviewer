@@ -142,3 +142,28 @@ is now drawn at what is *distributed*: the production tree in full (currently em
 plugin ships compiled JavaScript with no runtime dependencies), development dependencies at depth one
 only. The hole this leaves — a copyleft package inside a dev dependency's transitive tree — is stated in
 the ADR rather than glossed.
+
+## PR-15 — dependency-cruiser
+
+**A violation is a fact about an edge; a comment has to live on a line.** dependency-cruiser reports
+`from` and `to` modules with no position. Reporting line 1 would put every boundary comment at the top
+of the file, away from the import that caused it, so the source is scanned for the module's basename and
+the import line is used. Falling back to line 1 when it cannot be found is deliberate: a finding in
+roughly the right place beats no finding.
+
+**Two API details that cost a debugging round each, both worth knowing:**
+
+- dependency-cruiser is ESM-only from v16, so `createRequire` cannot load it and a dynamic `import` is
+  the only way in. That also means the resolve-from-the-repository-root trick used for `typescript` does
+  not apply — and it does not need to: the plugin is installed as a devDependency *of the repository
+  under review*, so ordinary resolution from the plugin finds that repository's hoisted copy.
+- `cruise()` resolves the file list and every import against `process.cwd()`, which is the plugin's
+  directory, not the repository. Without `baseDir` it silently found zero violations in a repository that
+  had one. A silently empty result is the worst failure shape for an analyzer, since it is
+  indistinguishable from clean code.
+
+**A known limitation, not a bug.** Cruising only the changed files follows their dependencies, so a rule
+about what a changed file may *import* is evaluated correctly. A rule about what may import *it* — an
+"only these layers may depend on me" rule — is not, because the importing file is not in the cruise set.
+Fixing it means cruising the whole repository and filtering, which is the cost diff scoping exists to
+avoid. Left as is, with this note, until a rule of that shape actually matters to someone.

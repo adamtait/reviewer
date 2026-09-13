@@ -2,6 +2,7 @@
 
 /** Entry point. Registers the analyzers this plugin provides and serves them. */
 
+import { depCruiserAnalyzer } from "./analyzers/depcruiser.js";
 import { eslintAnalyzer } from "./analyzers/eslint.js";
 import { tscAnalyzer } from "./analyzers/tsc.js";
 import { protectStdout, serve, type Analyzer } from "./serve.js";
@@ -9,8 +10,9 @@ import { protectStdout, serve, type Analyzer } from "./serve.js";
 const analyzers: Analyzer[] = [
   tscAnalyzer,
   eslintAnalyzer,
-  // dependency-cruiser lands in PR-15, Knip in PR-29, type-coverage in PR-31 and
-  // the changed-tests runner in PR-32.
+  depCruiserAnalyzer,
+  // Knip lands in PR-29, type-coverage in PR-31 and the changed-tests runner in
+  // PR-32.
 ];
 
 protectStdout();

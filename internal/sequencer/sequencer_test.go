@@ -37,6 +37,10 @@ func (h *fakeHost) Analyze(_ context.Context, _, id string, _ plugin.AnalyzeRequ
 	return h.results[id], nil, nil
 }
 
+// secretsID is the analyzer the gate watches for; configured rather than
+// hardcoded in the sequencer so a replacement scanner works (see Options).
+const secretsID = "gitleaks"
+
 func reg(id string, order int, lane finding.Lane) pluginhost.Registered {
 	return pluginhost.Registered{
 		Descriptor: plugin.Descriptor{ID: id, Order: order, Lane: lane, Available: true},
@@ -159,13 +163,13 @@ func TestTheGateSeparatesTheLanes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &fakeHost{
 				registered: []pluginhost.Registered{
-					reg(SecretsAnalyzer, 10, finding.LaneDeterministic),
+					reg("gitleaks", 10, finding.LaneDeterministic),
 					reg("judge", 500, finding.LaneLLM),
 				},
 				results: tc.results,
 				fail:    tc.fail,
 			}
-			res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{})
+			res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{SecretsAnalyzers: []string{secretsID}})
 			if got := strings.Join(h.calls, ","); got != tc.wantCalls {
 				t.Fatalf("want calls %q, got %q", tc.wantCalls, got)
 			}
@@ -185,10 +189,10 @@ func TestTheGateSeparatesTheLanes(t *testing.T) {
 // A blocked gate with nothing in the model lane must not add noise to the report.
 func TestABlockedGateWithNoModelLaneIsSilent(t *testing.T) {
 	h := &fakeHost{
-		registered: []pluginhost.Registered{reg(SecretsAnalyzer, 10, finding.LaneDeterministic)},
-		results:    map[string][]finding.Finding{SecretsAnalyzer: {secretFinding()}},
+		registered: []pluginhost.Registered{reg("gitleaks", 10, finding.LaneDeterministic)},
+		results:    map[string][]finding.Finding{secretsID: {secretFinding()}},
 	}
-	res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{})
+	res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{SecretsAnalyzers: []string{secretsID}})
 	if !res.Gate.Blocked {
 		t.Fatal("want the gate blocked")
 	}
@@ -201,10 +205,10 @@ func TestABlockedGateWithNoModelLaneIsSilent(t *testing.T) {
 // then unchecked, which is exactly the case the gate fails closed on.
 func TestSkippingTheSecretsAnalyzerBlocksTheModelLane(t *testing.T) {
 	h := &fakeHost{registered: []pluginhost.Registered{
-		reg(SecretsAnalyzer, 10, finding.LaneDeterministic),
+		reg("gitleaks", 10, finding.LaneDeterministic),
 		reg("judge", 500, finding.LaneLLM),
 	}}
-	res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{Skip: []string{SecretsAnalyzer}})
+	res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{Skip: []string{secretsID}, SecretsAnalyzers: []string{secretsID}})
 	if strings.Join(h.calls, ",") != "" && strings.Contains(strings.Join(h.calls, ","), "judge") {
 		t.Fatalf("the model lane ran with the secrets scan skipped: %v", h.calls)
 	}
@@ -233,5 +237,69 @@ func TestTimingsAreRecordedForEveryAnalyzer(t *testing.T) {
 	}
 	if slow < 15*time.Millisecond {
 		t.Fatalf("want the slow analyzer's elapsed time recorded, got %s", slow)
+	}
+}
+
+// gate.Decide matches findings by the "secrets/" namespace so a replacement
+// scanner closes the gate. Keying "was the diff checked?" to a hardcoded analyzer
+// id would undo that, leaving the model lane permanently blocked.
+func TestAnAlternativeSecretsScannerSatisfiesTheGate(t *testing.T) {
+	h := &fakeHost{registered: []pluginhost.Registered{
+		reg("trufflehog", 10, finding.LaneDeterministic),
+		reg("judge", 500, finding.LaneLLM),
+	}}
+	res := Run(context.Background(), h, plugin.AnalyzeRequest{},
+		Options{SecretsAnalyzers: []string{"trufflehog"}})
+
+	if res.Gate.Blocked {
+		t.Fatalf("a configured alternative scanner must satisfy the gate, got %q", res.Gate.Reason)
+	}
+	if !strings.Contains(strings.Join(h.calls, ","), "judge") {
+		t.Fatalf("want the model lane to run, got %v", h.calls)
+	}
+}
+
+// Findings are scoped to the diff before the gate decides, so a blocked lane
+// always has a visible finding explaining it.
+func TestScopingHappensBeforeTheGateDecides(t *testing.T) {
+	h := &fakeHost{
+		registered: []pluginhost.Registered{
+			reg(secretsID, 10, finding.LaneDeterministic),
+			reg("judge", 500, finding.LaneLLM),
+		},
+		results: map[string][]finding.Finding{secretsID: {secretFinding()}},
+	}
+	// Scope drops everything, as it would for a credential outside the changed
+	// lines. The gate must then see a clean diff rather than block on a finding
+	// the report will not show.
+	res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{
+		SecretsAnalyzers: []string{secretsID},
+		Scope:            func(in []finding.Finding) ([]finding.Finding, int) { return nil, len(in) },
+	})
+
+	if res.Gate.Blocked {
+		t.Fatal("the gate must judge the scoped findings, not the raw ones")
+	}
+	if res.Dropped != 1 {
+		t.Fatalf("want the drop counted so the run can report it, got %d", res.Dropped)
+	}
+}
+
+// A gate-blocked run selects analyzers it never invokes; reporting "no analyzers
+// are configured" in that case is wrong.
+func TestSelectedCountsAnalyzersNotInvocations(t *testing.T) {
+	h := &fakeHost{
+		registered: []pluginhost.Registered{
+			reg(secretsID, 10, finding.LaneDeterministic),
+			reg("judge", 500, finding.LaneLLM),
+		},
+		results: map[string][]finding.Finding{secretsID: {secretFinding()}},
+	}
+	res := Run(context.Background(), h, plugin.AnalyzeRequest{}, Options{SecretsAnalyzers: []string{secretsID}})
+	if res.Selected != 2 {
+		t.Fatalf("want both analyzers counted as selected, got %d", res.Selected)
+	}
+	if len(res.Timings) != 1 {
+		t.Fatalf("want only the one that ran to have a timing, got %+v", res.Timings)
 	}
 }

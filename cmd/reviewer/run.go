@@ -74,24 +74,28 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	}
 
 	result := sequencer.Run(ctx, host, req, sequencer.Options{
-		Only:    only,
-		Skip:    skip,
-		Timeout: cfg.Analyzers.Timeout,
+		Only:             only,
+		Skip:             skip,
+		Timeout:          cfg.Analyzers.Timeout,
+		SecretsAnalyzers: cfg.Gate.SecretsAnalyzers,
+		// Scope before the gate decides, so "a credential in the diff" is literal
+		// and a blocked lane always has a visible finding explaining it.
+		Scope: func(in []finding.Finding) ([]finding.Finding, int) {
+			return diff.Filter(in, files)
+		},
 	})
-	all := result.Findings
 	run.Warnings = append(run.Warnings, result.Warnings...)
 	run.Skipped = append(run.Skipped, result.Skipped...)
 	run.Timings = timings(result.Timings)
-	ranAnything := len(result.Timings) > 0
 
-	kept, dropped := diff.Filter(all, files)
-	if dropped > 0 {
+	if result.Dropped > 0 {
 		run.Skipped = append(run.Skipped,
-			fmt.Sprintf("%d finding(s) outside the diff", dropped))
+			fmt.Sprintf("%d finding(s) outside the diff", result.Dropped))
 	}
-	finding.Sort(kept)
+	all := result.Findings
+	finding.Sort(all)
 
-	run.Findings = kept
+	run.Findings = all
 	run.Skipped = append(run.Skipped, unavailable(host)...)
 
 	// Shut the plugins down before reading their warnings. Closing is where "did
@@ -100,7 +104,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	host.Close()
 	run.Warnings = append(run.Warnings, host.Warnings()...)
 
-	if !ranAnything {
+	if result.Selected == 0 {
 		run.Warnings = append(run.Warnings,
 			"no analyzers are configured; see .review/config.yaml and `reviewer init`")
 	}

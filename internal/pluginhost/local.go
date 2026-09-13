@@ -42,7 +42,7 @@ func (m *Manager) AddLocal(ctx context.Context, h plugin.Handler, timeout time.D
 			_ = pluginWrite.Close()
 			_ = hostRead.Close()
 		}()
-		if err := serveLocal(h, hostRead, pluginWrite, m.log); err != nil {
+		if err := plugin.ServeContext(ctx, h, hostRead, pluginWrite, m.log); err != nil {
 			fmt.Fprintf(m.log, "%s: %v\n", h.Name(), err)
 		}
 	}()
@@ -56,11 +56,6 @@ func (m *Manager) AddLocal(ctx context.Context, h plugin.Handler, timeout time.D
 	m.conns = append(m.conns, c)
 	m.mu.Unlock()
 	return nil
-}
-
-// serveLocal is plugin.Serve against explicit streams rather than stdio.
-func serveLocal(h plugin.Handler, r io.Reader, w io.Writer, logw io.Writer) error {
-	return plugin.ServeStreams(h, r, w, logw)
 }
 
 // shutdownLocal closes the host's writer, which the handler sees as end of

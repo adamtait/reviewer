@@ -61,7 +61,6 @@ interface LintMessage {
   message: string;
   line?: number;
   endLine?: number;
-  fix?: { text: string };
 }
 
 /** Loads the repository's ESLint, or the plugin's own as a reported fallback. */
@@ -161,7 +160,13 @@ export const eslintAnalyzer: Analyzer = {
           line: m.line,
           ...(m.endLine !== undefined && m.endLine !== m.line ? { endLine: m.endLine } : {}),
           message: `${m.message} (${m.ruleId})`,
-          ...(m.fix?.text !== undefined ? { suggestion: m.fix.text } : {}),
+          // Deliberately no `suggestion`. ESLint's `fix` is a replacement for a
+          // character range that is usually a fragment of the line, while a
+          // Finding's suggestion replaces the whole reported line span. Carrying
+          // one across as the other produces a GitHub suggested change that
+          // deletes the rest of the line — `var x = 1` becomes `let`. Emitting
+          // them correctly means reading the source and splicing the range, which
+          // belongs with the suggested-changes work in M2, not here.
         });
       }
     }

@@ -37,8 +37,12 @@ plugin-test:
 vet:
 	go vet ./...
 
+# Driven by `go list` rather than by the filesystem: npm packages vendor Go
+# sources (eslint pulls in flatted, which ships a Go package), and `gofmt -l .`
+# would format-check third-party code. Clean today, one dependency bump from
+# breaking CI.
 fmt-check:
-	@unformatted="$$(gofmt -l .)"; \
+	@unformatted="$$(gofmt -l $$(go list -f '{{.Dir}}' ./...))"; \
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 
 test:

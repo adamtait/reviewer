@@ -29,10 +29,6 @@ type Host interface {
 	Analyze(ctx context.Context, pluginID, analyzerID string, req plugin.AnalyzeRequest) ([]finding.Finding, []string, error)
 }
 
-// SecretsAnalyzer identifies the analyzer whose completion the gate depends on.
-// A run in which it did not complete is a run in which nothing checked the diff.
-const SecretsAnalyzer = "gitleaks"
-
 // Options select and bound the run.
 type Options struct {
 	// Only and Skip filter by analyzer id. Only wins when both are set.
@@ -40,6 +36,15 @@ type Options struct {
 	Skip []string
 	// Timeout bounds one analyzer. Zero means the host's own default.
 	Timeout time.Duration
+	// SecretsAnalyzers names the analyzers whose successful completion means the
+	// diff was checked. Configured rather than hardcoded, so that a replacement
+	// secrets scanner does not leave the model lane permanently blocked.
+	SecretsAnalyzers []string
+	// Scope narrows a lane's findings to the diff before the gate sees them, so
+	// "a credential in the diff" means exactly that. It reports how many it
+	// dropped, because a run that discards an analyzer's work should say so rather
+	// than look clean. Optional; identity when nil.
+	Scope func([]finding.Finding) (kept []finding.Finding, dropped int)
 }
 
 // Timing is how long one analyzer took, for the run log. Latency is the risk this
@@ -60,6 +65,12 @@ type Result struct {
 	Timings  []Timing
 	// Gate records the secrets gate's decision, whether or not it blocked.
 	Gate gate.State
+	// Selected is how many analyzers survived the filters. Distinct from the
+	// number that ran: a gate-blocked run selects analyzers it does not invoke,
+	// and reporting "no analyzers are configured" in that case is wrong.
+	Selected int
+	// Dropped counts findings discarded for falling outside the diff.
+	Dropped int
 }
 
 // Run executes the analyzers the host offers, in order, with the gate between the
@@ -67,9 +78,20 @@ type Result struct {
 func Run(ctx context.Context, host Host, req plugin.AnalyzeRequest, opts Options) Result {
 	var res Result
 
-	deterministic, llm := split(selectAnalyzers(host.Analyzers(), opts.Only, opts.Skip))
+	selected := selectAnalyzers(host.Analyzers(), opts.Only, opts.Skip)
+	res.Selected = len(selected)
+	deterministic, llm := split(selected)
 
-	found, scanned := run(ctx, host, deterministic, req, &res)
+	found, scanned := run(ctx, host, deterministic, req, &res, opts.SecretsAnalyzers)
+	// Scope before the gate decides. Without this the gate would block on a
+	// credential that sits in a changed file but outside the changed lines — a
+	// finding the report then drops, leaving a blocked lane with nothing visible
+	// to explain it.
+	if opts.Scope != nil {
+		var dropped int
+		found, dropped = opts.Scope(found)
+		res.Dropped += dropped
+	}
 	res.Findings = append(res.Findings, found...)
 
 	res.Gate = gate.Decide(res.Findings, scanned)
@@ -82,7 +104,12 @@ func Run(ctx context.Context, host Host, req plugin.AnalyzeRequest, opts Options
 	case res.Gate.Blocked:
 		// Nothing in the model lane to block; reporting it would be noise.
 	default:
-		found, _ := run(ctx, host, llm, req, &res)
+		found, _ := run(ctx, host, llm, req, &res, opts.SecretsAnalyzers)
+		if opts.Scope != nil {
+			var dropped int
+			found, dropped = opts.Scope(found)
+			res.Dropped += dropped
+		}
 		res.Findings = append(res.Findings, found...)
 	}
 	return res
@@ -91,7 +118,7 @@ func Run(ctx context.Context, host Host, req plugin.AnalyzeRequest, opts Options
 // run executes one lane and records what happened. It never returns an error: an
 // analyzer that fails costs its own findings and nothing else.
 func run(ctx context.Context, host Host, analyzers []pluginhost.Registered,
-	req plugin.AnalyzeRequest, res *Result) (found []finding.Finding, secretsScanned bool) {
+	req plugin.AnalyzeRequest, res *Result, secretsAnalyzers []string) (found []finding.Finding, secretsScanned bool) {
 
 	for _, a := range analyzers {
 		start := time.Now()
@@ -109,7 +136,7 @@ func run(ctx context.Context, host Host, analyzers []pluginhost.Registered,
 			res.Warnings = append(res.Warnings, fmt.Sprintf("%s: %v", a.ID, err))
 			continue
 		}
-		if a.ID == SecretsAnalyzer {
+		if contains(secretsAnalyzers, a.ID) {
 			secretsScanned = true
 		}
 		res.Warnings = append(res.Warnings, warnings...)

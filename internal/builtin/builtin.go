@@ -80,8 +80,12 @@ func (h *Handler) binary(id string) string {
 }
 
 // Analyze runs one built-in analyzer.
-func (h *Handler) Analyze(id string, req plugin.AnalyzeRequest) ([]finding.Finding, []string, error) {
-	ctx := context.Background()
+//
+// The context is the run's, not a fresh one: a built-in plugin shares the host's
+// address space, so nothing can kill it, and the context is the only way an
+// analyzer's own subprocess gets stopped when the run's deadline passes
+// (ADR-0027).
+func (h *Handler) Analyze(ctx context.Context, id string, req plugin.AnalyzeRequest) ([]finding.Finding, []string, error) {
 	switch id {
 	case gitleaks.ID:
 		return gitleaks.Analyze(ctx, req, h.binary(id))

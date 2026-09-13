@@ -24,13 +24,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/typescript/package-lock.json
+      # Go checks first, before npm writes anything into the tree.
+      - run: make build
+      - run: make vet
+      - run: make fmt-check
       # The cross-language conformance test drives the real plugin, so it has to
       # exist. Without this the test skips, which would hide a protocol drift.
       - run: npm ci && npm run build
         working-directory: plugins/typescript
-      - run: make build
-      - run: make vet
-      - run: make fmt-check
       - run: make test
 
   lint:

@@ -180,3 +180,91 @@ func TestProbeDistinguishesAbsentFromBroken(t *testing.T) {
 		t.Fatalf("want the version reported, got %q %v", version, err)
 	}
 }
+
+// `gitleaks dir` takes at most one positional path and silently ignores the
+// rest, falling back to scanning the working directory. Passing the whole
+// changed-file list therefore scanned the entire repository — surfacing
+// pre-existing credentials that would close the secrets gate permanently on any
+// repository with one committed in an old file. The stub records its arguments so
+// the one-path-per-invocation contract is asserted rather than assumed.
+func TestEachFileIsScannedSeparately(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "args.log")
+	// The scanned path is the last argument; everything before it is a flag or a
+	// flag's value.
+	script := `for a in "$@"; do target="$a"; done
+while [ $# -gt 0 ]; do
+  case "$1" in --report-path) shift; out="$1";; esac
+  shift
+done
+echo "$target" >> "` + log + `"
+echo "[]" > "$out"
+exit 0
+`
+	req := req(t, "a.ts", "b.ts", "c.ts")
+	if _, _, err := Analyze(context.Background(), req, stubBinary(t, script)); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("the scanner was never invoked: %v", err)
+	}
+	lines := strings.Fields(string(body))
+	if len(lines) != 3 {
+		t.Fatalf("want one invocation per changed file, got %d targets: %v", len(lines), lines)
+	}
+	for _, want := range []string{"a.ts", "b.ts", "c.ts"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("want %s scanned, got %q", want, body)
+		}
+	}
+}
+
+// One unscannable file means the diff was not fully checked, so the gate must
+// fail closed rather than report the files that did scan as clean.
+func TestOneUnscannableFileFailsTheWholeScan(t *testing.T) {
+	script := `for a in "$@"; do target="$a"; done
+while [ $# -gt 0 ]; do
+  case "$1" in --report-path) shift; out="$1";; esac
+  shift
+done
+case "$target" in *poison.ts*) echo "cannot read" >&2; exit 2;; esac
+echo "[]" > "$out"
+exit 0
+`
+	_, _, err := Analyze(context.Background(), req(t, "fine.ts", "poison.ts"), stubBinary(t, script))
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("want ErrUnavailable so the gate fails closed, got %v", err)
+	}
+}
+
+// gitleaks logs an INF line to stderr on every successful scan. Turning that into
+// a warning made every clean review look degraded.
+func TestACleanScanProducesNoWarnings(t *testing.T) {
+	script := `while [ $# -gt 0 ]; do
+  case "$1" in --report-path) shift; out="$1";; esac
+  shift
+done
+echo "INF scanned ~1019 bytes in 23ms" >&2
+echo "[]" > "$out"
+exit 0
+`
+	findings, warnings, err := Analyze(context.Background(), req(t, "a.ts"), stubBinary(t, script))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 || len(warnings) != 0 {
+		t.Fatalf("a clean scan must be silent, got %+v / %v", findings, warnings)
+	}
+}
+
+// The run's deadline has to reach the scanner's own process, because a built-in
+// analyzer shares the host's address space and nothing else can stop it.
+func TestTheContextStopsTheScanner(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := Analyze(ctx, req(t, "a.ts"), stubBinary(t, "sleep 30\n"))
+	if err == nil {
+		t.Fatal("want a cancelled scan to return an error")
+	}
+}

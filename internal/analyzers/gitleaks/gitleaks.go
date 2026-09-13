@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/adamtait/reviewer/pkg/finding"
 	"github.com/adamtait/reviewer/pkg/plugin"
@@ -69,7 +70,7 @@ func Analyze(ctx context.Context, req plugin.AnalyzeRequest, binary string) ([]f
 		return nil, nil, nil
 	}
 
-	reports, warnings, err := scan(ctx, path, req.Root, paths)
+	reports, warnings, err := scanAll(ctx, path, req.Root, paths)
 	if err != nil {
 		return nil, warnings, err
 	}
@@ -114,10 +115,61 @@ func describe(r report) string {
 	return fmt.Sprintf("%s Remove it and rotate the credential; the value is not repeated here on purpose.", d)
 }
 
-// scan runs gitleaks over the given paths. gitleaks writes its report to a file
-// rather than stdout, and exits 1 when it finds something, so neither the exit
-// code nor stdout can be used to tell a finding from a failure — only the report.
-func scan(ctx context.Context, binary, root string, paths []string) ([]report, []string, error) {
+// scanAll scans each changed file separately.
+//
+// `gitleaks dir` takes at most **one** positional path and silently ignores the
+// rest, falling back to scanning the working directory. Passing the whole changed
+// file list therefore scans the entire repository: slow, and worse, it surfaces
+// pre-existing credentials anywhere in the tree, which would close the secrets
+// gate permanently on a repository that has one committed in an old file.
+// Verified against the real binary — a two-file argument list returned findings
+// from four files that were not in it.
+func scanAll(ctx context.Context, binary, root string, paths []string) ([]report, []string, error) {
+	// Bounded concurrency: gitleaks costs roughly 20ms of start-up per file, which
+	// is worth parallelising on a large diff but not worth flooding the machine for.
+	const workers = 4
+
+	type outcome struct {
+		reports  []report
+		warnings []string
+		err      error
+	}
+	results := make([]outcome, len(paths))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workers)
+	for i, p := range paths {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r, w, err := scan(ctx, binary, root, p)
+			results[i] = outcome{r, w, err}
+		}()
+	}
+	wg.Wait()
+
+	var (
+		all      []report
+		warnings []string
+	)
+	for i, res := range results {
+		if res.err != nil {
+			// One unscannable file means this diff was not fully checked, and the
+			// gate must fail closed rather than report the rest as clean.
+			return nil, warnings, fmt.Errorf("scanning %s: %w", paths[i], res.err)
+		}
+		all = append(all, res.reports...)
+		warnings = append(warnings, res.warnings...)
+	}
+	return all, warnings, nil
+}
+
+// scan runs gitleaks over one path. gitleaks writes its report to a file rather
+// than stdout, and exits 1 when it finds something, so neither the exit code nor
+// stdout can be used to tell a finding from a failure — only the report.
+func scan(ctx context.Context, binary, root, target string) ([]report, []string, error) {
 	tmp, err := os.CreateTemp("", "reviewer-gitleaks-*.json")
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -126,10 +178,9 @@ func scan(ctx context.Context, binary, root string, paths []string) ([]report, [
 	_ = tmp.Close()
 	defer os.Remove(reportPath)
 
-	args := []string{"dir", "--no-banner", "--report-format", "json", "--report-path", reportPath, "--exit-code", "1"}
-	args = append(args, paths...)
-
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd := exec.CommandContext(ctx, binary,
+		"dir", "--no-banner", "--report-format", "json",
+		"--report-path", reportPath, "--exit-code", "1", target)
 	cmd.Dir = root
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -164,9 +215,9 @@ func scan(ctx context.Context, binary, root string, paths []string) ([]report, [
 	if errors.As(runErr, &exitErr) && exitErr.ExitCode() != 1 && len(reports) == 0 {
 		return nil, nil, fmt.Errorf("%w: exit %d (%s)", ErrUnavailable, exitErr.ExitCode(), firstLine(stderr.String()))
 	}
-	if s := firstLine(stderr.String()); s != "" && len(reports) == 0 {
-		warnings = append(warnings, fmt.Sprintf("%s: %s", ID, s))
-	}
+	// Deliberately no warning for stderr output on a successful scan: gitleaks
+	// logs an INF line for every scan, and turning that into a warning made every
+	// clean review look degraded.
 	return reports, warnings, nil
 }
 

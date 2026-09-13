@@ -76,6 +76,26 @@ the key alone would give the model lane a credential and nothing to call.
 Turning the lane on in CI is therefore: set the secret, set the variables, flip
 `laneB.enabled: true`. The workflow itself needs no edit.
 
+## The subscription paths, in detail
+
+`claude-code` and `codex` spawn the CLI you already have, non-interactively, and read its JSON output.
+There is no key and no endpoint to configure — that is the whole point of offering them.
+
+Two properties of that boundary are worth knowing, because they are the things that would otherwise
+go wrong quietly:
+
+**The prompt goes on stdin, never on the command line.** An argument list is world-readable: `ps`
+shows it to every other user on the machine, and it reaches process accounting, audit logs and crash
+reports. The prompt contains your diff. A test asserts that neither the system prompt nor the diff
+appears in the spawned process's argv.
+
+**A hung CLI is killed, and so is everything it started.** These tools can sit waiting for input if
+they decide the session needs re-authenticating, so each invocation is bounded and runs in its own
+process group — a timeout kills the group rather than leaving orphans behind holding your terminal.
+
+Pin the executable with `tools.claude-code.path` or `tools.codex.path` in `.review/config.yaml` if it
+is not on `PATH`.
+
 ## What is never written
 
 - No credential, on any path, by any command. `init` writes `.review/.env.example`, which names

@@ -52,6 +52,8 @@ export interface Descriptor {
 /** A changed file and the line ranges the diff touched, as inclusive pairs. */
 export interface ChangedFile {
   path: string;
+  /** added, modified or renamed. */
+  status?: string;
   ranges: [number, number][];
 }
 
@@ -65,6 +67,8 @@ export interface AnalyzeRequest {
   base?: string;
   /** What the deterministic lane already found. Set only for model-lane analyzers. */
   prior?: Finding[];
+  /** The change is the index rather than a branch; previous contents are HEAD's. */
+  staged?: boolean;
   contextLines?: number;
   /** This analyzer's config block, passed through untouched. */
   settings?: unknown;

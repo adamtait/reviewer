@@ -316,3 +316,46 @@ func TestAHungProviderIsBoundedByTheCallersTimeout(t *testing.T) {
 func TestTheHTTPProviderSatisfiesTheInterface(t *testing.T) {
 	var _ Provider = (*httpProvider)(nil)
 }
+
+// A gateway routinely carries its token in the path. A transport error prints the
+// whole URL, which is the one place that token appears verbatim.
+func TestTheEndpointIsRedactedFromErrors(t *testing.T) {
+	cfg, secrets := openAICfg("http://127.0.0.1:1/proxy/tok_HUNTER2SUPERSECRET/v1")
+	provider, err := New(cfg, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = provider.Complete(context.Background(), nil,
+		Options{Model: "a-model", Timeout: 2 * time.Second})
+	if err == nil {
+		t.Fatal("want a transport error")
+	}
+	if strings.Contains(err.Error(), "tok_HUNTER2SUPERSECRET") {
+		t.Fatalf("the endpoint's credential reached the error: %v", err)
+	}
+}
+
+// Redacted before truncated. The other order cuts the body at 400 bytes and then
+// looks for a key, so a credential straddling the boundary survives as a prefix.
+func TestALongBodyIsRedactedBeforeItIsTruncated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		// The key sits either side of the 400-byte cut.
+		_, _ = io.WriteString(w, strings.Repeat("x", 390)+testKey+strings.Repeat("y", 100))
+	}))
+	defer server.Close()
+
+	cfg, secrets := openAICfg(server.URL)
+	provider, _ := New(cfg, secrets)
+	_, err := provider.Complete(context.Background(), nil, Options{Model: "a-model"})
+
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, fragment := range []string{testKey, testKey[:12]} {
+		if strings.Contains(err.Error(), fragment) {
+			t.Fatalf("%q survived into %v", fragment, err)
+		}
+	}
+}

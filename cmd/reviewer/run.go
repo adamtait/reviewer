@@ -33,10 +33,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		return err
 	}
 
-	if o.noInvalidate {
-		// A flag overrides the file, as everywhere else.
-		cfg.LaneB.Invalidate = false
-	}
+	cfg = applyFlags(o, cfg)
 
 	rep, err := reporter(ctx, o, cfg, secrets, stdout, stderr)
 	if err != nil {
@@ -85,7 +82,8 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		// base, not the --base default. An analyzer that reads previous file
 		// contents from a different ref than the diff came from answers a
 		// different question than the one being reviewed.
-		Base: base,
+		Base:   base,
+		Staged: o.staged,
 	}
 
 	result := sequencer.Run(ctx, host, req, sequencer.Options{
@@ -136,6 +134,18 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		run.Warnings = append(run.Warnings, nothingRanReason(cfg, offered, unavailable))
 	}
 	return rep.Report(ctx, run)
+}
+
+// applyFlags lets the command line override the file, as everywhere else.
+//
+// A named function rather than four lines inside review, so there is something to
+// test. The version inlined there was covered only by a test asserting the flag had
+// parsed — which stayed green with the override deleted.
+func applyFlags(o options, cfg config.Config) config.Config {
+	if o.noInvalidate {
+		cfg.LaneB.Invalidate = false
+	}
+	return cfg
 }
 
 // nothingRanReason explains a run with no analyzers. The causes need different

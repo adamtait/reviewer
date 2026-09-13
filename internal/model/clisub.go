@@ -23,9 +23,11 @@ import (
 // tokens. Under an HTTP-shaped interface they would have been "maybe later"
 // forever, which is the reason ADR-0021's interface is as narrow as it is.
 //
-// There is no key here, no endpoint, and nothing to redact — which removes a whole
-// class of failure and adds a different one: this spawns a program that can do
-// anything the person running it can do.
+// There is no key *here* — which removes a whole class of failure and adds two
+// others. This spawns a program that can do anything the person running it can do,
+// and that program holds its own credentials and prints them in its diagnostics.
+// Its output ends up in a warning, and a warning ends up in a pull request comment,
+// so everything it says goes through Redact on the way out.
 type cliProvider struct {
 	name string
 	// binary is the executable, from config or the path's default name. Never an
@@ -123,14 +125,16 @@ func (p *cliProvider) Complete(ctx context.Context, messages []Message, opts Opt
 		// A refusal the CLI stated in its own output, which both of these report
 		// with a non-zero exit as well. The exit code is the tiebreaker, not the
 		// decision: reading it first would turn every refusal into "exit status 1"
-		// and lose the reason the CLI gave.
+		// and lose the reason the CLI gave. The sentinel is preserved with %w; the
+		// text it carries was redacted where it was built.
 		return "", fmt.Errorf("%s: %w", p.name, err)
 	case runErr != nil:
 		// An unreadable reply and a non-zero exit: the CLI failed, and its own
-		// diagnostics on stderr are more useful than our parse error.
-		return "", fmt.Errorf("%s: %v: %s", p.name, runErr, firstLine(stderr.String()))
+		// diagnostics on stderr are more useful than our parse error — redacted,
+		// because "auth failed for token sk-…" is a thing these tools print.
+		return "", fmt.Errorf("%s: %v: %s", p.name, runErr, firstLine(Redact(stderr.String())))
 	default:
-		return "", fmt.Errorf("%s: %w", p.name, err)
+		return "", fmt.Errorf("%s: %s", p.name, Redact(err.Error()))
 	}
 }
 
@@ -160,7 +164,10 @@ func claudeCodeText(stdout string) (string, error) {
 		return "", fmt.Errorf("the reply was not the expected JSON: %w", err)
 	}
 	if reply.IsError {
-		return "", fmt.Errorf("%w: %s", ErrRefused, orDefault(reply.Result, reply.Subtype))
+		// Redacted here rather than at the caller, so the sentinel survives the
+		// wrapping: these CLIs hold real credentials and print them in diagnostics,
+		// and this text reaches a pull request comment.
+		return "", fmt.Errorf("%w: %s", ErrRefused, Redact(orDefault(reply.Result, reply.Subtype)))
 	}
 	if strings.TrimSpace(reply.Result) == "" {
 		return "", fmt.Errorf("the reply was empty")

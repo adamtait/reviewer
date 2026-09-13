@@ -35,7 +35,17 @@ func (h *Handler) modelLane(ctx context.Context, req plugin.AnalyzeRequest) ([]f
 		return nil, []string{model.Describe(err)}, nil
 	}
 
-	in, warnings := laneb.Gather(ctx, h.cfg, req.Base, fromPlugin(req.Changed))
+	if req.Base == "" && !req.Staged {
+		// No base means the changed-file list came from the API rather than from
+		// git — a pull request whose base commit this checkout does not have. There
+		// is no diff to send that corresponds to what the gate scanned, and sending
+		// a different one is worse than sending none (ADR-0012).
+		return nil, []string{"the model lane needs the base commit in the checkout; " +
+			"add `fetch-depth: 0` to actions/checkout"}, nil
+	}
+
+	changed := fromPlugin(req.Changed)
+	in, warnings := laneb.Gather(ctx, h.cfg, req.Base, req.Staged, changed)
 	in.Findings = req.Prior
 
 	reviewer := laneb.Reviewer{
@@ -43,6 +53,7 @@ func (h *Handler) modelLane(ctx context.Context, req plugin.AnalyzeRequest) ([]f
 		Model:     h.cfg.LaneB.Model,
 		Root:      h.cfg.Root,
 		PromptDir: h.cfg.LaneB.PromptDir,
+		Changed:   changedSet(changed),
 	}
 
 	candidates, reviewWarnings, err := reviewer.Review(ctx, in)
@@ -68,14 +79,26 @@ func (h *Handler) modelLane(ctx context.Context, req plugin.AnalyzeRequest) ([]f
 
 // fromPlugin converts the protocol's file shape back for the assembler.
 //
-// The protocol carries less than diff.File does — no status, because no analyzer
-// before this one needed one — so every file is reported as modified rather than
-// given a status this code was not told. A wrong status in a prompt is worse than
-// a vague one.
+// The status is carried on the wire now rather than assumed. Flattening every file
+// to "modified" was not merely vague: staleDocs skips deleted files, so with the
+// status wrong it never did, and a document referencing a file the change deleted
+// was offered as one the change "may have invalidated".
 func fromPlugin(files []plugin.ChangedFile) []diff.File {
 	out := make([]diff.File, 0, len(files))
 	for _, f := range files {
-		out = append(out, diff.File{Path: f.Path, Status: diff.StatusModified, Ranges: f.Ranges})
+		out = append(out, diff.File{
+			Path:   f.Path,
+			Status: diff.Status(f.Status),
+			Ranges: f.Ranges,
+		})
 	}
 	return out
+}
+
+func changedSet(files []diff.File) map[string]bool {
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f.Path] = true
+	}
+	return set
 }

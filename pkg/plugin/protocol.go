@@ -96,6 +96,10 @@ type Descriptor struct {
 // filters again, but an analyzer that scopes itself is faster.
 type ChangedFile struct {
 	Path string `json:"path"`
+	// Status is what happened to the file: added, modified or renamed. Carried
+	// because an analyzer reasoning about a file's existence, rather than about its
+	// changed lines, cannot get it right without one.
+	Status string `json:"status,omitempty"`
 	// Ranges are inclusive [start, end] pairs, 1-indexed.
 	Ranges [][2]int `json:"ranges"`
 }
@@ -111,10 +115,22 @@ type AnalyzeRequest struct {
 	// Projects narrows a monorepo to the affected workspaces. Empty means all.
 	Projects []string `json:"projects,omitempty"`
 	// Base is the ref the diff was taken against, so an analyzer that needs the
-	// previous contents of a changed file can read them. Empty for a staged diff,
-	// where the previous contents are HEAD's. An analyzer that only needs the
-	// changed lines never looks at it.
+	// previous contents of a changed file can read them.
+	//
+	// Empty means there is none available — a pull request whose base commit is not
+	// in this checkout, where the changed-file list came from the API rather than
+	// from git. An analyzer that needs previous contents must then say it cannot
+	// answer, not substitute something else: on a shallow clone the local index and
+	// the pull request have nothing to do with each other.
 	Base string `json:"base,omitempty"`
+	// Staged says the change under review is the index rather than a branch. The
+	// previous contents are HEAD's, and the diff is `git diff --cached`.
+	//
+	// Distinct from an empty Base, which means "no base at all". Conflating the two
+	// is how the model lane came to send `git diff --cached` for a pull request on
+	// a shallow clone — content the secrets gate had never scanned, because the
+	// gate saw the API's file list and the prompt carried the local index.
+	Staged bool `json:"staged,omitempty"`
 	// ContextLines is how much surrounding source to include where an analyzer
 	// has a choice.
 	ContextLines int `json:"contextLines,omitempty"`

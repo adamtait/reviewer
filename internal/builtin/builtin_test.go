@@ -3,10 +3,13 @@
 package builtin
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/pkg/finding"
+	"github.com/adamtait/reviewer/pkg/plugin"
 )
 
 // The single most important structural property in the system. The model lane is
@@ -65,5 +68,35 @@ func TestTheModelLaneDeclinesWithAReasonWhenItIsNotConfigured(t *testing.T) {
 		if d.Unavailable == "" {
 			t.Error("want a reason, got silence")
 		}
+	}
+}
+
+// A pull request whose base commit is not in the checkout has no diff that
+// corresponds to what the secrets gate scanned. The first version fell back to
+// `git diff --cached`, which sent the developer's local index to a model provider
+// while the gate had scanned the pull request's files — two different sets of
+// content, and only one of them checked (ADR-0012).
+func TestTheModelLaneRefusesToInventADiff(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Root = t.TempDir()
+	cfg.LaneB.Enabled = true
+	cfg.LaneB.Provider = "openai-compatible"
+	cfg.LaneB.Model = "a-model"
+	cfg.LaneB.BaseURL = "http://127.0.0.1:1"
+	h := New(cfg, config.Secrets{ModelAPIKey: "sk-test-0123456789"}, "test")
+
+	findings, warnings, err := h.Analyze(context.Background(), ModelLaneID, plugin.AnalyzeRequest{
+		Root:    cfg.Root,
+		Changed: []plugin.ChangedFile{{Path: "src/a.ts", Status: "modified", Ranges: [][2]int{{1, 1}}}},
+		// Neither a base nor staged: the API supplied the file list.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("want nothing, got %+v", findings)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "fetch-depth") {
+		t.Errorf("want the fix named, got %v", warnings)
 	}
 }

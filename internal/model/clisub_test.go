@@ -214,3 +214,39 @@ func read(t *testing.T, path string) string {
 	}
 	return string(body)
 }
+
+// These CLIs hold real credentials and print them in their diagnostics. Their
+// output becomes a run warning, and a run warning becomes a comment on a public
+// pull request.
+func TestCLIOutputIsRedacted(t *testing.T) {
+	const leaked = "sk-live-ABCDEFGH01234567890"
+
+	t.Run("stderr on a failure", func(t *testing.T) {
+		cfg, _ := stub(t, "codex", "#!/bin/sh\ncat >/dev/null\n"+
+			"echo 'auth failed for token "+leaked+"' >&2\nexit 1\n")
+		p, err := New(cfg, config.Secrets{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Complete(context.Background(), nil, Options{Model: "a-model"})
+		if err == nil || strings.Contains(err.Error(), leaked) {
+			t.Fatalf("the key reached the error: %v", err)
+		}
+	})
+
+	t.Run("the result text on a refusal", func(t *testing.T) {
+		cfg, _ := stub(t, "claude-code", "#!/bin/sh\ncat >/dev/null\n"+
+			`printf '%s' '{"is_error":true,"result":"credentials rejected: `+leaked+`"}'`+"\nexit 1\n")
+		p, err := New(cfg, config.Secrets{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Complete(context.Background(), nil, Options{Model: "a-model"})
+		if !errors.Is(err, ErrRefused) {
+			t.Fatalf("want the refusal preserved through redaction, got %v", err)
+		}
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("the key reached the error: %v", err)
+		}
+	})
+}

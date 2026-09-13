@@ -131,7 +131,9 @@ func (p *httpProvider) Complete(ctx context.Context, messages []Message, opts Op
 func (p *httpProvider) once(ctx context.Context, url string, payload []byte) (string, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return "", false, err
+		// This error carries the raw URL, which is the one place a gateway's
+		// path-embedded token would appear verbatim.
+		return "", false, fmt.Errorf("%s: %s", p.name, p.redact(err.Error()))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -150,7 +152,7 @@ func (p *httpProvider) once(ctx context.Context, url string, payload []byte) (st
 	// exhaust this process's memory.
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return "", true, fmt.Errorf("%s: reading the response: %s", p.name, p.redact(err.Error()))
+		return "", true, fmt.Errorf("%s: reading the response: %s", p.name, firstLine(p.redact(err.Error())))
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -166,12 +168,18 @@ func (p *httpProvider) once(ctx context.Context, url string, payload []byte) (st
 		if errors.Is(err, ErrRefused) {
 			return "", false, err
 		}
-		return "", false, fmt.Errorf("%s: %s", p.name, p.redact(err.Error()))
+		return "", false, fmt.Errorf("%s: %s", p.name, firstLine(p.redact(err.Error())))
 	}
 	return text, false, nil
 }
 
-func (p *httpProvider) redact(s string) string { return Redact(s, p.apiKey) }
+// redact removes the key and the endpoint from anything about to be reported.
+//
+// The endpoint as well as the key, because a gateway routinely carries its token
+// in the path, as a path segment before the version prefix, and a transport error
+// prints the whole URL. config.Secrets already treats the base URL as a secret and
+// hides it from its own String(); this is the other place it escapes.
+func (p *httpProvider) redact(s string) string { return Redact(s, p.apiKey, p.baseURL) }
 
 func backoff(attempt int) time.Duration {
 	return time.Duration(math.Pow(2, float64(attempt-2))) * baseBackoff

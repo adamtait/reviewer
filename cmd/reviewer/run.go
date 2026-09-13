@@ -76,6 +76,9 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		// workspace should not make a plugin build the other eleven.
 		Projects:     diff.Affected(files, cfg.Projects),
 		ContextLines: cfg.Analyzers.ContextLines,
+		// The ref the diff is against. For a staged review the previous contents
+		// are HEAD's, which is what an empty value means.
+		Base: reviewBase(o),
 	}
 
 	result := sequencer.Run(ctx, host, req, sequencer.Options{
@@ -126,6 +129,17 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		run.Warnings = append(run.Warnings, nothingRanReason(cfg, offered, unavailable))
 	}
 	return rep.Report(ctx, run)
+}
+
+// reviewBase is the ref an analyzer should read previous file contents from. Not
+// every analyzer needs one — most work from the changed lines alone — but one that
+// must answer "did this pull request introduce X" cannot do it from the new
+// contents by themselves.
+func reviewBase(o options) string {
+	if o.staged {
+		return ""
+	}
+	return o.base
 }
 
 // nothingRanReason explains a run with no analyzers. The causes need different

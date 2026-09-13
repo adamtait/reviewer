@@ -110,6 +110,11 @@ type AnalyzeRequest struct {
 	Changed []ChangedFile `json:"changed"`
 	// Projects narrows a monorepo to the affected workspaces. Empty means all.
 	Projects []string `json:"projects,omitempty"`
+	// Base is the ref the diff was taken against, so an analyzer that needs the
+	// previous contents of a changed file can read them. Empty for a staged diff,
+	// where the previous contents are HEAD's. An analyzer that only needs the
+	// changed lines never looks at it.
+	Base string `json:"base,omitempty"`
 	// ContextLines is how much surrounding source to include where an analyzer
 	// has a choice.
 	ContextLines int `json:"contextLines,omitempty"`

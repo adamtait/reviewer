@@ -251,22 +251,44 @@ func TestConfigSkipIsApplied(t *testing.T) {
 	}
 	script := filepath.Join(root, "..", "..", "examples", "plugins", "shell-hello", "plugin.sh")
 	writeConfig(t, repo.Root,
-		"plugins:\n  - id: shell-hello\n    command: "+script+"\nanalyzers:\n  skip: [shell-hello, gitleaks]\n")
+		"plugins:\n  - id: shell-hello\n    command: "+script+"\nanalyzers:\n  skip: [shell-hello]\n")
 
 	var stdout, stderr bytes.Buffer
 	if err := run(context.Background(),
 		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	out := stdout.String()
-	// Both analyzers skipped, so nothing ran and the report names the skip as the
-	// reason. "No analyzers are configured" would be the wrong explanation here:
-	// one is, and it was filtered out.
-	if !strings.Contains(out, "removed by only/skip") {
-		t.Fatalf("want the configured skip to take effect, got:\n%s", out)
+	// Asserted against the timing table, which lists exactly what ran. Asserting on
+	// "nothing ran at all" would mean listing every built-in analyzer in the skip,
+	// and the test would then break every time one is added — for a reason that has
+	// nothing to do with whether skip works.
+	if out := stdout.String(); strings.Contains(out, "shell-hello") {
+		t.Fatalf("the skipped analyzer ran:\n%s", out)
 	}
-	if strings.Contains(out, "outside the diff") || strings.Contains(out, "secrets/") {
-		t.Fatalf("a skipped analyzer still produced findings:\n%s", out)
+}
+
+// The three reasons a run can end with no analyzers need three different answers,
+// because each sends the reader somewhere different.
+func TestNothingRanReason(t *testing.T) {
+	configured := config.Config{Plugins: []config.Plugin{{ID: "p", Command: "x"}}}
+
+	for _, tc := range []struct {
+		name        string
+		cfg         config.Config
+		offered     int
+		unavailable int
+		want        string
+	}{
+		{name: "filtered out", cfg: configured, offered: 3, want: "removed by only/skip"},
+		{name: "all declined", cfg: configured, unavailable: 2, want: "all 2 declined"},
+		{name: "plugin offered none", cfg: configured, want: "offered none; check they are installed"},
+		{name: "nothing configured", cfg: config.Config{}, want: "no analyzers are configured"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nothingRanReason(tc.cfg, tc.offered, tc.unavailable); !strings.Contains(got, tc.want) {
+				t.Errorf("nothingRanReason() = %q, want it to mention %q", got, tc.want)
+			}
+		})
 	}
 }
 

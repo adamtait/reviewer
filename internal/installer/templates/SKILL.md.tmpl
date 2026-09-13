@@ -44,14 +44,16 @@ unused exports, vulnerable dependencies, this repository's own convention rules.
 These came from a compiler or a pattern match. If one appears, the code has the
 problem — fix it, or say in the pull request why the rule does not apply here.
 
-**Suggestions.** Anything marked as medium or low confidence, and anything in the
-`arch/` or `quality/` categories. These came from a model reading your diff. They
-are frequently right and they are judgements. Read each one, act on the ones you
-agree with, and ignore the rest without ceremony. A suggestion you disagree with
-is not a finding you have to argue against.
+**Suggestions.** Anything marked `model`. These came from a model reading your
+diff. They are frequently right and they are judgements. Read each one, act on the
+ones you agree with, and ignore the rest without ceremony. A suggestion you
+disagree with is not a finding you have to argue against.
 
-Confidence is the marker: high-confidence findings are facts about the code,
-everything else is an opinion about it.
+**The `model` marker is what separates them, not confidence.** A model finding can
+be high confidence — `correctness/bug` and `security/risk` are allowed to be — and
+a high-confidence model finding is still a judgement about your code rather than a
+fact about it. Confidence decides how loudly a finding is presented; the lane
+decides whether it came from something that can be wrong about what the code says.
 
 ## What not to do
 

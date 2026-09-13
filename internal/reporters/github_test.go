@@ -631,3 +631,60 @@ func TestAnAlreadyClearedSummaryIsLeftAlone(t *testing.T) {
 		t.Fatalf("want no rewrite of an already-cleared summary, got %v", f.updatedIssues)
 	}
 }
+
+// The marker now carries a rule id, and the two behaviours that depend on markers —
+// not double-posting, and resolving a stale thread — had no coverage of the new
+// form. The mechanical update of eleven call sites to `Marker(fp, "")` kept the
+// suite green while testing only the old shape.
+func TestMarkersCarryingARuleIDStillDedupeAndResolve(t *testing.T) {
+	for _, ruleID := range []string{
+		"conventions/no-console",
+		"arch/no-domain-to-infra",
+		"types/TS2322",
+	} {
+		t.Run(ruleID, func(t *testing.T) {
+			f := finding.Finding{
+				Fingerprint: "aaa111", RuleID: ruleID, Lane: finding.LaneDeterministic,
+				Confidence: finding.ConfidenceHigh, Severity: finding.SeverityError,
+				File: "a.ts", Line: 3, Message: "the finding",
+			}
+
+			t.Run("not posted twice", func(t *testing.T) {
+				fake := &fakeGitHub{reviewComments: []ghclient.ReviewComment{{
+					ID:   1,
+					Body: "the finding\n" + fingerprint.Marker("aaa111", ruleID),
+					User: ghclient.User{Login: "reviewer[bot]"},
+					Path: "a.ts",
+				}}}
+				var out bytes.Buffer
+				if err := reporter(fake, &out).Report(context.Background(),
+					Run{Findings: []finding.Finding{f}}); err != nil {
+					t.Fatal(err)
+				}
+				if len(fake.posted) != 0 {
+					t.Errorf("reposted a finding already on the pull request: %+v", fake.posted)
+				}
+			})
+
+			t.Run("its thread is recognised as ours", func(t *testing.T) {
+				fake := &fakeGitHub{threads: []ghclient.ReviewThread{{
+					ID: "t1",
+					Comments: []ghclient.ReviewComment{{
+						Body: "gone\n" + fingerprint.Marker("dead01", ruleID),
+						User: ghclient.User{Login: "reviewer[bot]"},
+					}},
+				}}}
+				var out bytes.Buffer
+				r := reporter(fake, &out)
+				r.ResolveStale = true
+				// Trustworthy with no findings: the earlier comment is stale.
+				if err := r.Report(context.Background(), Run{Trustworthy: true}); err != nil {
+					t.Fatal(err)
+				}
+				if len(fake.resolved) != 1 {
+					t.Errorf("a thread carrying a rule id was not recognised as ours: %v", fake.resolved)
+				}
+			})
+		})
+	}
+}

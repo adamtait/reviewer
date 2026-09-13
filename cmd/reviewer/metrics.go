@@ -30,6 +30,14 @@ func metrics(ctx context.Context, o options, stdout, stderr io.Writer, getenv fu
 		return errUsage{err}
 	}
 
+	// Validated before any network work. A typo should not cost a full scan of the
+	// repository before it is reported.
+	switch o.format {
+	case "", "markdown", "csv":
+	default:
+		return errUsage{fmt.Errorf("--format is markdown or csv, not %q", o.format)}
+	}
+
 	cfg, secrets, err := config.Resolve(o.root, o.config, getenv)
 	if err != nil {
 		return err
@@ -42,22 +50,38 @@ func metrics(ctx context.Context, o options, stdout, stderr io.Writer, getenv fu
 		return err
 	}
 
-	tally, scanned, err := gather(ctx, client, repo, since)
-	if err != nil {
-		return err
+	self := identify(ctx, client, cfg)
+	tally, scanned, gatherErr := gather(ctx, client, repo, since, self)
+
+	// A partial measurement is printed, not discarded. One pull request that could
+	// not be read — a secondary rate limit is the likely cause, and forty
+	// sequential GraphQL calls is how you meet one — is not a reason to report
+	// nothing about the other thirty-nine. The gap is stated so nobody reads the
+	// table as complete.
+	if gatherErr != nil {
+		fmt.Fprintf(stderr, "reviewer: the table below is incomplete: %v\n", gatherErr)
 	}
-	if scanned == 0 {
+	if scanned == 0 && gatherErr == nil {
 		fmt.Fprintf(stderr, "reviewer: no pull requests updated since %s\n", since.Format(time.DateOnly))
 	}
 
-	switch o.format {
-	case "", "markdown":
-		return writeMarkdown(stdout, tally, repo, since, scanned)
-	case "csv":
+	if o.format == "csv" {
 		return writeCSV(stdout, tally)
-	default:
-		return errUsage{fmt.Errorf("--format is markdown or csv, not %q", o.format)}
 	}
+	return writeMarkdown(stdout, tally, repo, since, scanned, gatherErr != nil)
+}
+
+// identify works out which account this tool posts as, so a human's thread is not
+// counted as one of ours.
+//
+// Mirrors the reporter's own identification: GET /user answers for a personal
+// token and returns 403 for the installation token an Action runs with, which is
+// why github.selfLogin exists to be stated instead.
+func identify(ctx context.Context, client *ghclient.REST, cfg config.Config) string {
+	if user, err := client.Viewer(ctx); err == nil && user.Login != "" {
+		return user.Login
+	}
+	return cfg.GitHub.SelfLogin
 }
 
 // counts is one rule's record.
@@ -71,9 +95,18 @@ type counts struct {
 	Resolved int
 	Open     int
 	Outdated int
+	// Summarised are findings that went into the collapsed summary comment rather
+	// than inline, because their confidence was below high (ADR-0017).
+	//
+	// They are counted and shown and they contribute to no ratio, because a summary
+	// carries no per-finding outcome: there is no thread to resolve, so nothing
+	// records whether anybody agreed. Leaving them out entirely was worse — the four
+	// model categories capped at medium would have had no row at all, and a rule
+	// that fired two hundred times would have looked like one that never fires.
+	Summarised int
 }
 
-func (c counts) posted() int { return c.Resolved + c.Open + c.Outdated }
+func (c counts) posted() int { return c.Resolved + c.Open + c.Outdated + c.Summarised }
 
 // decided is the denominator: the findings somebody actually acted on or left. An
 // outdated finding is evidence about a branch's velocity, not about a rule.
@@ -92,46 +125,66 @@ func (c counts) acceptance() float64 {
 }
 
 // gather reads every pull request updated in the window and tallies our threads.
-func gather(ctx context.Context, client *ghclient.REST, repo ghclient.Repo, since time.Time) (map[string]*counts, int, error) {
-	prs, err := client.ListPullRequests(ctx, repo, "all")
+func gather(ctx context.Context, client *ghclient.REST, repo ghclient.Repo, since time.Time, self string) (map[string]*counts, int, error) {
+	tally := map[string]*counts{}
+
+	prs, err := client.ListPullRequestsUpdatedSince(ctx, repo, since)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing pull requests: %w", err)
+		return tally, 0, fmt.Errorf("listing pull requests: %w", err)
 	}
 
-	tally := map[string]*counts{}
 	scanned := 0
 	for _, pr := range prs {
-		if pr.UpdatedAt.Before(since) {
-			continue
-		}
 		scanned++
 
 		threads, err := client.ReviewThreads(ctx, repo, pr.Number)
 		if err != nil {
-			// One unreadable pull request is not a reason to report nothing about
-			// the rest, and a partial measurement that says so is more useful than
-			// an error.
 			return tally, scanned, fmt.Errorf("reading the threads of #%d: %w", pr.Number, err)
 		}
 		for _, thread := range threads {
-			rule, ours := ruleOf(thread)
+			rule, ours := ruleOf(thread, self)
 			if !ours {
 				continue
 			}
-			if tally[rule] == nil {
-				tally[rule] = &counts{}
+			bucket(tally, rule).count(thread)
+		}
+
+		// The summary comment, where everything below high confidence lands
+		// (ADR-0017). Without this the table has no row at all for the four model
+		// categories capped at medium — so a rule that fired two hundred times
+		// would look like one that never fires.
+		comments, err := client.ListIssueComments(ctx, repo, pr.Number)
+		if err != nil {
+			return tally, scanned, fmt.Errorf("reading the comments of #%d: %w", pr.Number, err)
+		}
+		for _, c := range comments {
+			if self != "" && c.User.Login != self {
+				continue
 			}
-			switch {
-			case thread.IsResolved:
-				tally[rule].Resolved++
-			case thread.IsOutdated:
-				tally[rule].Outdated++
-			default:
-				tally[rule].Open++
+			for _, mark := range fingerprint.ParseMarks(c.Body) {
+				bucket(tally, ruleName(mark.RuleID)).Summarised++
 			}
 		}
 	}
 	return tally, scanned, nil
+}
+
+func bucket(tally map[string]*counts, rule string) *counts {
+	if tally[rule] == nil {
+		tally[rule] = &counts{}
+	}
+	return tally[rule]
+}
+
+func (c *counts) count(thread ghclient.ReviewThread) {
+	switch {
+	case thread.IsResolved:
+		c.Resolved++
+	case thread.IsOutdated:
+		c.Outdated++
+	default:
+		c.Open++
+	}
 }
 
 // ruleOf identifies the rule a thread came from, and whether it is ours at all.
@@ -139,24 +192,36 @@ func gather(ctx context.Context, client *ghclient.REST, repo ghclient.Repo, sinc
 // Only the first comment is read. A thread this tool started is one where *our*
 // comment opened it; a human quoting the marker in a reply does not make their
 // conversation ours to measure.
-func ruleOf(thread ghclient.ReviewThread) (string, bool) {
+func ruleOf(thread ghclient.ReviewThread, self string) (string, bool) {
 	if len(thread.Comments) == 0 {
 		return "", false
 	}
-	marks := fingerprint.ParseMarks(thread.Comments[0].Body)
+	first := thread.Comments[0]
+	// Authorship, not just the marker. A human who quotes one of our comments in
+	// their own thread has written a conversation about this tool, not one of its
+	// findings — and counting it charges a rule for an outcome nobody attributed to
+	// it. The reporter refuses to resolve such a thread for the same reason.
+	if self != "" && first.User.Login != self {
+		return "", false
+	}
+	marks := fingerprint.ParseMarks(first.Body)
 	if len(marks) == 0 {
 		return "", false
 	}
-	if marks[0].RuleID == "" {
-		// Ours, but posted before the marker carried a rule id. Counted under a
-		// visible name rather than dropped, so the totals still add up and the
-		// reason a row exists is legible.
-		return "(rule not recorded)", true
-	}
-	return marks[0].RuleID, true
+	return ruleName(marks[0].RuleID), true
 }
 
-func writeMarkdown(w io.Writer, tally map[string]*counts, repo ghclient.Repo, since time.Time, scanned int) error {
+// ruleName gives a visible home to a finding posted before the marker carried a
+// rule id, so the totals still add up and the reason the row exists is legible. A
+// parsed rule id can never contain a space, so this cannot collide with a real one.
+func ruleName(id string) string {
+	if id == "" {
+		return "(rule not recorded)"
+	}
+	return id
+}
+
+func writeMarkdown(w io.Writer, tally map[string]*counts, repo ghclient.Repo, since time.Time, scanned int, partial bool) error {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "# Acceptance by rule\n\n")
 	fmt.Fprintf(b, "%s, %s updated since %s.\n\n",
@@ -170,24 +235,30 @@ func writeMarkdown(w io.Writer, tally map[string]*counts, repo ghclient.Repo, si
 		return err
 	}
 
-	fmt.Fprintf(b, "| rule | posted | resolved | open | outdated | acceptance |\n")
-	fmt.Fprintf(b, "|---|--:|--:|--:|--:|--:|\n")
+	if partial {
+		fmt.Fprintf(b, "**This table is incomplete**: at least one pull request could not be read.\n\n")
+	}
+
+	fmt.Fprintf(b, "| rule | posted | resolved | open | outdated | summarised | acceptance |\n")
+	fmt.Fprintf(b, "|---|--:|--:|--:|--:|--:|--:|\n")
 	for _, rule := range sortedRules(tally) {
 		c := tally[rule]
-		fmt.Fprintf(b, "| `%s` | %d | %d | %d | %d | %s |\n",
-			rule, c.posted(), c.Resolved, c.Open, c.Outdated, percentOf(c))
+		fmt.Fprintf(b, "| `%s` | %d | %d | %d | %d | %d | %s |\n",
+			rule, c.posted(), c.Resolved, c.Open, c.Outdated, c.Summarised, percentOf(c))
 	}
 
 	fmt.Fprintf(b, "\nAcceptance is resolved ÷ (resolved + open). Outdated threads are excluded: "+
-		"the code moved underneath the comment, so nobody decided anything. A rule with nothing "+
-		"decided yet shows `n/a` rather than 0%%.\n")
+		"the code moved underneath the comment, so nobody decided anything. Summarised findings "+
+		"are excluded too — they went into the collapsed summary comment rather than a thread, so "+
+		"there is nothing to resolve and no record of whether anybody agreed. A rule with nothing "+
+		"decided shows `n/a` rather than 0%%.\n")
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
 func writeCSV(w io.Writer, tally map[string]*counts) error {
 	out := csv.NewWriter(w)
-	if err := out.Write([]string{"rule", "posted", "resolved", "open", "outdated", "acceptance"}); err != nil {
+	if err := out.Write([]string{"rule", "posted", "resolved", "open", "outdated", "summarised", "acceptance"}); err != nil {
 		return err
 	}
 	for _, rule := range sortedRules(tally) {
@@ -202,7 +273,7 @@ func writeCSV(w io.Writer, tally map[string]*counts) error {
 		if err := out.Write([]string{
 			rule,
 			strconv.Itoa(c.posted()), strconv.Itoa(c.Resolved),
-			strconv.Itoa(c.Open), strconv.Itoa(c.Outdated), acceptance,
+			strconv.Itoa(c.Open), strconv.Itoa(c.Outdated), strconv.Itoa(c.Summarised), acceptance,
 		}); err != nil {
 			return err
 		}
@@ -252,6 +323,7 @@ func percentOf(c *counts) string {
 // Days rather than Go's duration syntax, because nobody asks for the last 168
 // hours. `7d`, `2w` and `36h` all work; a bare number is days.
 func parseSince(s string) (time.Time, error) {
+	original := s
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
 		s = "7d"
@@ -266,8 +338,14 @@ func parseSince(s string) (time.Time, error) {
 		s, unit = strings.TrimSuffix(s, "h"), time.Hour
 	}
 	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return time.Time{}, fmt.Errorf("--since takes a window like 7d, 2w or 36h, not %q", s)
+	// Bounded as well as positive. `time.Duration(n) * unit` overflows int64 for a
+	// large n, which lands the cutoff in the *future* — so every pull request is
+	// filtered out and the command prints a plausible-looking empty table instead
+	// of saying the window was nonsense. Ten years is longer than any repository
+	// this measurement is useful for.
+	const maxHours = 24 * 365 * 10
+	if err != nil || n <= 0 || float64(n)*unit.Hours() > maxHours {
+		return time.Time{}, fmt.Errorf("--since takes a window like 7d, 2w or 36h, not %q", original)
 	}
 	return time.Now().Add(-time.Duration(n) * unit), nil
 }

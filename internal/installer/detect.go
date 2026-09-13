@@ -312,15 +312,14 @@ func detectDefaultBranch(root string) string {
 			return branch
 		}
 	}
-	// Otherwise this repository's configured initial branch, which is what a fresh
-	// `git init` here would use.
-	if out, err := run(root, "config", "--get", "init.defaultBranch"); err == nil {
-		if branch := strings.TrimSpace(out); branch != "" {
-			return branch
-		}
-	}
 	// Otherwise whatever is checked out, which for a repository nobody has branched
 	// in is trunk.
+	//
+	// `init.defaultBranch` is deliberately not consulted. It is a *global* user
+	// preference about repositories that do not exist yet, so on a machine with
+	// `init.defaultBranch = main` it would answer "main" for a master-trunk
+	// repository — which is the exact failure this detection exists to prevent, and
+	// it would do it on the most common setup rather than a rare one.
 	if out, err := run(root, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		if branch := strings.TrimSpace(out); branch != "" && branch != "HEAD" {
 			return branch

@@ -7,14 +7,40 @@
 # script adds no flags of its own, so anything `reviewer --help` documents works.
 set -eu
 
-# The repository root, so the script works from any directory.
-root=$(cd "$(dirname "$0")/../../../.." && pwd)
+# This script's own location, with symlinks resolved.
+#
+# `$0` is the path used to reach the script, which is not where it lives: an agent
+# runtime that surfaces a skill through a symlink would otherwise make the root
+# four levels above the *link*. That reviews some other directory entirely and, if
+# it happens to be inside another repository, succeeds and reports nothing found.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *)  self=$(dirname "$self")/$link ;;
+  esac
+done
 
-if command -v reviewer >/dev/null 2>&1; then
-  exec reviewer --root "$root" "$@"
+# The repository root: four levels above .agent/skills/code-review/scripts/.
+root=$(cd "$(dirname "$self")/../../../.." && pwd)
+
+if ! command -v reviewer >/dev/null 2>&1; then
+  echo "reviewer is not installed or not on PATH." >&2
+  echo "Install it with: go install github.com/adamtait/reviewer/cmd/reviewer@latest" >&2
+  echo "Or download a release binary: https://github.com/adamtait/reviewer/releases" >&2
+  exit 127
 fi
 
-echo "reviewer is not installed or not on PATH." >&2
-echo "Install it with: go install github.com/adamtait/reviewer/cmd/reviewer@latest" >&2
-echo "Or download a release binary: https://github.com/adamtait/reviewer/releases" >&2
-exit 127
+# A subcommand has to stay first, because the CLI reads one only at that position.
+# Putting --root before it would make every subcommand unreachable through this
+# script, which is the opposite of "anything reviewer --help documents works".
+case ${1:-} in
+  init|watch|version|rules|baseline|metrics)
+    subcommand=$1
+    shift
+    exec reviewer "$subcommand" --root "$root" "$@"
+    ;;
+esac
+
+exec reviewer --root "$root" "$@"

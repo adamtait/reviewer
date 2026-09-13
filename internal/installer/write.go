@@ -183,6 +183,15 @@ func Install(p Plan, pluginVersion string) (Report, error) {
 		if err := os.WriteFile(full, f.Content, mode); err != nil {
 			return report, fmt.Errorf("writing %s: %w", f.Path, err)
 		}
+		// Explicitly, because WriteFile's permission argument applies only when it
+		// creates the file. Overwriting a review.sh somebody had chmod'ed to 644
+		// would otherwise leave it unrunnable, and --force is exactly the flag
+		// somebody reaches for to repair a generated file.
+		if mode&0o111 != 0 {
+			if err := os.Chmod(full, mode); err != nil {
+				return report, fmt.Errorf("making %s executable: %w", f.Path, err)
+			}
+		}
 		if f.Action == Overwrite {
 			report.Overwritten = append(report.Overwritten, f.Path)
 		} else {

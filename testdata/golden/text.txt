@@ -3,7 +3,7 @@ skipped: eslint: no flat config found
 
 src/domain/order.ts
        3  error    arch/no-domain-to-infra  domain/ must not import infra/ — inject a port instead
-      42  info     llm/missing-abstraction  Four call sites repeat the same retry-and-log wrapper (medium confidence)
+      42  info     llm/missing-abstraction  Four call sites repeat the same retry-and-log wrapper (model, medium confidence)
           why: order.ts:42, order.ts:61, invoice.ts:18 and invoice.ts:44 wrap a call in the same try/catch with identical backoff constants.
 
 src/infra/http.ts

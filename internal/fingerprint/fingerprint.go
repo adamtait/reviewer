@@ -28,11 +28,19 @@ const Length = 6
 // Marker is the HTML comment embedded in a posted comment so a later run can
 // recognise its own work. Invisible in rendered markdown.
 func Marker(fp, ruleID string) string {
-	if ruleID == "" {
+	// A rule id that cannot round-trip is omitted rather than written. An
+	// unparseable marker is worse than a marker with less in it: the finding stops
+	// being recognised at all, so it is reposted on every push and its thread is
+	// never resolved. finding.Validate rejects such an id upstream; this is the
+	// belt to that pair of braces, because the failure is silent and compounding.
+	if ruleID == "" || unsafeInMarker.MatchString(ruleID) {
 		return "<!-- rv:" + fp + " -->"
 	}
 	return "<!-- rv:" + fp + " " + ruleID + " -->"
 }
+
+// unsafeInMarker is anything the marker pattern cannot read back.
+var unsafeInMarker = regexp.MustCompile(`[\s>]`)
 
 // The rule id is in the marker as well as in the comment's visible text, because
 // acceptance is measured per rule id (ADR-0024) and the visible text is markdown

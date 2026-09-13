@@ -144,3 +144,35 @@ func TestReporterNames(t *testing.T) {
 		}
 	}
 }
+
+// rdjson has nowhere in its schema for warnings, so they go to a side channel.
+// Dropping them would make a run where every plugin failed serialise identically
+// to a clean review.
+func TestRDJSONSendsWarningsToTheLog(t *testing.T) {
+	var out, log bytes.Buffer
+	run := Run{Warnings: []string{"plugin typescript: did not start"}, Skipped: []string{"knip: no config"}}
+	if err := (RDJSON{Out: &out, Log: &log}).Report(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), "plugin typescript: did not start") {
+		t.Fatalf("want the warning on the log channel, got %q", log.String())
+	}
+	if !strings.Contains(log.String(), "knip: no config") {
+		t.Fatalf("want the skip on the log channel, got %q", log.String())
+	}
+	// The document itself stays schema-clean.
+	var doc map[string]any
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if _, ok := doc["warnings"]; ok {
+		t.Fatal("warnings must not be smuggled into the reviewdog document")
+	}
+}
+
+func TestRDJSONWithoutALogChannelStillWorks(t *testing.T) {
+	var out bytes.Buffer
+	if err := (RDJSON{Out: &out}).Report(context.Background(), Run{Warnings: []string{"x"}}); err != nil {
+		t.Fatal(err)
+	}
+}

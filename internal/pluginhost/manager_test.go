@@ -371,3 +371,149 @@ func TestCloseIsIdempotent(t *testing.T) {
 	m.Close()
 	assertReaped(t, pids)
 }
+
+// A plugin that reports one analyzer's failure properly has done the right
+// thing, and its other analyzers must still run (ADR-0013). Killing it for a
+// conformant error frame contradicts the protocol documentation and silently
+// costs the run every analyzer that plugin provided.
+func TestAnErrorFrameDoesNotKillTheRestOfThePlugin(t *testing.T) {
+	body := `
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)     printf '{"type":"hello","protocol":1,"plugin":"partial","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*)  printf '{"type":"describe","analyzers":[{"id":"broken","lane":"deterministic","order":10,"available":true},{"id":"fine","lane":"deterministic","order":20,"available":true}]}\n' ;;
+    *'"analyzer":"broken"'*) printf '{"type":"error","analyzer":"broken","message":"no configuration found"}\n' ;;
+    *'"analyzer":"fine"'*)   printf '{"type":"findings","analyzer":"fine","findings":[{"ruleId":"fine/ok","lane":"deterministic","confidence":"high","severity":"info","file":"a.ts","line":1,"message":"still here"}]}\n' ;;
+    *'"type":"bye"'*)        exit 0 ;;
+  esac
+done
+`
+	var log bytes.Buffer
+	m := New("test/1.0", &log)
+	cfg := cfgWith(t, 5*time.Second, script(t, "partial", body))
+	if err := m.Start(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	pids := pidsOf(m)
+	defer func() { m.Close(); assertReaped(t, pids) }()
+
+	if _, _, err := m.Analyze(context.Background(), "partial", "broken", plugin.AnalyzeRequest{}); err == nil {
+		t.Fatal("want the reported failure surfaced as an error")
+	} else if !strings.Contains(err.Error(), "no configuration found") {
+		t.Fatalf("want the plugin's own message, got %v", err)
+	}
+
+	findings, _, err := m.Analyze(context.Background(), "partial", "fine", plugin.AnalyzeRequest{})
+	if err != nil {
+		t.Fatalf("the plugin must survive one analyzer's failure, got %v", err)
+	}
+	if len(findings) != 1 || findings[0].RuleID != "fine/ok" {
+		t.Fatalf("want the second analyzer's finding, got %+v", findings)
+	}
+	if w := m.Warnings(); len(w) != 0 {
+		t.Fatalf("a conformant error frame is not a plugin-level warning, got %v", w)
+	}
+}
+
+// A timeout, unlike an error frame, leaves the stream at an unknown position, so
+// the plugin is not trusted afterwards. Both halves of that distinction matter.
+func TestATimeoutStillDropsThePlugin(t *testing.T) {
+	body := `
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"stuck","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[{"id":"a","lane":"deterministic","order":10,"available":true},{"id":"b","lane":"deterministic","order":20,"available":true}]}\n' ;;
+    *'"type":"analyze"'*)  sleep 30 ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+	var log bytes.Buffer
+	m := New("test/1.0", &log)
+	cfg := cfgWith(t, 300*time.Millisecond, script(t, "stuck", body))
+	if err := m.Start(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	pids := pidsOf(m)
+	defer func() { m.Close(); assertReaped(t, pids) }()
+
+	if _, _, err := m.Analyze(context.Background(), "stuck", "a", plugin.AnalyzeRequest{}); err == nil {
+		t.Fatal("want a timeout error")
+	}
+	if _, _, err := m.Analyze(context.Background(), "stuck", "b", plugin.AnalyzeRequest{}); err == nil {
+		t.Fatal("want the plugin dropped after a desynchronising failure")
+	}
+}
+
+// A dropped plugin must not leak its pipes. Three descriptors per plugin adds up
+// in a repository whose plugins all fail to start.
+func TestDroppedPluginsDoNotLeakDescriptors(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("counts descriptors via /proc")
+	}
+	open := func() int {
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+
+	// One warm-up round, so lazily-initialised runtime descriptors are not
+	// counted as the leak.
+	for round := range 2 {
+		before := open()
+		for i := range 5 {
+			var log bytes.Buffer
+			m := New("test/1.0", &log)
+			cfg := cfgWith(t, 200*time.Millisecond,
+				script(t, fmt.Sprintf("faulty%d%d", round, i), "while IFS= read -r f; do :; done\n"))
+			_ = m.Start(context.Background(), cfg)
+			m.Close()
+		}
+		if round == 0 {
+			continue
+		}
+		if after := open(); after > before+2 {
+			t.Fatalf("descriptors leaked: %d open before five failed plugins, %d after", before, after)
+		}
+	}
+}
+
+// Warnings produced during shutdown are part of the run's story, so a caller
+// that closes before reporting must be able to see them.
+func TestShutdownWarningsAreVisibleAfterClose(t *testing.T) {
+	restore := shutdownGrace
+	shutdownGrace = 200 * time.Millisecond
+	t.Cleanup(func() { shutdownGrace = restore })
+
+	// Ignores bye and keeps reading, so it has to be killed.
+	body := `
+trap '' TERM
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"stubborn","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[]}\n' ;;
+  esac
+done
+sleep 30
+`
+	var log bytes.Buffer
+	m := New("test/1.0", &log)
+	cfg := cfgWith(t, 2*time.Second, script(t, "stubborn", body))
+	if err := m.Start(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	pids := pidsOf(m)
+
+	if w := m.Warnings(); len(w) != 0 {
+		t.Fatalf("want no warnings before shutdown, got %v", w)
+	}
+	m.Close()
+	assertReaped(t, pids)
+
+	warns := m.Warnings()
+	if len(warns) != 1 || !strings.Contains(warns[0], "did not exit within") {
+		t.Fatalf("want the kill recorded as a warning, got %v", warns)
+	}
+}

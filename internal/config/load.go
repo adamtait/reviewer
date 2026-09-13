@@ -3,12 +3,13 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -62,11 +63,18 @@ func Resolve(root, path string, getenv func(string) string) (Config, Secrets, er
 
 // decodeStrict rejects unknown keys. A silently ignored typo in a config file is
 // a bug that presents as "the analyzer I configured never ran".
+//
+// An empty or comments-only file decodes to io.EOF, which is not an error: a
+// file someone has created but not filled in yet must behave exactly like no
+// file at all, which is what the installer's first write leaves behind.
 func decodeStrict(raw []byte, into *Config) error {
-	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
-	if err := dec.Decode(into); err != nil {
-		return fmt.Errorf("%w", err)
+	switch err := dec.Decode(into); {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err != nil:
+		return err
 	}
 	return nil
 }

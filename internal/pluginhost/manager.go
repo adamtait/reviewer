@@ -40,8 +40,9 @@ func handshakeDeadline(pluginTimeout time.Duration) time.Duration {
 }
 
 // shutdownGrace is how long a plugin gets to exit after bye before its process
-// group is killed.
-const shutdownGrace = 5 * time.Second
+// group is killed. A variable rather than a constant so tests that exercise the
+// kill path do not have to wait out the production value.
+var shutdownGrace = 5 * time.Second
 
 // Registered is one analyzer, and which plugin provides it.
 type Registered struct {
@@ -146,8 +147,15 @@ func (m *Manager) Analyze(ctx context.Context, pluginID, analyzerID string, req 
 
 	findings, warnings, err := c.analyze(ctx, analyzerID, req)
 	if err != nil {
-		// A plugin that fails a frame exchange is not trusted for the rest of the
-		// run: the stream's position is no longer known.
+		var reported analyzerError
+		if errors.As(err, &reported) {
+			// The plugin reported the failure properly and the conversation is
+			// intact, so its other analyzers still run (ADR-0013).
+			return nil, nil, err
+		}
+		// Anything else means the stream position is no longer known — a timeout,
+		// an unparseable line, a dead process — and nothing further from this
+		// plugin can be trusted.
 		m.kill(c, fmt.Sprintf("analyzer %s: %v", analyzerID, err))
 		return nil, nil, err
 	}
@@ -180,6 +188,10 @@ func (m *Manager) Close() {
 		}
 		c.drain()
 		c.dead = true
+	}
+	// Plugins dropped earlier in the run already exited; release their pipes too.
+	for _, c := range conns {
+		c.closeFiles()
 	}
 }
 
@@ -247,6 +259,7 @@ func (m *Manager) dial(ctx context.Context, root string, spec config.Plugin, tim
 		out:     plugin.NewWriter(stdin),
 		timeout: timeout,
 		exited:  make(chan struct{}),
+		files:   []*os.File{stdin, stdout, stderr},
 	}
 
 	// Plugin diagnostics belong in the run log, prefixed so a multi-plugin run

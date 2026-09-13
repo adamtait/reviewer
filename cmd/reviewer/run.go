@@ -29,7 +29,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		return err
 	}
 
-	rep, err := reporter(o.reporter, stdout)
+	rep, err := reporter(o.reporter, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -46,12 +46,20 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	}
 
 	host := pluginhost.New("reviewer/"+version, stderr)
+	// Closed explicitly below so that shutdown warnings reach the report; the
+	// deferred call is the safety net for the error paths and is idempotent.
 	defer host.Close()
 	if err := host.Start(ctx, cfg); err != nil {
 		return err
 	}
 
-	analyzers := selectAnalyzers(host.Analyzers(), o.only, o.skip)
+	only, skip := o.only, o.skip
+	// A flag overrides the file rather than combining with it: "--only tsc" means
+	// only tsc, not "only tsc, and also whatever the file said".
+	if len(only) == 0 && len(skip) == 0 {
+		only, skip = cfg.Analyzers.Only, cfg.Analyzers.Skip
+	}
+	analyzers := selectAnalyzers(host.Analyzers(), only, skip)
 	req := plugin.AnalyzeRequest{
 		Root:         cfg.Root,
 		Changed:      diff.ToPluginFiles(files),
@@ -78,8 +86,13 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	finding.Sort(kept)
 
 	run.Findings = kept
-	run.Warnings = append(run.Warnings, host.Warnings()...)
 	run.Skipped = append(run.Skipped, unavailable(host)...)
+
+	// Shut the plugins down before reading their warnings. Closing is where "did
+	// not exit within 5s, killing its process group" is recorded, and a deferred
+	// Close would produce it after the report had already been written.
+	host.Close()
+	run.Warnings = append(run.Warnings, host.Warnings()...)
 
 	if len(analyzers) == 0 {
 		run.Warnings = append(run.Warnings,
@@ -140,10 +153,10 @@ func unavailable(host *pluginhost.Manager) []string {
 	return out
 }
 
-func reporter(name string, out io.Writer) (reporters.Reporter, error) {
+func reporter(name string, out, log io.Writer) (reporters.Reporter, error) {
 	for _, r := range []reporters.Reporter{
 		reporters.Text{Out: out},
-		reporters.RDJSON{Out: out},
+		reporters.RDJSON{Out: out, Log: log},
 	} {
 		if r.Name() == name {
 			return r, nil

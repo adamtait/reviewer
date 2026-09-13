@@ -19,6 +19,14 @@ func parse(out string) ([]File, error) {
 	var (
 		files   []File
 		current *File
+		// inHunk guards against reading a hunk's body as a header. With
+		// --unified=0 every body line begins with '+', '-' or '\', so an added
+		// line whose text begins "++ " looks exactly like a '+++ ' header, and a
+		// removed line beginning "-- " — an ordinary SQL, Lua or Haskell comment —
+		// looks like a '--- ' header. Either one silently rewrites the file's path
+		// or status, and the findings for that file are then dropped as being
+		// outside the diff.
+		inHunk bool
 	)
 	flush := func() {
 		if current != nil {
@@ -33,9 +41,16 @@ func parse(out string) ([]File, error) {
 	for sc.Scan() {
 		line := sc.Text()
 
+		// A body line can never start at column zero with these, because git
+		// always prefixes it. Anything else is inside the hunk and is content.
+		if inHunk && !strings.HasPrefix(line, "@@") && !strings.HasPrefix(line, "diff --git ") {
+			continue
+		}
+
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			flush()
+			inHunk = false
 			current = &File{Status: StatusModified}
 			// The header paths are the fallback when there is no ---/+++ pair,
 			// which happens for a pure rename or a mode change.
@@ -83,6 +98,7 @@ func parse(out string) ([]File, error) {
 			}
 
 		case strings.HasPrefix(line, "@@"):
+			inHunk = true
 			start, count, err := hunk(line)
 			if err != nil {
 				return nil, err

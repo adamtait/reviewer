@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -38,15 +39,46 @@ type conn struct {
 	dead   bool
 	exited chan struct{}
 	wg     sync.WaitGroup
+
+	// files are the parent's ends of stdin, stdout and stderr, closed together
+	// when the conn is finished with.
+	files     []*os.File
+	closeOnce sync.Once
 }
 
 // drain waits for the stderr pump to finish, so the run log is complete before
-// the caller prints a summary.
-func (c *conn) drain() { c.wg.Wait() }
+// the caller prints a summary, then releases this side of the pipes. Without
+// this a dropped plugin leaks three descriptors, and a run with many plugins
+// against a repository that fails them all runs out.
+func (c *conn) drain() {
+	c.wg.Wait()
+	c.closeFiles()
+}
+
+// closeFiles releases the parent's ends of the three pipes. Safe to call twice.
+func (c *conn) closeFiles() {
+	c.closeOnce.Do(func() {
+		for _, f := range c.files {
+			if f != nil {
+				_ = f.Close()
+			}
+		}
+	})
+}
 
 func (c *conn) say(f plugin.Frame) error {
 	return c.out.Write(f)
 }
+
+// analyzerError is a failure the plugin reported properly: one analyzer did not
+// work, the conversation is intact. Distinguished from every other error here
+// because the others mean the stream position is unknown.
+type analyzerError struct {
+	analyzer string
+	msg      string
+}
+
+func (e analyzerError) Error() string { return e.msg }
 
 type readResult struct {
 	frame plugin.Frame
@@ -170,7 +202,11 @@ func (c *conn) analyze(ctx context.Context, id string, req plugin.AnalyzeRequest
 			if f.Analyzer != "" && f.Analyzer != id {
 				continue
 			}
-			return nil, nil, errors.New(f.Message)
+			// A protocol-conformant error frame is the plugin doing exactly what
+			// it is supposed to do when one analyzer fails. The stream is still
+			// in a known position, so the plugin keeps its other analyzers
+			// (ADR-0013). Only a desynchronised stream costs it the run.
+			return nil, nil, analyzerError{analyzer: id, msg: f.Message}
 
 		default:
 			continue

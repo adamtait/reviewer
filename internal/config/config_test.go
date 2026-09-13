@@ -209,3 +209,19 @@ func TestNoEndpointsInTheSource(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A config file that exists but says nothing must behave exactly like no config
+// file. This is what `reviewer init --dry-run` and a hand-created placeholder
+// both leave behind, and failing on it aborts the whole review.
+func TestEmptyConfigFileBehavesLikeNoFile(t *testing.T) {
+	for _, body := range []string{"", "\n\n", "# nothing configured yet\n"} {
+		root := writeConfig(t, body)
+		c, _, err := Resolve(root, "", noEnv)
+		if err != nil {
+			t.Fatalf("an empty config file must resolve, got %v for %q", err, body)
+		}
+		if c.Analyzers.Timeout != Defaults().Analyzers.Timeout {
+			t.Fatalf("want defaults for %q, got %+v", body, c.Analyzers)
+		}
+	}
+}

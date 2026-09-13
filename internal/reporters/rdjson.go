@@ -17,6 +17,12 @@ import (
 // a human one — a second implementation is the cheapest test of an interface.
 type RDJSON struct {
 	Out io.Writer
+	// Log receives warnings and skips. The reviewdog schema has nowhere to put
+	// them, and dropping them would make a run where every plugin failed
+	// serialise identically to a clean review — the distinction Run exists to
+	// preserve. They go to a side channel, normally stderr, rather than being
+	// smuggled into the document as fake diagnostics.
+	Log io.Writer
 }
 
 func (r RDJSON) Name() string { return "rdjson" }
@@ -73,6 +79,15 @@ func (r RDJSON) Report(_ context.Context, run Run) error {
 	out := r.Out
 	if out == nil {
 		out = io.Discard
+	}
+
+	if log := r.Log; log != nil {
+		for _, w := range run.Warnings {
+			fmt.Fprintf(log, "warning: %s\n", w)
+		}
+		for _, s := range run.Skipped {
+			fmt.Fprintf(log, "skipped: %s\n", s)
+		}
 	}
 
 	doc := rdDiagnosticResult{

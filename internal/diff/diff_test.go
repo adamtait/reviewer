@@ -229,3 +229,102 @@ func TestChangedRequiresABase(t *testing.T) {
 		t.Fatal("want an error when no base ref is given")
 	}
 }
+
+// Hunk bodies must never be read as headers. With --unified=0 every body line is
+// prefixed, so an added line whose text begins "++ " looks exactly like a
+// "+++ " header and a removed line beginning "-- " — an ordinary SQL, Lua or
+// Haskell comment — looks like a "--- " header. Either one rewrites the file's
+// path or status, and every finding for that file is then dropped as outside the
+// diff.
+func TestHunkBodiesAreNotParsedAsHeaders(t *testing.T) {
+	tests := []struct {
+		name string
+		diff string
+		want File
+	}{
+		{
+			name: "added line beginning with plus signs",
+			diff: `diff --git a/real.ts b/real.ts
+--- a/real.ts
++++ b/real.ts
+@@ -1,0 +2,2 @@
+++ not a header, just text
++++ b/attacker-controlled.ts
+`,
+			want: File{Path: "real.ts", OldPath: "real.ts", Status: StatusModified, Ranges: [][2]int{{2, 3}}},
+		},
+		{
+			name: "removed SQL comment",
+			diff: `diff --git a/schema.sql b/schema.sql
+--- a/schema.sql
++++ b/schema.sql
+@@ -4,1 +4,1 @@
+-- drop the old column
++-- keep the old column
+`,
+			want: File{Path: "schema.sql", OldPath: "schema.sql", Status: StatusModified, Ranges: [][2]int{{4, 4}}},
+		},
+		{
+			name: "body line claiming a new file mode",
+			diff: `diff --git a/doc.md b/doc.md
+--- a/doc.md
++++ b/doc.md
+@@ -1,0 +2,1 @@
++new file mode 100644
+`,
+			want: File{Path: "doc.md", OldPath: "doc.md", Status: StatusModified, Ranges: [][2]int{{2, 2}}},
+		},
+		{
+			name: "body line claiming the file is binary",
+			diff: `diff --git a/notes.txt b/notes.txt
+--- a/notes.txt
++++ b/notes.txt
+@@ -1,0 +2,1 @@
++Binary files a/x and b/x differ
+`,
+			want: File{Path: "notes.txt", OldPath: "notes.txt", Status: StatusModified, Ranges: [][2]int{{2, 2}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parse(tc.diff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("want one file, got %+v", got)
+			}
+			if !reflect.DeepEqual(got[0], tc.want) {
+				t.Fatalf("\n got %+v\nwant %+v", got[0], tc.want)
+			}
+		})
+	}
+}
+
+// Two files in one diff, the first containing a body line that looks like a
+// header: the second file's parse must be unaffected.
+func TestHeaderRecoveryBetweenFiles(t *testing.T) {
+	got, err := parse(`diff --git a/first.ts b/first.ts
+--- a/first.ts
++++ b/first.ts
+@@ -1,0 +2,1 @@
++++ b/bogus.ts
+diff --git a/second.ts b/second.ts
+--- a/second.ts
++++ b/second.ts
+@@ -9,0 +10,1 @@
++real change
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want two files, got %+v", got)
+	}
+	if got[0].Path != "first.ts" || got[1].Path != "second.ts" {
+		t.Fatalf("want first.ts then second.ts, got %s then %s", got[0].Path, got[1].Path)
+	}
+	if !reflect.DeepEqual(got[1].Ranges, [][2]int{{10, 10}}) {
+		t.Fatalf("want the second file's range intact, got %v", got[1].Ranges)
+	}
+}

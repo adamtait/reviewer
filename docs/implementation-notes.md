@@ -120,3 +120,24 @@ obviously-fake placeholder, and says why.
 **Worth knowing:** my first probe of the hook used AWS's canonical documentation key
 (`AKIAIOSFODNN7EXAMPLE`) and gitleaks correctly ignored it — those are in its default allowlist. The
 gate does work; testing it needs a plausible fake, not a famous one.
+
+### Review round 1 — seven defects found and fixed
+
+`/review` at high effort on the M0 diff found seven behavioural bugs the suite did not cover. All
+fixed, each with a regression test. Three were reproduced with throwaway tests by the reviewer before
+being reported.
+
+| Where | Defect | Why it mattered |
+|---|---|---|
+| `pluginhost/manager.go` | A protocol-conformant `error` frame for one analyzer killed the whole plugin, so its remaining analyzers never ran | Directly contradicted ADR-0013, `docs/plugin-protocol.md`, and `protocol.go`'s own "never fatal to the run" comment. The TypeScript plugin serves six analyzers; one misconfigured ESLint would have cost the other five. Now only a *desynchronised* stream — timeout, unparseable line, dead process — drops a plugin, which is the real distinction. |
+| `config/load.go` | An empty or comments-only `.review/config.yaml` failed with a bare `EOF` and aborted the review, while *no* file correctly yielded defaults | This is exactly what a hand-created placeholder leaves behind. yaml's `io.EOF` now means "empty document". |
+| `diff/parse.go` | Hunk *body* lines were matched against the header cases, because the parser never tracked whether it was inside a hunk | An added line beginning `++ ` rewrote the file's path, and a removed `-- ` line — an ordinary SQL, Lua or Haskell comment — corrupted the status. Findings for that file were then silently dropped as "outside the diff". The nastiest of the seven: it fails quietly, on real-world content, in the component everything else depends on. |
+| `cmd/reviewer/run.go` | `analyzers.only` / `analyzers.skip` from the config file were decoded and validated but never applied | A configured `skip: [knip]` did nothing. Decoding a setting and then ignoring it is worse than not supporting it. |
+| `cmd/reviewer/run.go` | `host.Warnings()` was read before the deferred `host.Close()` | Every shutdown warning — "did not exit within 5s, killing its process group" — was generated after the report was written and was unreachable. `Close` is now called explicitly before reporting; the deferred call remains as an idempotent safety net. |
+| `pluginhost/manager.go` | The parent ends of the three pipes were never closed for a dropped plugin | Two to three descriptors leaked per failed plugin. |
+| `reporters/rdjson.go` | Warnings and skips were discarded | A run where every plugin failed to start serialised identically to a clean review. They now go to a side channel (stderr) rather than being smuggled into the reviewdog document as fake diagnostics. |
+
+**Worth noting about the process:** five of the seven are failure-path bugs — what happens when a
+plugin misbehaves, a file is empty, a diff contains awkward content. The happy paths were all
+correct. That is the shape of defect this project's own design is meant to catch in other people's
+code, which is a reasonable argument that the tool is worth building.

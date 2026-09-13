@@ -18,4 +18,5 @@ precede any code land in PR-00.
 | [0001](0001-license-mit-with-spdx-headers.md) | License the project MIT with per-file SPDX headers | Accepted | PR-00 |
 | [0002](0002-go-core-typescript-plugin.md) | Implement the core in Go and reach TypeScript tooling through a plugin | Accepted | PR-00 |
 | [0003](0003-one-findings-schema.md) | Normalise every analyzer's output to one findings schema | Accepted | PR-02 |
+| [0004](0004-repo-specific-values-behind-config.md) | Route every repository-specific value through Config | Accepted | PR-03 |
 | [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |

@@ -22,6 +22,11 @@ Core in Go; TypeScript analysis reached through the plugin protocol (Appendix A,
   ADR is never edited, only superseded. Each lands in the PR that first implements its decision
   (PR-00 for the ones antecedent to any code). ADR markdown is excluded from a PR's diff budget, like
   golden files and testdata, and quoted separately. Register: Appendix B.
+- **Implementation notes live in the pull request, not the repository.** Each milestone keeps a
+  working log of decisions the plan did not settle, deviations from it, and tradeoffs taken, at
+  `docs/implementation-notes.md`. The final commit of a milestone deletes that file: its content
+  moves into the pull request description, which is where a reader looking at a change goes for the
+  reasoning behind it. A durable decision earns an ADR instead.
 - **Repo is 100% public-core.** It never contains org names, endpoint URLs, `AGENTS.md` content, or
   real rule patterns. Internal detail lives in the *destination* repo under `.review/`, written at
   install time.

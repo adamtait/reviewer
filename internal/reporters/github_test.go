@@ -112,8 +112,11 @@ func TestOnlyHighConfidenceIsPostedInline(t *testing.T) {
 	if f.posted[0].Path != "a.ts" {
 		t.Fatalf("want the high-confidence finding posted, got %+v", f.posted[0])
 	}
-	if !strings.Contains(out.String(), "1 for the summary") {
+	if !strings.Contains(out.String(), "1 in the summary") {
 		t.Fatalf("want the deferred finding accounted for, got %q", out.String())
+	}
+	if len(f.postedIssues) != 1 {
+		t.Fatalf("want the medium-confidence finding in one summary comment, got %v", f.postedIssues)
 	}
 }
 
@@ -261,5 +264,129 @@ func TestWarningsGoToTheLogNotThePullRequest(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "knip timed out") {
 		t.Fatalf("want the warning in the log, got %q", log.String())
+	}
+}
+
+func TestSummaryShape(t *testing.T) {
+	findings := []finding.Finding{
+		medium("bbb222", "b.ts", 9),
+		medium("ccc333", "c.ts", 4),
+	}
+	findings[1].Evidence = "four call sites repeat the same wrapper"
+	body := summary(findings, "")
+
+	if !strings.HasPrefix(body, SummaryMarker) {
+		t.Fatalf("want the sticky marker first so the next run finds this comment: %q", body)
+	}
+	// Collapsed, so it costs nothing to scroll past.
+	if !strings.Contains(body, "<details>") || !strings.Contains(body, "</details>") {
+		t.Fatalf("want a collapsed block, got %q", body)
+	}
+	// Leading with a count is what makes the decision to expand an informed one.
+	if !strings.Contains(body, "2 further observations") {
+		t.Fatalf("want a count in the summary line, got %q", body)
+	}
+	// Grouped by rule: five instances of one rule is one thought, not five.
+	if strings.Count(body, "**llm/missing-abstraction**") != 1 {
+		t.Fatalf("want one heading per rule, got %q", body)
+	}
+	if !strings.Contains(body, "four call sites repeat the same wrapper") {
+		t.Fatal("evidence is why a model finding is worth showing; it must not be hidden further")
+	}
+	for _, f := range findings {
+		if !strings.Contains(body, fingerprint.Marker(f.Fingerprint)) {
+			t.Fatalf("every listed finding needs its marker so it is not later posted as new: %q", body)
+		}
+	}
+}
+
+// A developer who has just committed a credential must see that the diff was not
+// sent anywhere without expanding anything.
+func TestTheGateReasonIsAboveTheFold(t *testing.T) {
+	body := summary(nil, "a credential was found in src/config.ts, so the model lane did not run — the diff was not sent anywhere")
+	if body == "" {
+		t.Fatal("a gate reason alone must still produce a summary")
+	}
+	beforeDetails := body
+	if i := strings.Index(body, "<details>"); i >= 0 {
+		beforeDetails = body[:i]
+	}
+	if !strings.Contains(beforeDetails, "not sent anywhere") {
+		t.Fatalf("the gate reason must precede any collapsed block, got %q", body)
+	}
+}
+
+func TestSummaryIsUpsertedNotAppended(t *testing.T) {
+	existing := summary([]finding.Finding{medium("bbb222", "b.ts", 9)}, "")
+	f := &fakeGitHub{issueComments: []ghclient.IssueComment{{ID: 7, Body: existing}}}
+	var out bytes.Buffer
+
+	// A second run with a different finding updates the same comment.
+	run := Run{Findings: []finding.Finding{medium("ccc333", "c.ts", 4)}}
+	if err := reporter(f, &out).Report(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.postedIssues) != 0 {
+		t.Fatalf("want no new comment, got %v", f.postedIssues)
+	}
+	if _, ok := f.updatedIssues[7]; !ok {
+		t.Fatalf("want the existing comment updated, got %v", f.updatedIssues)
+	}
+}
+
+// Rewriting an unchanged comment bumps its timestamp and re-notifies every
+// subscriber for nothing.
+func TestAnUnchangedSummaryIsNotRewritten(t *testing.T) {
+	findings := []finding.Finding{medium("bbb222", "b.ts", 9)}
+	f := &fakeGitHub{issueComments: []ghclient.IssueComment{{ID: 7, Body: summary(findings, "")}}}
+	var out bytes.Buffer
+
+	if err := reporter(f, &out).Report(context.Background(), Run{Findings: findings}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.updatedIssues) != 0 {
+		t.Fatalf("want no update for an identical body, got %v", f.updatedIssues)
+	}
+	if !strings.Contains(out.String(), "unchanged") {
+		t.Fatalf("want the no-op reported, got %q", out.String())
+	}
+}
+
+// A comment that vanishes leaves a reader wondering whether the tool ran.
+func TestAnEmptySummaryClearsRatherThanDisappears(t *testing.T) {
+	f := &fakeGitHub{issueComments: []ghclient.IssueComment{{ID: 7, Body: summary([]finding.Finding{medium("bbb222", "b.ts", 9)}, "")}}}
+	var out bytes.Buffer
+
+	if err := reporter(f, &out).Report(context.Background(), Run{}); err != nil {
+		t.Fatal(err)
+	}
+	body, ok := f.updatedIssues[7]
+	if !ok {
+		t.Fatalf("want the comment rewritten, got %v", f.updatedIssues)
+	}
+	if !strings.Contains(body, "No further observations") {
+		t.Fatalf("want an explicit empty state, got %q", body)
+	}
+}
+
+func TestNoSummaryIsCreatedWhenThereIsNothingToSay(t *testing.T) {
+	f := &fakeGitHub{}
+	var out bytes.Buffer
+	if err := reporter(f, &out).Report(context.Background(), Run{Findings: []finding.Finding{high("aaa111", "a.ts", 3)}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.postedIssues) != 0 {
+		t.Fatalf("an all-inline run needs no summary, got %v", f.postedIssues)
+	}
+}
+
+func TestMultiLineMessagesCannotBreakTheSummaryMarkup(t *testing.T) {
+	f := medium("bbb222", "b.ts", 9)
+	f.Message = "first line\nsecond line\n\nthird"
+	body := summary([]finding.Finding{f}, "")
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "second") || strings.HasPrefix(line, "third") {
+			t.Fatalf("a multi-line message broke out of its list item: %q", body)
+		}
 	}
 }

@@ -90,12 +90,27 @@ func (g GitHub) Report(ctx context.Context, run Run) error {
 		posted++
 	}
 
+	// The summary carries the findings that did not earn an interruption, plus the
+	// gate's reason if it fired — a developer who has just committed a credential
+	// needs to see that the diff was not sent anywhere.
+	summaryBody := summary(deferred, run.GateReason)
+	summaryAction := "skipped (dry run)"
+	if !g.DryRun {
+		summaryAction, err = g.upsertSummary(ctx, summaryBody)
+		if err != nil {
+			fmt.Fprintf(logOr(g.Log, out), "warning: could not update the summary comment: %v\n", err)
+			summaryAction = "failed"
+		}
+	} else if summaryBody != "" {
+		fmt.Fprintf(out, "would upsert the summary comment:\n%s\n", summaryBody)
+	}
+
 	verb := "posted"
 	if g.DryRun {
 		verb = "would post"
 	}
-	fmt.Fprintf(out, "%d finding%s, %s %d, %d deduped, %d for the summary\n",
-		len(run.Findings), plural(len(run.Findings)), verb, posted, deduped, len(deferred))
+	fmt.Fprintf(out, "%d finding%s, %s %d inline, %d deduped, %d in the summary (%s)\n",
+		len(run.Findings), plural(len(run.Findings)), verb, posted, deduped, len(deferred), summaryAction)
 	return nil
 }
 

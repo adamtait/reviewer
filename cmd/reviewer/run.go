@@ -88,6 +88,9 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		},
 	})
 	run.Warnings = append(run.Warnings, result.Warnings...)
+	if result.Gate.Blocked {
+		run.GateReason = result.Gate.Reason
+	}
 	run.Skipped = append(run.Skipped, result.Skipped...)
 	run.Timings = timings(result.Timings)
 

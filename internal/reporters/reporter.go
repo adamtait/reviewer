@@ -29,6 +29,10 @@ type Run struct {
 	Warnings []string
 	// Skipped names analyzers that declined to run and why, one line each.
 	Skipped []string
+	// GateReason is why the model lane did not run, when it did not. Shown above
+	// the fold in the summary comment: someone who has just committed a credential
+	// needs to know the diff was not sent anywhere without expanding anything.
+	GateReason string
 	// Timings is how long each analyzer took. Reported by default: latency is the
 	// risk this project's kill criteria are written against, so a slow analyzer
 	// should be visible without anyone thinking to ask.

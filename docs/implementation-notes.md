@@ -60,3 +60,19 @@ site is where that choice should be visible. The client keeps the default as a s
 **A failed comment does not lose the others.** GitHub rejects a comment whose line it does not consider
 part of the diff, which happens when the diff we computed and the diff GitHub computed disagree at an
 edge. Each failure is a warning; the rest still post.
+
+## PR-19 — the collapsed summary comment
+
+**The gate's reason goes above the fold, outside the `<details>`.** Someone who has just committed a
+credential needs to know the diff was not sent anywhere, and must not have to expand anything to find
+out. This is the one thing in the summary that is not collapsible.
+
+**An unchanged summary is not rewritten.** Rewriting an identical body bumps the comment's timestamp and
+re-notifies every subscriber for nothing — the sort of thing that makes a bot feel noisy even when it is
+saying the same thing.
+
+**An empty summary clears the comment rather than deleting it.** A comment that vanishes leaves a reader
+wondering whether the tool ran at all.
+
+**Messages are flattened to one line.** A multi-line analyzer message would otherwise break out of its
+markdown list item and mangle the block; there is a test for it.

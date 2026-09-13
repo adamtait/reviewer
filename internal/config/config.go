@@ -78,8 +78,14 @@ type LaneB struct {
 	Enabled bool `yaml:"enabled"`
 	// Provider is one of the six supported access paths. The endpoint and
 	// credentials for it come from the environment, never from this file.
-	Provider   string `yaml:"provider"`
-	Model      string `yaml:"model"`
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	// BaseURL is where the provider lives. No default is compiled in (ADR-0004);
+	// the installer writes the chosen provider's endpoint here, and a gateway or a
+	// self-hosted server is reached by changing this line rather than the code.
+	// REVIEW_MODEL_BASE_URL overrides it, which is how one machine can point
+	// somewhere else without editing a tracked file.
+	BaseURL    string `yaml:"baseUrl"`
 	PromptDir  string `yaml:"promptDir"`
 	Invalidate bool   `yaml:"invalidate"`
 }

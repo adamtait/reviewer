@@ -40,18 +40,6 @@ func New(cfg config.Config, secrets config.Secrets) (Provider, error) {
 	}
 }
 
-// The adapters land next: the HTTP paths in PR-37 to PR-39, the subscription CLIs
-// in PR-40. Until then every path reports itself unavailable with a reason, which
-// is the same behaviour as a path nobody configured — so nothing above this
-// package has to know the difference.
-func newHTTP(cfg config.Config, secrets config.Secrets) (Provider, error) {
-	return nil, Unavailable("no adapter for %q is built yet", cfg.LaneB.Provider)
-}
-
-func newCLI(cfg config.Config) (Provider, error) {
-	return nil, Unavailable("no adapter for %q is built yet", cfg.LaneB.Provider)
-}
-
 // Describe says why the lane is off, for a run's warnings. Kept separate from the
 // error so a caller can report the reason without deciding whether to.
 func Describe(err error) string {

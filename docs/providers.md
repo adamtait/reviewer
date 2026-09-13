@@ -32,6 +32,21 @@ reviewer init --yes                    # no prompt, no provider: deterministic l
 An install with no provider is complete. The deterministic lane is the one that pays for itself;
 the model lane is the one that needs a budget and a decision.
 
+## Where the endpoint comes from
+
+No endpoint is compiled into the binary (ADR-0004). `reviewer init` writes the chosen path's endpoint
+into the destination's `.review/config.yaml` as `laneB.baseUrl`, exactly as it writes
+`github.apiBaseUrl`, and `REVIEW_MODEL_BASE_URL` overrides it for one machine without editing a
+tracked file.
+
+So a gateway, a proxy or a self-hosted server is reached by changing one line of config, on any of the
+four API paths — not just on `openai-compatible`. What makes that path different is that it has no
+endpoint to write at install, because the endpoint is the thing you are supplying.
+
+With no `laneB.baseUrl` and no `REVIEW_MODEL_BASE_URL`, the model lane reports itself unavailable and
+makes no call at all. A provider that silently posted to a compiled-in default would put your diff
+somewhere you never named.
+
 ## Why `openai-compatible` exists separately
 
 It is the only path that takes a base URL. Everything else about it is the OpenAI request shape,

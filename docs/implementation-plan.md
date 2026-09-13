@@ -13,10 +13,14 @@ task) end to end. Unit of planning is the individual pull request.
 - **Repo is 100% public-core.** `adamtait/reviewer` never contains org names, endpoint URLs,
   `AGENTS.md` content, or real rule patterns. Internal detail lives in the *destination* repo under
   `.review/`, produced at install time.
-- **Package names:** `@adamtait/reviewer-core` (engine), `@adamtait/reviewer` (CLI, `bin: reviewer`),
-  `@adamtait/reviewer-installer`, `@adamtait/reviewer-poller`. PLAN's `@team/review` is dropped.
-- **License: MIT**, personal copyright. MIT requires no `NOTICE`; per-file
-  `// SPDX-License-Identifier: MIT` headers enforced by `eslint-plugin-license-header`.
+- **Naming and license:** `@adamtait/reviewer-core` (engine), `@adamtait/reviewer` (CLI,
+  `bin: reviewer`), `@adamtait/reviewer-installer`, `@adamtait/reviewer-poller`; PLAN's
+  `@team/review` is dropped. MIT, personal copyright; MIT requires no `NOTICE`, and per-file
+  `// SPDX-License-Identifier: MIT` headers are enforced by `eslint-plugin-license-header`.
+- **Decisions are recorded as ADRs** in `docs/adr/NNNN-slug.md`, MADR-lite, append-only: an
+  Accepted ADR is never edited, only superseded. Each ADR lands in the PR that first implements
+  its decision (PR-00 for the ones antecedent to any code). ADR markdown is excluded from a PR's
+  diff budget, like lockfiles and fixtures, and quoted separately. Register: Appendix B.
 - **Install path:** `npx @adamtait/reviewer init` detects the destination repo and writes
   `.review/config.yaml`, `.review/rules/`, `.github/workflows/review.yml`, and
   `.agent/skills/code-review/`. Idempotent, refuses overwrite without `--force`.
@@ -44,6 +48,8 @@ task) end to end. Unit of planning is the individual pull request.
 | Opengrep (PR-27) precedes Knip/OSV/type-coverage/changed-tests within phase 2 | Conventions-as-rules is §4's stated product; the other four are additive and independently revertable. |
 | Secrets gate is PR-11, ordered *before* any `ModelProvider` type exists (PR-33) | §6 says week one; expressed as a topological guarantee rather than a calendar one. |
 | Monorepo scoping (PR-26) sits in the installer, not phase 2 | Detection is an install-time concern; keeps the §10.6 unknown off the engine's critical path. |
+| PR-00 (ADR log) added ahead of PR-01 | Decisions must be recorded with the code that implements them; the format and the append-only rule have to exist before the first ADR does. |
+| 25 ADRs distributed across 20 existing PRs rather than one docs PR | An ADR written after the fact records a rationalisation, not a decision; landing it in the implementing PR makes the reviewer judge the decision and the code together. |
 | PR-13a (shared TypeScript program cache) added to M1 | The concrete payoff of the Node host decision; without it, three analyzers each build their own TS program and PLAN §10.5 worsens. See Appendix A. |
 
 **Conflicts named and resolved:** §1 ("model access injected via env, OpenAI-compatible") vs. the
@@ -63,6 +69,7 @@ reviewer/                                   [public-core]  MIT; no internal data
 ├── .gitleaks.toml                          [public-core]  gate on THIS repo's history
 ├── .github/workflows/{ci.yml,self-review.yml,release.yml}           [public-core]
 ├── docs/{architecture.md,writing-rules.md,providers.md}             [public-core]
+├── docs/adr/{README.md,template.md,NNNN-*.md}                      [public-core]  append-only
 ├── examples/
 │   ├── config.minimal.yaml                 [public-core]  generic values only
 │   └── rules/*.yaml                        [public-core]  generic demo rules only
@@ -82,7 +89,7 @@ reviewer/                                   [public-core]  MIT; no internal data
 │   │   ├── src/{detect.ts,plan.ts,write.ts,providers.ts,monorepo.ts}
 │   │   └── templates/{config.yaml.hbs,review.yml.hbs,SKILL.md.hbs,review.sh.hbs,launchd.plist.hbs}
 │   └── poller/                             [public-core]  local liveness surface
-├── scripts/{check-licenses.mjs,audit-history.mjs}                   [public-core]
+├── scripts/{check-licenses.mjs,check-adrs.mjs,audit-history.mjs}     [public-core]
 └── test/fixtures/{tiny-ts-repo/,tiny-monorepo/,github-api/}         [public-core]
 ```
 
@@ -94,8 +101,8 @@ Generated into the destination repo, never present here — `.review/config.yaml
 
 | Milestone | PRs | PLAN phase | Demoable outcome | Exit criterion | Blocked by |
 |---|---|---|---|---|---|
-| M0 Foundation & seam | 01–09 | pre-0 | `reviewer --base main --reporter text` runs, reports zero findings | CI green; `check-licenses` and gitleaks-on-own-history pass | — |
-| M1 Lane A deterministic | 10–15, 13a | 0 | Local text review of a real PR finds a true boundary violation and a floating promise | Secrets gate provably blocks lane B; 5 analyzers diff-scoped | — |
+| M0 Foundation & seam | 00–09 | pre-0 | `reviewer --base main --reporter text` runs, reports zero findings | CI green; `check-adrs`, `check-licenses` and gitleaks-on-own-history pass | — |
+| M1 Lane A deterministic | 10–15 incl. 13a | 0 | Local text review of a real PR finds a true boundary violation and a floating promise | Secrets gate provably blocks lane B; 5 analyzers diff-scoped | — |
 | M2 GitHub surface | 16–22 | 1 | Inline advisory comments on a live PR, no duplicates across force-push | 10 PRs reviewed, zero duplicate comments | Actions availability (PR-21 only) |
 | M3 Installer | 23–26 | new | `npx @adamtait/reviewer init` configures a fresh repo end to end | Fixture repo goes from clean to reviewing in one command | Nx answer (PR-26 only) |
 | M4 Rules & full lane A | 27–32 | 2 | Three real team conventions fire automatically | Three most-repeated review comments now automated | — |
@@ -109,10 +116,22 @@ Generated into the destination repo, never present here — `.review/config.yaml
 
 Everything that decides whether publishing is a copy or a rewrite lands here, before any behavior.
 
+### PR-00 — Establish the ADR log and its append-only check
+
+**Delivers:** `docs/adr/` with the process, template, index, an enforcement script, and the three decisions antecedent to any code — records ADR-0000, ADR-0001, ADR-0002.
+**Depends on:** none.
+**Touches:** `docs/adr/README.md`, `docs/adr/template.md`, `docs/adr/0000-record-architecture-decisions.md`, `docs/adr/0001-license-mit-with-spdx-headers.md`, `docs/adr/0002-implement-in-typescript-on-node.md`, `scripts/check-adrs.mjs`.
+**Diff budget:** ~130 lines of script and index + 3 ADRs (~135 lines).
+**OSS class:** public-core — the decision record is the first thing a public contributor reads, and must never carry internal detail.
+**Reviewer's question:** is this the decision-record format, and is "supersede, never edit" the right immutability rule?
+**Proof:** `node scripts/check-adrs.mjs` → `3 ADRs, index in sync, 0 violations`; edit the Decision section of an Accepted ADR and rerun → `ADR-0001: accepted ADR modified outside its status block`.
+**Exit criterion:** the check fails on a duplicate number, a missing index entry, an invalid status, a one-way supersession link, and an edit to an Accepted ADR's body.
+**Risk / rollback:** docs plus one script. **Paired with PR-01, which wires the check into CI — revert PR-01 first.**
+
 ### PR-01 — Bootstrap npm workspaces, MIT license, and CI
 
-**Delivers:** empty-but-green monorepo: workspaces, strict tsconfig, vitest, ESLint with SPDX header rule, MIT `LICENSE`, `ci.yml`.
-**Depends on:** none.
+**Delivers:** empty-but-green monorepo: workspaces, strict tsconfig, vitest, ESLint with SPDX header rule, MIT `LICENSE`, `ci.yml` — which also runs PR-00's ADR check; implements ADR-0001 and ADR-0002.
+**Depends on:** PR-00.
 **Touches:** `package.json`, `tsconfig.base.json`, `vitest.config.ts`, `eslint.config.js`, `LICENSE`, `.gitignore`, `.github/workflows/ci.yml`, `packages/{core,cli}/package.json`.
 **Diff budget:** ~430 lines. *Over budget: root toolchain config has no seam to split on — splitting it yields two PRs neither of which is green.*
 **OSS class:** public-core — establishes license and header enforcement at the first commit.
@@ -123,10 +142,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-02 — Add the Finding schema and its validator
 
-**Delivers:** `Finding` type exactly per PLAN §2, a Zod validator, JSON Schema emitted from it, and a golden serialization test.
+**Delivers:** `Finding` type exactly per PLAN §2, a Zod validator, JSON Schema emitted from it, and a golden serialization test; records ADR-0003.
 **Depends on:** PR-01.
-**Touches:** `packages/core/src/finding.ts`, `finding.schema.json`, `test/finding.test.ts`, `test/__snapshots__/`.
-**Diff budget:** ~150 lines.
+**Touches:** `packages/core/src/finding.ts`, `finding.schema.json`, `test/finding.test.ts`, `test/__snapshots__/`, `docs/adr/0003-one-findings-schema.md`.
+**Diff budget:** ~150 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — the contract every future contributor codes against.
 **Reviewer's question:** is this shape sufficient for both lanes and all three reporters, and is `evidence` correctly required for `lane: 'llm'`?
 **Proof:** `npm test -- finding` → golden snapshot matches; a lane-B finding without `evidence` fails validation.
@@ -135,10 +154,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-03 — Add config schema and resolution (the internal/public seam)
 
-**Delivers:** `ReviewConfig` schema, `.review/config.yaml` loader, env overlay, and `resolveConfig()` — the only channel through which repo-specific values reach the engine.
+**Delivers:** `ReviewConfig` schema, `.review/config.yaml` loader, env overlay, and `resolveConfig()` — the only channel through which repo-specific values reach the engine; records ADR-0004.
 **Depends on:** PR-01.
-**Touches:** `packages/core/src/config/{schema.ts,load.ts,resolve.ts}`, `examples/config.minimal.yaml`, `test/config.test.ts`.
-**Diff budget:** ~320 lines.
+**Touches:** `packages/core/src/config/{schema.ts,load.ts,resolve.ts}`, `examples/config.minimal.yaml`, `test/config.test.ts`, `docs/adr/0004-repo-specific-values-behind-reviewconfig.md`.
+**Diff budget:** ~320 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — the mechanism that keeps endpoints, org names, and rule paths out of the engine from PR-03 onward.
 **Reviewer's question:** can any repo-specific value reach the engine except through `ReviewConfig`?
 **Proof:** `npm test -- config` → loading `examples/config.minimal.yaml` yields a fully defaulted config; an unknown key fails with a path-qualified error.
@@ -147,10 +166,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-04 — Define the Analyzer port, registry, and subprocess protocol
 
-**Delivers:** `Analyzer` interface (`id`, `run(ctx): Promise<Finding[]>`), a registry, and `runSubprocessAnalyzer()` — argv in, JSON findings on stdout — so non-TypeScript analyzers are additive.
+**Delivers:** `Analyzer` interface (`id`, `run(ctx): Promise<Finding[]>`), a registry, and `runSubprocessAnalyzer()` — argv in, JSON findings on stdout — so non-TypeScript analyzers are additive; records ADR-0005 and ADR-0006.
 **Depends on:** PR-02, PR-03.
-**Touches:** `packages/core/src/analyzer/{port.ts,registry.ts,subprocess.ts}`, `test/analyzer-port.test.ts`, `docs/architecture.md`.
-**Diff budget:** ~250 lines.
+**Touches:** `packages/core/src/analyzer/{port.ts,registry.ts,subprocess.ts}`, `test/analyzer-port.test.ts`, `docs/architecture.md`, `docs/adr/0005-two-lane-analysis.md`, `docs/adr/0006-subprocess-analyzer-contract.md`.
+**Diff budget:** ~250 lines, plus 2 ADRs (~90 lines, not counted).
 **OSS class:** public-core — the extension seam for other languages.
 **Reviewer's question:** can a third-party analyzer in any language satisfy this port without changing core?
 **Proof:** `npm test -- analyzer-port` → a 12-line shell-script analyzer registered from a fixture produces a valid `Finding`.
@@ -171,10 +190,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-06 — Add diff scoping and the tiny-ts-repo fixture
 
-**Delivers:** changed-file and changed-line-range extraction from `git diff --merge-base`, `filterToChangedLines()`, and the primary fixture repo.
+**Delivers:** changed-file and changed-line-range extraction from `git diff --merge-base`, `filterToChangedLines()`, and the primary fixture repo; records ADR-0007.
 **Depends on:** PR-02.
-**Touches:** `packages/core/src/diff/{scope.ts,hunks.ts}`, `test/fixtures/tiny-ts-repo/**`, `test/diff.test.ts`.
-**Diff budget:** ~300 lines excluding fixture.
+**Touches:** `packages/core/src/diff/{scope.ts,hunks.ts}`, `test/fixtures/tiny-ts-repo/**`, `test/diff.test.ts`, `docs/adr/0007-scope-analysis-to-changed-lines.md`.
+**Diff budget:** ~300 lines excluding fixture, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** is hunk parsing correct for renames, deletions, and binary files?
 **Proof:** `npm test -- diff` → fixture's two-commit history yields exactly 3 changed files and 11 changed lines; a finding on an untouched line is filtered out.
@@ -183,10 +202,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-07 — Wire the CLI entrypoint
 
-**Delivers:** `reviewer` binary: `--base`, `--reporter`, `--staged`, `--pr <n>`, `--config`, `--only`, `--skip`; loads config, runs an empty registry, prints via reporter, exits 0.
+**Delivers:** `reviewer` binary: `--base`, `--reporter`, `--staged`, `--pr <n>`, `--config`, `--only`, `--skip`; loads config, runs an empty registry, prints via reporter, exits 0; records ADR-0008 and ADR-0009.
 **Depends on:** PR-03, PR-04, PR-05, PR-06.
-**Touches:** `packages/cli/{package.json,bin/reviewer.mjs,src/main.ts,src/args.ts}`, `test/cli.test.ts`.
-**Diff budget:** ~290 lines.
+**Touches:** `packages/cli/{package.json,bin/reviewer.mjs,src/main.ts,src/args.ts}`, `test/cli.test.ts`, `docs/adr/0008-cli-not-service.md`, `docs/adr/0009-never-block-a-pull-request.md`.
+**Diff budget:** ~290 lines, plus 2 ADRs (~90 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** is the flag surface and the always-exit-0 advisory contract right?
 **Proof:** `npm run build && (cd test/fixtures/tiny-ts-repo && node ../../../packages/cli/bin/reviewer.mjs --base main --reporter text)` → `reviewer: 0 analyzers registered, 0 findings`; `echo $?` → `0`.
@@ -195,10 +214,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-08 — Gate this repo's own history against secrets
 
-**Delivers:** `.gitleaks.toml`, a `simple-git-hooks` pre-commit hook, and a CI job scanning full history.
+**Delivers:** `.gitleaks.toml`, a `simple-git-hooks` pre-commit hook, and a CI job scanning full history; records ADR-0010.
 **Depends on:** PR-01.
-**Touches:** `.gitleaks.toml`, `package.json` (hooks), `.github/workflows/ci.yml`, CONTRIBUTING stub note.
-**Diff budget:** ~90 lines.
+**Touches:** `.gitleaks.toml`, `package.json` (hooks), `.github/workflows/ci.yml`, CONTRIBUTING stub note, `docs/adr/0010-keep-internal-data-out-of-history.md`.
+**Diff budget:** ~90 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — what must never enter history: API keys, internal hostnames, `.review/` files from any real repo, `AGENTS.md` copies.
 **Reviewer's question:** does the allowlist admit the fixture's deliberate fake secret without admitting real ones?
 **Proof:** `npx gitleaks detect --source . --config .gitleaks.toml --log-opts="--all"` → `no leaks found`; a commit containing `sk-ant-` is rejected locally.
@@ -207,10 +226,10 @@ Everything that decides whether publishing is a copy or a rewrite lands here, be
 
 ### PR-09 — Add the third-party license inventory and its check
 
-**Delivers:** `THIRD_PARTY_LICENSES.md`, `scripts/check-licenses.mjs` comparing it to `npm ls --json`, CI job, and a denylist that fails if any copyleft license appears as an npm dependency.
+**Delivers:** `THIRD_PARTY_LICENSES.md`, `scripts/check-licenses.mjs` comparing it to `npm ls --json`, CI job, and a denylist that fails if any copyleft license appears as an npm dependency; records ADR-0011.
 **Depends on:** PR-01.
-**Touches:** `THIRD_PARTY_LICENSES.md`, `scripts/check-licenses.mjs`, `.github/workflows/ci.yml`.
-**Diff budget:** ~180 lines.
+**Touches:** `THIRD_PARTY_LICENSES.md`, `scripts/check-licenses.mjs`, `.github/workflows/ci.yml`, `docs/adr/0011-opengrep-as-separate-process.md`.
+**Diff budget:** ~180 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — this is where the Opengrep LGPL-2.1 boundary is *enforced*, before the adapter exists (PR-27): Opengrep is listed as an external binary, and any npm dep with an LGPL/GPL/AGPL license fails the job.
 **Reviewer's question:** does the denylist make an accidental copyleft link a CI failure rather than a legal review?
 **Proof:** `node scripts/check-licenses.mjs` → `inventory matches N packages, 0 copyleft`; adding a GPL package to `devDependencies` fails it.
@@ -235,10 +254,10 @@ The secrets gate lands before any type named `ModelProvider` exists anywhere in 
 
 ### PR-11 — Add the secrets gate that blocks lane B
 
-**Delivers:** `gate/secrets-gate.ts`: any `secrets/*` finding, or `secretsScanUnavailable`, sets `laneBBlocked` and hard-skips every lane-B-classified analyzer.
+**Delivers:** `gate/secrets-gate.ts`: any `secrets/*` finding, or `secretsScanUnavailable`, sets `laneBBlocked` and hard-skips every lane-B-classified analyzer; records ADR-0012.
 **Depends on:** PR-10.
-**Touches:** `packages/core/src/gate/secrets-gate.ts`, `analyzer/registry.ts`, `test/gate/secrets-gate.test.ts`.
-**Diff budget:** ~140 lines.
+**Touches:** `packages/core/src/gate/secrets-gate.ts`, `analyzer/registry.ts`, `test/gate/secrets-gate.test.ts`, `docs/adr/0012-abort-llm-lane-on-secret-detection.md`.
+**Diff budget:** ~140 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — PLAN §6's one non-obvious safety property.
 **Reviewer's question:** is it structurally impossible for a lane-B analyzer to run when the gate is set?
 **Proof:** `npm test -- secrets-gate` → a spy lane-B analyzer registered in the test is invoked 0 times on the fixture, and 1 time when the fake secret is removed.
@@ -247,10 +266,10 @@ The secrets gate lands before any type named `ModelProvider` exists anywhere in 
 
 ### PR-12 — Add the pipeline sequencer with per-analyzer timeout and fail-open
 
-**Delivers:** ordered execution per PLAN §3, per-analyzer timeout from config, fail-open with a warning, `--only`/`--skip` honoured, per-analyzer timing in `text` output.
+**Delivers:** ordered execution per PLAN §3, per-analyzer timeout from config, fail-open with a warning, `--only`/`--skip` honoured, per-analyzer timing in `text` output; records ADR-0013.
 **Depends on:** PR-11.
-**Touches:** `packages/core/src/analyzer/sequencer.ts`, `config/schema.ts`, `test/sequencer.test.ts`.
-**Diff budget:** ~230 lines.
+**Touches:** `packages/core/src/analyzer/sequencer.ts`, `config/schema.ts`, `test/sequencer.test.ts`, `docs/adr/0013-fixed-analyzer-order-fail-open.md`.
+**Diff budget:** ~230 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** is fail-open correct for every analyzer *except* the secrets scanner, and does the ordering match §3?
 **Proof:** `node .../reviewer.mjs --base main --reporter text --skip tsc` → output lists analyzers in §3 order with ms timings, `tsc skipped`.
@@ -271,10 +290,10 @@ The secrets gate lands before any type named `ModelProvider` exists anywhere in 
 
 ### PR-13a — Add the shared TypeScript program cache
 
-**Delivers:** `ts/program.ts` — builds one TypeScript program per `tsconfig` per run, memoized; PR-13 consumes it and PR-14/PR-31 consume it on landing.
+**Delivers:** `ts/program.ts` — builds one TypeScript program per `tsconfig` per run, memoized; PR-13 consumes it and PR-14/PR-31 consume it on landing; records ADR-0014.
 **Depends on:** PR-13.
-**Touches:** `packages/core/src/ts/program.ts`, `analyzers/tsc.ts`, `test/ts/program.test.ts`.
-**Diff budget:** ~180 lines.
+**Touches:** `packages/core/src/ts/program.ts`, `analyzers/tsc.ts`, `test/ts/program.test.ts`, `docs/adr/0014-share-one-typescript-program.md`.
+**Diff budget:** ~180 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — the concrete payoff of the Node host decision (Appendix A); directly attacks PLAN §10.5.
 **Reviewer's question:** is one program per `tsconfig` correct for a repo with project references or multiple workspaces?
 **Proof:** `--only tsc,eslint,type-coverage` with `REVIEWER_TRACE=1` logs exactly one `createProgram` per tsconfig, not three.
@@ -311,10 +330,10 @@ Dedupe exists before the first comment is ever posted.
 
 ### PR-16 — Add fingerprinting
 
-**Delivers:** `sha256(ruleId + filePath + normalizedSnippet)`, snippet normalizer (whitespace, quotes, trailing commas), 6-hex short form for comment markers.
+**Delivers:** `sha256(ruleId + filePath + normalizedSnippet)`, snippet normalizer (whitespace, quotes, trailing commas), 6-hex short form for comment markers; records ADR-0015.
 **Depends on:** PR-02.
-**Touches:** `packages/core/src/fingerprint.ts`, `test/fingerprint.test.ts`.
-**Diff budget:** ~140 lines.
+**Touches:** `packages/core/src/fingerprint.ts`, `test/fingerprint.test.ts`, `docs/adr/0015-fingerprint-by-normalized-snippet.md`.
+**Diff budget:** ~140 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** does the fingerprint survive a line shift and a reindent but change when the logic changes?
 **Proof:** `npm test -- fingerprint` → identical for the same snippet at lines 10 and 40; differs when an operator changes.
@@ -335,10 +354,10 @@ Dedupe exists before the first comment is ever posted.
 
 ### PR-18 — Add the GitHub reporter with fingerprint dedupe
 
-**Delivers:** posts inline review comments for `confidence: high` only, embeds `<!-- rv:xxxxxx -->`, skips fingerprints already present, `--dry-run` prints the payload instead of posting.
+**Delivers:** posts inline review comments for `confidence: high` only, embeds `<!-- rv:xxxxxx -->`, skips fingerprints already present, `--dry-run` prints the payload instead of posting; records ADR-0016 and ADR-0017.
 **Depends on:** PR-16, PR-17.
-**Touches:** `packages/core/src/reporters/github.ts`, `packages/core/src/github/{port.ts,octokit.ts}` (add `createReviewComment`), `packages/cli/src/args.ts`, `test/reporters/github.test.ts`.
-**Diff budget:** ~420 lines. *Over budget: the write path, the dedupe query, and the dry-run switch are one behavior — splitting ships a reporter that posts duplicates.*
+**Touches:** `packages/core/src/reporters/github.ts`, `packages/core/src/github/{port.ts,octokit.ts}` (add `createReviewComment`), `packages/cli/src/args.ts`, `test/reporters/github.test.ts`, `docs/adr/0016-github-comments-as-the-store.md`, `docs/adr/0017-presentation-gated-on-confidence.md`.
+**Diff budget:** ~420 lines. *Over budget: the write path, the dedupe query, and the dry-run switch are one behavior — splitting ships a reporter that posts duplicates.* Plus 2 ADRs (~90 lines).
 **OSS class:** public-core.
 **Reviewer's question:** is it impossible to post a duplicate, and impossible to post at all without `--reporter github`?
 **Proof:** `node .../reviewer.mjs --pr 1 --reporter github --dry-run` → prints 2 comment bodies with markers; run against a real PR twice → second run reports `2 findings, 0 posted (deduped)`.
@@ -371,10 +390,10 @@ Dedupe exists before the first comment is ever posted.
 
 ### PR-21 — Add the composite action and self-review workflow
 
-**Delivers:** root `action.yml` (checkout depth, Node setup, tool install, `reviewer` invocation) and `.github/workflows/self-review.yml` dogfooding it on this repo.
+**Delivers:** root `action.yml` (checkout depth, Node setup, tool install, `reviewer` invocation) and `.github/workflows/self-review.yml` dogfooding it on this repo; records ADR-0018.
 **Depends on:** PR-18.
-**Touches:** `action.yml`, `.github/workflows/self-review.yml`, `docs/architecture.md`.
-**Diff budget:** ~150 lines.
+**Touches:** `action.yml`, `.github/workflows/self-review.yml`, `docs/architecture.md`, `docs/adr/0018-pull-request-trigger-not-target.md`.
+**Diff budget:** ~150 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — consumers reference `adamtait/reviewer@v0`; no secrets in the action itself.
 **Reviewer's question:** are the permissions minimal (`contents: read`, `pull-requests: write`) and is `pull_request` used rather than `pull_request_target`?
 **Proof:** open a PR on this repo → the self-review job posts a lane A summary comment; a fork PR runs lane A and skips lane B.
@@ -383,10 +402,10 @@ Dedupe exists before the first comment is ever posted.
 
 ### PR-22 — Add the local poller surface
 
-**Delivers:** `@adamtait/reviewer-poller` — polls Octokit `listPullRequests` on an interval, invokes the CLI with `--pr <n> --reporter github`, plus a `launchd` plist template.
+**Delivers:** `@adamtait/reviewer-poller` — polls Octokit `listPullRequests` on an interval, invokes the CLI with `--pr <n> --reporter github`, plus a `launchd` plist template; records ADR-0019.
 **Depends on:** PR-18.
-**Touches:** `packages/poller/**`, `packages/installer/templates/launchd.plist.hbs`, `test/poller.test.ts`, `docs/architecture.md`.
-**Diff budget:** ~300 lines.
+**Touches:** `packages/poller/**`, `packages/installer/templates/launchd.plist.hbs`, `test/poller.test.ts`, `docs/architecture.md`, `docs/adr/0019-ship-action-and-local-poller.md`.
+**Diff budget:** ~300 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** does the poller avoid re-reviewing unchanged PRs (`updatedAt` watermark persisted to disk)?
 **Proof:** `node packages/poller/bin/poller.mjs --once --repo adamtait/reviewer --dry-run` → lists candidate PRs and the CLI commands it would run.
@@ -399,10 +418,10 @@ This is the milestone that makes "no internal data in this repo" a mechanism rat
 
 ### PR-23 — Add the installer skeleton with destination detection
 
-**Delivers:** `reviewer init --dry-run`: detects package manager, workspaces/Nx, test runner, tsconfig layout, existing ESLint and dependency-cruiser config; prints an `InstallPlan`. Writes nothing.
+**Delivers:** `reviewer init --dry-run`: detects package manager, workspaces/Nx, test runner, tsconfig layout, existing ESLint and dependency-cruiser config; prints an `InstallPlan`. Writes nothing; records ADR-0020.
 **Depends on:** PR-07.
-**Touches:** `packages/installer/src/{detect.ts,plan.ts}`, `packages/cli/src/main.ts` (subcommand), `test/installer/detect.test.ts`, `test/fixtures/tiny-monorepo/**`.
-**Diff budget:** ~340 lines.
+**Touches:** `packages/installer/src/{detect.ts,plan.ts}`, `packages/cli/src/main.ts` (subcommand), `test/installer/detect.test.ts`, `test/fixtures/tiny-monorepo/**`, `docs/adr/0020-adapt-at-install-time.md`.
+**Diff budget:** ~340 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** dual — engine public; the plan it prints describes destination-internal files.
 **Reviewer's question:** is `InstallPlan` the complete set of decisions install must make?
 **Proof:** `(cd test/fixtures/tiny-monorepo && node ../../../packages/cli/bin/reviewer.mjs init --dry-run)` → plan naming 2 workspaces, `vitest`, 4 files to create, 0 to overwrite.
@@ -526,10 +545,10 @@ The port and the fake provider land before any adapter can make a network call.
 
 ### PR-33 — Define the ModelProvider port with a fake provider and REVIEW_LLM=off
 
-**Delivers:** `ModelProvider` interface (`complete(messages, {json}) -> string`), a deterministic `fake` provider for tests, and `REVIEW_LLM` defaulting to `off`.
+**Delivers:** `ModelProvider` interface (`complete(messages, {json}) -> string`), a deterministic `fake` provider for tests, and `REVIEW_LLM` defaulting to `off`; records ADR-0021.
 **Depends on:** PR-11, PR-03.
-**Touches:** `packages/core/src/model/{port.ts,fake.ts}`, `config/schema.ts`, `test/model/port.test.ts`.
-**Diff budget:** ~190 lines.
+**Touches:** `packages/core/src/model/{port.ts,fake.ts}`, `config/schema.ts`, `test/model/port.test.ts`, `docs/adr/0021-six-model-paths-one-provider-port.md`.
+**Diff budget:** ~190 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — no endpoint, no model name, no org anywhere in the port.
 **Reviewer's question:** does the port admit both HTTP APIs and subscription CLIs without leaking either into core?
 **Proof:** `npm test -- model/port` → the fake provider satisfies the port; construction with `REVIEW_LLM=off` throws a typed `LaneBDisabled` that the sequencer treats as a skip.
@@ -550,10 +569,10 @@ The port and the fake provider land before any adapter can make a network call.
 
 ### PR-35 — Add the lane B review pass with confidence capping
 
-**Delivers:** prompt templates under `lane-b/prompts/` (overridable from `.review/prompts/`), JSON output validated against the findings schema, and a hard cap: `arch/missing-abstraction` and `quality/sloppy` never exceed `medium`.
+**Delivers:** prompt templates under `lane-b/prompts/` (overridable from `.review/prompts/`), JSON output validated against the findings schema, and a hard cap: `arch/missing-abstraction` and `quality/sloppy` never exceed `medium`; records ADR-0022.
 **Depends on:** PR-34.
-**Touches:** `packages/core/src/lane-b/review.ts`, `lane-b/prompts/*.md`, `test/lane-b/review.test.ts`.
-**Diff budget:** ~360 lines.
+**Touches:** `packages/core/src/lane-b/review.ts`, `lane-b/prompts/*.md`, `test/lane-b/review.test.ts`, `docs/adr/0022-cap-taste-confidence-in-code.md`.
+**Diff budget:** ~360 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core — shipped prompts are generic; internal phrasing is a destination-repo override.
 **Reviewer's question:** is the confidence cap enforced in code rather than requested in the prompt?
 **Proof:** `npm test -- lane-b/review` → the fake provider returning `confidence: high` for a taste category is downgraded to `medium`; malformed JSON yields zero findings and one warning.
@@ -562,10 +581,10 @@ The port and the fake provider land before any adapter can make a network call.
 
 ### PR-36 — Add the invalidation pass
 
-**Delivers:** a second model call attempting to disprove each candidate; survivors keep `evidence`, the rest are dropped. `--no-invalidate` for debugging.
+**Delivers:** a second model call attempting to disprove each candidate; survivors keep `evidence`, the rest are dropped. `--no-invalidate` for debugging; records ADR-0023.
 **Depends on:** PR-35.
-**Touches:** `packages/core/src/lane-b/invalidate.ts`, `lane-b/prompts/invalidate.md`, `packages/cli/src/args.ts`, `test/lane-b/invalidate.test.ts`.
-**Diff budget:** ~290 lines.
+**Touches:** `packages/core/src/lane-b/invalidate.ts`, `lane-b/prompts/invalidate.md`, `packages/cli/src/args.ts`, `test/lane-b/invalidate.test.ts`, `docs/adr/0023-disprove-before-emitting.md`.
+**Diff budget:** ~290 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** is a finding dropped when the disproof is merely plausible, or only when it is specific?
 **Proof:** `npm test -- invalidate` → fake provider marking 2 of 3 candidates as intended behavior yields 1 finding carrying `evidence`; `--no-invalidate` yields 3 with no `evidence`.
@@ -636,10 +655,10 @@ The port and the fake provider land before any adapter can make a network call.
 
 ### PR-42 — Add the acceptance-rate metrics command
 
-**Delivers:** `reviewer metrics --since 7d` — queries review comments, parses `rv:` markers, groups by `ruleId` into resolved / outdated / open, emits markdown and CSV.
+**Delivers:** `reviewer metrics --since 7d` — queries review comments, parses `rv:` markers, groups by `ruleId` into resolved / outdated / open, emits markdown and CSV; records ADR-0024.
 **Depends on:** PR-18.
-**Touches:** `packages/cli/src/metrics.ts`, `packages/core/src/github/octokit.ts` (thread state), `test/metrics.test.ts`.
-**Diff budget:** ~300 lines.
+**Touches:** `packages/cli/src/metrics.ts`, `packages/core/src/github/octokit.ts` (thread state), `test/metrics.test.ts`, `docs/adr/0024-measure-acceptance-per-rule.md`.
+**Diff budget:** ~300 lines, plus 1 ADR (~45 lines, not counted).
 **OSS class:** public-core.
 **Reviewer's question:** is "acceptance" defined precisely enough to delete a rule on?
 **Proof:** `node .../reviewer.mjs metrics --since 30d --repo adamtait/reviewer` → table with `ruleId | posted | resolved | outdated | acceptance%`.
@@ -649,7 +668,8 @@ The port and the fake provider land before any adapter can make a network call.
 
 ```mermaid
 graph TD
-  P01[01 bootstrap] --> P02[02 finding schema]
+  P00[00 ADR log] --> P01[01 bootstrap]
+  P01 --> P02[02 finding schema]
   P01 --> P03[03 config seam]
   P01 --> P08[08 commit hygiene]
   P01 --> P09[09 license inventory]
@@ -708,7 +728,7 @@ graph TD
   P45 --> P46[46 provenance audit + publish]
 ```
 
-**Critical path:** 01 → 02 → 04 → 07 → 10 → 11 → 12 → 13 → 13a → 14 → 16/18 → 33 → 34 → 35 → 36 → 43 → 44 → 45 → 46.
+**Critical path:** 00 → 01 → 02 → 04 → 07 → 10 → 11 → 12 → 13 → 13a → 14 → 16/18 → 33 → 34 → 35 → 36 → 43 → 44 → 45 → 46.
 
 **Parallel:** 08/09 run alongside 02–07; 15, 29, 30 and 32 are mutually independent given 12; 37–40 are
 four independent leaves off 33; 16/17 can proceed during M1; 23–25 need only 07.
@@ -717,6 +737,7 @@ four independent leaves off 33; 16/17 can proceed during M1; 23–25 need only 0
 
 | Requirement | Established in | Enforced by |
 |---|---|---|
+| Decision record, append-only | PR-00 | `scripts/check-adrs.mjs` in CI (wired by PR-01); PR-46's history audit covers ADR provenance |
 | License choice + copyright | PR-01 | `LICENSE`; `eslint-plugin-license-header` requires SPDX in every `.ts` (MIT needs no `NOTICE` — stated in README) |
 | Engine/config separation | PR-03 | `resolveConfig()` as sole channel; test greps `packages/core/src` for URL literals |
 | Language-extension seam | PR-04 | subprocess analyzer contract test |
@@ -872,3 +893,98 @@ dependency tree would make PR-09 trivial. Neither outweighs the three points abo
   it. At that point the fix is a faster analyzer (oxc/oxlint-tsgolint), not a faster host — and if
   that has left alpha, Rust becomes the rational host because it can embed oxc in-process. That is a
   rewrite decision on evidence, not a hedge to take now.
+
+## Appendix B — Architecture decision records
+
+Decisions are immortalized in `docs/adr/`, one file per decision, MADR-lite, **append-only**: an
+Accepted ADR is never edited, only superseded by a higher-numbered one. Each ADR lands in the PR that
+first implements its decision, so a reviewer judges the rationale and the code in the same diff.
+Decisions antecedent to any code land in PR-00.
+
+### B.1 Register
+
+| ADR | Decision | Rejected alternative, and what it would have cost | Lands in |
+|---|---|---|---|
+| 0000 | Record decisions as append-only ADRs, one per file, superseded never edited | A `DECISIONS.md` changelog — loses per-decision provenance and makes silent rewrites invisible | PR-00 |
+| 0001 | License MIT, per-file SPDX headers, no `NOTICE` | Apache-2.0 — patent grant and NOTICE upkeep buy nothing for a personal project | PR-00 |
+| 0002 | Implement in TypeScript on Node 22, npm workspaces | Go — three cold TypeScript programs per PR instead of one, no self-review (Appendix A) | PR-00 |
+| 0003 | Normalize both lanes to one `Finding` schema; `evidence` required for `lane: 'llm'` | Per-analyzer output shapes — every reporter would need N adapters | PR-02 |
+| 0004 | Route every repo-specific value through `ReviewConfig`, keeping this repo 100% public-core | An internal config package in-tree — publishing becomes sanitisation, not extraction | PR-03 |
+| 0005 | Split analysis into a deterministic lane and an LLM lane, classified at registration | One lane with optional model calls — no way to guarantee the no-egress path | PR-04 |
+| 0006 | Admit analyzers in any language over a subprocess JSON contract | In-process TypeScript plugins only — forecloses non-TS analyzers permanently | PR-04 |
+| 0007 | Scope every analyzer to changed lines, mandatory, no opt-out | Whole-repo findings with severity filtering — trains reviewers to mute the bot | PR-06 |
+| 0008 | Ship a CLI binary, not a service | A hosted webhook receiver — needs a host, auth, and an on-call rotation | PR-07 |
+| 0009 | Never block a PR; always exit 0 except on CLI misuse | Configurable blocking — one false positive and the tool gets disabled org-wide | PR-07 |
+| 0010 | Never admit internal data or secrets to this repo's history | Scrub before publishing — history rewriting is not reliably reversible | PR-08 |
+| 0011 | Invoke Opengrep only as a separate process, never linked or vendored | An npm wrapper — LGPL-2.1 linkage obligations on an MIT codebase | PR-09 |
+| 0012 | Abort the LLM lane entirely on any secret detection, and when the scanner could not run | Redact and continue — turns a leak into a leak plus exfiltration | PR-11 |
+| 0013 | Run analyzers in a fixed cheap-first order, fail open, except the secrets scanner which fails closed | Parallel everything — loses fast feedback and the gate's ordering guarantee | PR-12 |
+| 0014 | Build one TypeScript program per `tsconfig` per run and share it across TS analyzers | Per-analyzer programs — triples the dominant cost and worsens PLAN §10.5 | PR-13a |
+| 0015 | Fingerprint on `sha256(ruleId + path + normalizedSnippet)`, never on line number | Line-based identity — every rebase re-posts every comment | PR-16 |
+| 0016 | Use GitHub comments as the only persistence store, queried for dedupe | A local database — a host, a backup story, and a schema to migrate | PR-18 |
+| 0017 | Gate presentation on `confidence`, not `severity`: only `high` goes inline | Severity-gated inline comments — high-severity guesses land in reviewers' faces | PR-18 |
+| 0018 | Trigger on `pull_request`, never `pull_request_target` | `pull_request_target` — hands repo secrets to fork-authored code | PR-21 |
+| 0019 | Ship both a GitHub Action and a local poller | Action only — an org policy change leaves the system with no trigger at all | PR-22 |
+| 0020 | Adapt to the destination repo at install time, writing `.review/` there | Convention-over-configuration discovery — repo-specific values leak into the engine | PR-23 |
+| 0021 | Six model access paths behind one `ModelProvider` port, chosen at install | One OpenAI-compatible client — excludes Gemini and the two subscription CLIs | PR-33 |
+| 0022 | Cap taste-category confidence in code, at `medium`, not by prompt instruction | Asking the model to self-limit — unverifiable, and it drifts per prompt edit | PR-35 |
+| 0023 | Disprove every LLM finding in a second pass before emitting it | Single-pass with a confidence score — the precision problem the whole lane lives or dies on | PR-36 |
+| 0024 | Measure acceptance per `ruleId` from GitHub thread state and delete rules under ~30% | Manual judgement about which rules earn their keep — guessing exactly where it is most expensive | PR-42 |
+
+### B.2 Template (`docs/adr/template.md`)
+
+```markdown
+# ADR-NNNN — <decision in the imperative>
+
+- **Status:** Proposed | Accepted | Rejected | Superseded
+- **Date:** YYYY-MM-DD
+- **Implemented by:** PR-NN (or `—` for a decision with no single implementing PR)
+- **Supersedes:** ADR-NNNN (or `—`)
+- **Superseded by:** ADR-NNNN (or `—`)
+
+## Context
+The forces in play, including any constraint that is not ours to change.
+
+## Decision
+One paragraph, present tense, active voice.
+
+## Consequences
+- **Positive:** what this makes cheap or safe.
+- **Negative:** what it makes expensive or forecloses — state it plainly.
+- **Neutral:** what it commits us to without being better or worse.
+
+## Alternatives rejected
+- **<option>** — why not, in one or two sentences.
+
+## Revisit when
+The observable signal that would make this decision wrong. `—` if there is none.
+```
+
+`Revisit when` is the field that keeps the log honest: it is where PLAN §10's risks and this plan's
+§9 kill criteria are attached to the decisions they would invalidate. ADR-0014's reads "type-aware
+lint still exceeds 8 minutes cold with the shared program in place"; ADR-0022's and ADR-0023's point
+at the acceptance-rate thresholds in §9.
+
+### B.3 Enforcement (`scripts/check-adrs.mjs`, CI from PR-01)
+
+The script fails the build on any of:
+
+1. a duplicate or non-sequential ADR number, or a filename not matching `NNNN-kebab-slug.md`;
+2. a missing or invalid `Status`, or a missing `Implemented by` line;
+3. an ADR absent from `docs/adr/README.md`, or an index title that disagrees with the file's H1;
+4. a one-way supersession — `Superseded by` without the reciprocal `Supersedes`, or either naming a
+   nonexistent ADR;
+5. **any content change to an Accepted ADR outside its status block**, computed as
+   `git diff --merge-base origin/main -- docs/adr/`. This is the append-only rule; a decision that
+   turned out wrong is superseded by a new ADR, never quietly rewritten.
+
+Code that exists because of a decision cites it in a comment — `// ADR-0012: fail closed` on the
+secrets gate, `// ADR-0007` on the diff filter. That convention is documented in ADR-0000 and left
+unenforced; a lint rule for it would generate more noise than it catches.
+
+### B.4 Relationship to PLAN
+
+ADR-0005, ADR-0008, ADR-0009, ADR-0016 and ADR-0018 record decisions PLAN §1 and §8 already made;
+their ADRs state PLAN as the context and do not reopen them. ADR-0002, ADR-0011, ADR-0020 and
+ADR-0021 record decisions this plan made where PLAN was silent or where a stated requirement
+overrode it — each names the conflict in its Context section, matching §2 of this document.

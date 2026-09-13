@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/diff"
 	"github.com/adamtait/reviewer/internal/pluginhost"
@@ -46,6 +47,11 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	}
 
 	host := pluginhost.New("reviewer/"+version, stderr)
+	// The built-in analyzers are a plugin like any other, reached over the
+	// protocol through in-memory pipes rather than a subprocess (ADR-0027).
+	if err := host.AddLocal(ctx, builtin.New(cfg, version), cfg.Analyzers.Timeout); err != nil {
+		run.Warnings = append(run.Warnings, err.Error())
+	}
 	// Closed explicitly below so that shutdown warnings reach the report; the
 	// deferred call is the safety net for the error paths and is idempotent.
 	defer host.Close()

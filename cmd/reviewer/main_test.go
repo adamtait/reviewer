@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,9 +87,13 @@ func TestVersionPrintsTheProtocol(t *testing.T) {
 	}
 }
 
-// The plan's proof for this PR: a real repository, no plugins configured, a clean
-// exit and an honest report that nothing ran.
-func TestReviewWithNoPluginsConfigured(t *testing.T) {
+// A repository with no configuration at all still gets the built-in analyzers,
+// which is the difference between a tool that needs setting up and one that is
+// useful the moment it is installed.
+func TestReviewWithNoConfigurationStillRunsTheBuiltins(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks is not installed; the built-in analyzer reports itself unavailable")
+	}
 	repo := testfixture.Build(t, "tiny-ts-repo")
 
 	var stdout, stderr bytes.Buffer
@@ -99,11 +104,28 @@ func TestReviewWithNoPluginsConfigured(t *testing.T) {
 		t.Fatalf("a repository with no configuration must review cleanly, got %v", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "no analyzers are configured") {
-		t.Fatalf("want the empty configuration called out, got %q", out)
+	if !strings.Contains(out, "secrets/") {
+		t.Fatalf("want the fixture credential found with no configuration at all, got %q", out)
 	}
-	if !strings.Contains(out, "no findings") {
-		t.Fatalf("want an explicit empty result, got %q", out)
+	if strings.Contains(out, "no analyzers are configured") {
+		t.Fatalf("the built-in plugin should have registered analyzers, got %q", out)
+	}
+}
+
+// With gitleaks absent the analyzer must report itself unavailable rather than
+// failing the run, and the reason must reach the report.
+func TestAMissingScannerIsReportedNotFatal(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	writeConfig(t, repo.Root, "tools:\n  gitleaks:\n    path: definitely-not-installed-xyz\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatalf("a missing scanner must not fail the review, got %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "gitleaks") || !strings.Contains(out, "not installed") {
+		t.Fatalf("want the missing scanner explained, got %q", out)
 	}
 }
 
@@ -215,19 +237,20 @@ func TestConfigSkipIsApplied(t *testing.T) {
 	}
 	script := filepath.Join(root, "..", "..", "examples", "plugins", "shell-hello", "plugin.sh")
 	writeConfig(t, repo.Root,
-		"plugins:\n  - id: shell-hello\n    command: "+script+"\nanalyzers:\n  skip: [shell-hello]\n")
+		"plugins:\n  - id: shell-hello\n    command: "+script+"\nanalyzers:\n  skip: [shell-hello, gitleaks]\n")
 
 	var stdout, stderr bytes.Buffer
 	if err := run(context.Background(),
 		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	// With its only analyzer skipped, nothing ran and the report says so.
-	if !strings.Contains(stdout.String(), "no analyzers are configured") {
-		t.Fatalf("want the configured skip to take effect, got:\n%s", stdout.String())
+	out := stdout.String()
+	// Both analyzers skipped, so nothing ran and the report says so.
+	if !strings.Contains(out, "no analyzers are configured") {
+		t.Fatalf("want the configured skip to take effect, got:\n%s", out)
 	}
-	if strings.Contains(stdout.String(), "outside the diff") {
-		t.Fatalf("the skipped analyzer still produced findings:\n%s", stdout.String())
+	if strings.Contains(out, "outside the diff") || strings.Contains(out, "secrets/") {
+		t.Fatalf("a skipped analyzer still produced findings:\n%s", out)
 	}
 }
 

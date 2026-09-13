@@ -45,6 +45,13 @@ func Serve(h Handler) error {
 	return serve(h, os.Stdin, os.Stdout, os.Stderr)
 }
 
+// ServeStreams is Serve against explicit streams. It exists for a plugin that is
+// compiled into the host and reached over in-memory pipes (ADR-0027), and for
+// tests that drive a handler without a process.
+func ServeStreams(h Handler, r io.Reader, w, logw io.Writer) error {
+	return serve(h, r, w, logw)
+}
+
 func serve(h Handler, r io.Reader, w, logw io.Writer) error {
 	in, out := NewReader(r), NewWriter(w)
 	greeted := false

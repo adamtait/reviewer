@@ -4,6 +4,8 @@
 # drift apart. `make check` is the whole gate.
 
 SHELL := /bin/sh
+# Fail on the first failing stage even when make's output is piped.
+.SHELLFLAGS := -eu -c
 
 # Files that carry no SPDX header: prose, configuration, data, and the example
 # config a user copies into their own repository.

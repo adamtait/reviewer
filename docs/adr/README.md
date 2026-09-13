@@ -21,5 +21,6 @@ precede any code land in PR-00.
 | [0004](0004-repo-specific-values-behind-config.md) | Route every repository-specific value through Config | Accepted | PR-03 |
 | [0005](0005-two-lane-analysis.md) | Declare each analyzer's lane in its plugin descriptor | Accepted | PR-04 |
 | [0006](0006-all-analyzers-are-plugins.md) | Reach every analyzer through the plugin protocol, first-party included | Accepted | PR-04 |
+| [0007](0007-scope-analysis-to-changed-lines.md) | Scope every finding to the changed lines, with no opt-out | Accepted | PR-06 |
 | [0025](0025-ndjson-over-stdio.md) | Speak newline-delimited JSON over stdio | Accepted | PR-04 |
 | [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |

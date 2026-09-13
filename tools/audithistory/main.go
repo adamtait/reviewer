@@ -146,8 +146,17 @@ func skipPath(path string) bool {
 	case strings.HasSuffix(path, "package-lock.json"):
 		// Registry URLs and integrity hashes, none of it written by anyone here.
 		return true
-	case path == "tools/audithistory/main.go":
-		// This file describes the shapes it refuses.
+	case strings.HasPrefix(path, "tools/audithistory/"):
+		// The audit's own source and tests. The source describes the shapes it
+		// refuses; the tests contain a worked example of every one, because a
+		// scanner whose patterns match nothing reports a clean history in exactly
+		// the words a clean history produces.
+		//
+		// The prefix, not the two filenames: skipping `main.go` alone left
+		// `main_test.go` reporting fourteen findings against its own fixture table,
+		// which failed the audit job on the pull request that introduced it — and,
+		// because the blob is in the history, would have kept failing on `main`
+		// forever.
 		return true
 	case path == "docs/implementation-plan.md":
 		// The plan records the decision to drop the placeholder scope, and says so

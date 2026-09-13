@@ -1,5 +1,12 @@
 /dist/
+# Every binary this module builds, not just the main one. `go build ./tools/x`
+# writes ./x into the working directory, and a 3 MB binary was committed that way
+# — carrying the build machine's home directory, which is one of the shapes
+# tools/audithistory exists to refuse.
 /reviewer
+/audithistory
+/checkadrs
+/checklicenses
 node_modules/
 *.tsbuildinfo
 # The plugin compiled. Rebuilt by `npm run build`, and by `make check`

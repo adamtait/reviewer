@@ -52,8 +52,12 @@ func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if o.dryRun {
 		fmt.Fprintln(stderr, "reviewer: --dry-run, nothing written")
 		if o.provider == "" {
-			fmt.Fprintln(stderr, "reviewer: the real run asks which model access path to configure, "+
-				"or pass --provider to see that part of the plan too")
+			// Not "the real run asks": it asks only at a terminal, which is the other
+			// half of the same change. Promising a question that a scripted run will
+			// not ask is how someone ends up with no provider configured and no idea
+			// why.
+			fmt.Fprintln(stderr, "reviewer: no model access path is in this plan. "+
+				"Run init at a terminal to be asked, or pass --provider to choose one here")
 		}
 		return nil
 	}

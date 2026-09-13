@@ -100,6 +100,11 @@ func TestSkipListIsNarrow(t *testing.T) {
 	for _, path := range []string{
 		"plugins/typescript/node_modules/knip/package.json",
 		"tools/audithistory/main.go",
+		// This file. Its fixture table below is a worked example of every pattern
+		// the audit refuses, so an audit that reads it reports fourteen findings
+		// against itself — which is how the audit job failed on the pull request
+		// that added it.
+		"tools/audithistory/main_test.go",
 	} {
 		if !skipPath(path) {
 			t.Errorf("%s should be skipped", path)

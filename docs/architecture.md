@@ -100,7 +100,7 @@ never run with a token that can write (ADR-0018).
 
 ## This repository's own CI
 
-Six jobs, of which one matters to branch protection.
+Seven jobs, of which one matters to branch protection.
 
 - **test** — the full suite, over the two most recent Go releases × ubuntu and
   macos. It installs gitleaks, opengrep and osv-scanner via
@@ -111,6 +111,9 @@ Six jobs, of which one matters to branch protection.
 - **lint**, **adrs**, **plugin**, **secrets** — staticcheck and licence headers;
   the append-only ADR check and the dependency inventory; the plugin's own Node
   test suite; a full-history secret scan.
+- **provenance** — `tools/audithistory` over what a branch adds, and over the whole
+  history on `main`. Publishing a repository publishes its history, so this reads
+  git objects rather than the working tree.
 - **required** — a single job that fails unless every other job succeeded. It
   exists because the matrix's job names contain their parameters, so naming them
   individually in branch protection means editing it every time a Go release

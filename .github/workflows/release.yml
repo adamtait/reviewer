@@ -87,8 +87,16 @@ jobs:
         working-directory: plugins/typescript
       - run: make check
 
+  # After the plugin, never beside it.
+  #
+  # Both used to hang off `needs: test` and run in parallel, which has an
+  # asymmetric failure: if GoReleaser publishes and npm then fails, the release's
+  # binaries tell every repository they install into to fetch a plugin version
+  # that never reached npm — the exact failure in a stranger's repository that
+  # `verify` above exists to prevent. The other order is harmless: a plugin on npm
+  # with no binaries released is a version nobody can ask for yet.
   binaries:
-    needs: test
+    needs: [test, plugin]
     runs-on: ubuntu-latest
     permissions:
       contents: write # creating the GitHub Release

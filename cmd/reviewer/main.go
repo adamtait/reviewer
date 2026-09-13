@@ -25,8 +25,14 @@ const protocolVersion = plugin.Protocol
 // version is overwritten at release time by the linker.
 var version = "dev"
 
-// exitUsage is the one non-zero status this program may return.
-const exitUsage = 2
+// The two non-zero statuses this program may return. A review is neither: it exits
+// 0 whatever it finds (ADR-0009).
+const (
+	// exitUsage is a mistyped command line.
+	exitUsage = 2
+	// exitCheckFailed is a check command whose subject failed.
+	exitCheckFailed = 1
+)
 
 // stdin is what `init` reads a provider choice from. A package variable rather
 // than a parameter threaded through run: only one subcommand asks anything, and
@@ -39,6 +45,10 @@ func main() {
 		var usageErr errUsage
 		if errors.As(err, &usageErr) {
 			os.Exit(exitUsage)
+		}
+		var checkErr errCheckFailed
+		if errors.As(err, &checkErr) {
+			os.Exit(exitCheckFailed)
 		}
 		// Everything else is a failure to review, not a review that failed.
 		os.Exit(0)
@@ -53,6 +63,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 	if o.version {
 		_, err := fmt.Fprintf(stdout, "reviewer %s (plugin protocol %d)\n", version, protocolVersion)
 		return err
+	}
+	if o.subcommand == "rules test" {
+		return rulesTest(ctx, o, stdout, stderr)
 	}
 	if o.subcommand == "init" {
 		return initialize(o, stdin, stdout, stderr)

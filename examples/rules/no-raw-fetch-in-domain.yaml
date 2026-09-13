@@ -1,0 +1,23 @@
+# An example rule. Generic on purpose: the rules that encode a real codebase's
+# architecture belong in that repository's own .review/rules/, never here.
+#
+# The convention: the domain layer describes what the business does, and it cannot
+# do that and also know how to talk to a network. Injecting the client is what makes
+# the behaviour substitutable in a test.
+rules:
+  - id: no-raw-fetch-in-domain
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      The domain layer must not call fetch directly. Take a client as a parameter or
+      a constructor argument, so this behaviour can be substituted in a test.
+    metadata:
+      reviewer-rule-id: arch/no-raw-fetch-in-domain
+      category: architecture
+    paths:
+      include:
+        - "**/domain/**"
+    pattern-either:
+      - pattern: fetch(...)
+      - pattern: globalThis.fetch(...)
+      - pattern: window.fetch(...)

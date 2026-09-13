@@ -709,3 +709,99 @@ func TestInitRefusalsExitNonZero(t *testing.T) {
 		}
 	})
 }
+
+// `rules test` is a check with a right answer, not a review: it has to be usable in
+// a script, so its exit status has to distinguish a ready pack from one that is not.
+func TestRulesTest(t *testing.T) {
+	writeRuleFile := func(t *testing.T, dir, name, body string) {
+		t.Helper()
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("a pack with a missing negative case fails", func(t *testing.T) {
+		root := t.TempDir()
+		rules := filepath.Join(root, "rules")
+		writeRuleFile(t, rules, "one.yaml", "rules:\n  - id: one\n    message: m\n")
+		writeRuleFile(t, rules, "one.ts", "// ruleid: one\nconst a = 1;\n")
+
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
+		var checkErr errCheckFailed
+		if !errors.As(err, &checkErr) {
+			t.Fatalf("want a failed check, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "no `ok:` case") {
+			t.Errorf("want the missing half named, got:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("an absent engine is reported, never passed over", func(t *testing.T) {
+		root := t.TempDir()
+		rules := filepath.Join(root, "rules")
+		writeRuleFile(t, rules, "one.yaml", "rules:\n  - id: one\n    message: m\n")
+		writeRuleFile(t, rules, "one.ts", "// ruleid: one\nconst a = 1;\n// ok: one\nconst b = 2;\n")
+
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
+
+		if _, lookErr := exec.LookPath("opengrep"); lookErr != nil {
+			// Reporting success while never executing a pattern is the one outcome
+			// that would make this command worse than not having it.
+			var checkErr errCheckFailed
+			if !errors.As(err, &checkErr) {
+				t.Fatalf("want the absent engine to fail the check, got %v", err)
+			}
+			if !strings.Contains(stdout.String(), "the patterns were not executed") {
+				t.Errorf("want the skip stated plainly, got:\n%s", stdout.String())
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("with opengrep installed this pack should pass: %v", err)
+		}
+	})
+
+	t.Run("an empty directory is misuse, not a failed check", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "rules"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+	})
+
+	t.Run("the verb is required", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(), []string{"rules"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) || !strings.Contains(err.Error(), "needs a verb") {
+			t.Fatalf("want a usage error naming the verb, got %v", err)
+		}
+		err = run(context.Background(), []string{"rules", "lint"}, &stdout, &stderr, noEnv)
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want an unknown verb rejected, got %v", err)
+		}
+	})
+
+	t.Run("--rules belongs to this subcommand only", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(), []string{"--rules", "x"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+	})
+}

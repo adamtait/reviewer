@@ -84,3 +84,76 @@ measuring per rule rather than in aggregate.
 
 Do not write a rule for something a type would catch. `tsc` already runs, it is faster, and its
 message is better.
+
+## Testing a rule
+
+Every rule ships with the file that proves it works:
+
+```
+.review/rules/
+  no-console-in-lib.yaml     the rule
+  no-console-in-lib.ts       the cases
+```
+
+The test file is named after the rule file and annotated on the line before each match:
+
+```ts
+export function retry(attempt: number): void {
+  // ruleid: no-console-in-lib
+  console.log(`retrying, attempt ${attempt}`);
+}
+
+export function retryProperly(log: Logger, attempt: number): void {
+  // ok: no-console-in-lib
+  log.info(`retrying, attempt ${attempt}`);
+}
+```
+
+Then:
+
+```
+$ reviewer rules test
+3 rules, 7 annotated cases in .review/rules
+  passed   every pattern behaved as its cases say
+ok
+```
+
+**Both halves are required.** A rule with only a `ruleid:` case is a rule nobody has checked for
+false positives, and one false positive is enough for a team to start ignoring the whole pack. That
+requirement is this tool's, not Opengrep's, and `rules test` enforces it:
+
+```
+$ reviewer rules test
+1 rule, 1 annotated case in .review/rules
+  untested no-console-in-lib (no-console-in-lib.ts): no `ok:` case, so nothing proves it does not over-match
+```
+
+`rules test` exits **1** when the pack is not ready and **2** when the command itself was misused.
+A review exits 0 whatever it finds (ADR-0009), but this is a check with a right answer, meant to run
+in a script.
+
+### What it checks itself, and what it delegates
+
+Loading, duplicate ids, and the both-halves rule are checked here. Whether a pattern actually matches
+is Opengrep's judgement, and `rules test` hands the pack to `opengrep scan --test` rather than
+reimplementing it — two engines disagreeing about the same rule would be worse than either.
+
+Duplicate ids are checked here for a specific reason: Opengrep refuses the whole run on one, so a
+single collision hides every other rule's result, and the message does not say which two files
+collided. Here, the first declaration keeps working and the report names both files.
+
+**If Opengrep is not installed, `rules test` fails rather than passing.** A command that reported
+success while never executing a pattern would be worse than not having the command.
+
+## The examples
+
+`examples/rules/` in this repository holds three, deliberately generic:
+
+| Rule | Reported as | Says |
+|---|---|---|
+| `no-raw-fetch-in-domain` | `arch/no-raw-fetch-in-domain` | the domain layer takes a client, it does not call `fetch` |
+| `no-console-in-lib` | `conventions/no-console-in-lib` | library code does not choose how its caller reports things |
+| `no-default-export-in-api` | `conventions/no-default-export-in-api` | a default export is unsearchable and un-renameable |
+
+Copy one into `.review/rules/`, change the paths, and run `reviewer rules test`. They are examples,
+not defaults: nothing here is enabled in a repository that has not asked for it.

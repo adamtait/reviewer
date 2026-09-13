@@ -48,6 +48,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go run ./tools/checkadrs -base origin/${{ github.base_ref || 'main' }}
+      - run: make licenses
 
   secrets:
     runs-on: ubuntu-latest

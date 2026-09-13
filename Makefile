@@ -10,9 +10,9 @@ SHELL := /bin/sh
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
                   -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**'
 
-.PHONY: check build vet fmt-check test staticcheck license-check adrs tools hooks secrets
+.PHONY: check build vet fmt-check test staticcheck license-check adrs licenses tools hooks secrets
 
-check: build vet fmt-check test staticcheck license-check adrs
+check: build vet fmt-check test staticcheck license-check adrs licenses
 
 build:
 	go build ./...
@@ -35,6 +35,9 @@ license-check:
 
 adrs:
 	go run ./tools/checkadrs
+
+licenses:
+	go run ./tools/checklicenses
 
 # Install the developer tools CI pins. Versions here must match .github/workflows/ci.yml.
 tools:

@@ -25,5 +25,6 @@ precede any code land in PR-00.
 | [0008](0008-cli-not-service.md) | Ship a CLI binary, not a service | Accepted | PR-07 |
 | [0009](0009-never-block-a-pull-request.md) | Never block a pull request | Accepted | PR-07 |
 | [0010](0010-keep-internal-data-out-of-history.md) | Keep secrets and internal data out of this repository's history | Accepted | PR-08 |
+| [0011](0011-opengrep-as-separate-process.md) | Invoke Opengrep only as a separate process | Accepted | PR-09 |
 | [0025](0025-ndjson-over-stdio.md) | Speak newline-delimited JSON over stdio | Accepted | PR-04 |
 | [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |

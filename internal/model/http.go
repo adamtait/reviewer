@@ -75,6 +75,10 @@ func newHTTP(cfg config.Config, secrets config.Secrets) (Provider, error) {
 	switch cfg.LaneB.Provider {
 	case "openai", "openai-compatible":
 		s = openAIShape{}
+	case "anthropic":
+		s = anthropicShape{}
+	case "gemini":
+		s = geminiShape{}
 	default:
 		return nil, Unavailable("no HTTP adapter for %q", cfg.LaneB.Provider)
 	}

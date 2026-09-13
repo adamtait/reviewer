@@ -48,9 +48,24 @@ func TestTypeScriptPluginHandshake(t *testing.T) {
 	if w := m.Warnings(); len(w) != 0 {
 		t.Fatalf("the handshake must be clean, got %v\nplugin log:\n%s", w, log.String())
 	}
-	// The scaffold provides no analyzers yet; the point is that the conversation
-	// completed across the language boundary.
-	if got := m.Analyzers(); len(got) != 0 {
-		t.Fatalf("want no analyzers from the scaffold, got %+v", got)
+	// The point is that a descriptor crossed the language boundary intact: the
+	// lane, order and availability the TypeScript side declared are what the Go
+	// side registered.
+	got := m.Analyzers()
+	if len(got) == 0 {
+		t.Fatalf("want the plugin's analyzers registered, got none\nplugin log:\n%s", log.String())
+	}
+	byID := map[string]bool{}
+	for _, a := range got {
+		byID[a.ID] = true
+		if a.Lane != "deterministic" && a.Lane != "llm" {
+			t.Fatalf("analyzer %s crossed the boundary with lane %q", a.ID, a.Lane)
+		}
+		if a.PluginID != "typescript" {
+			t.Fatalf("want the plugin id attributed, got %q", a.PluginID)
+		}
+	}
+	if !byID["tsc"] {
+		t.Fatalf("want the tsc analyzer registered, got %+v", got)
 	}
 }

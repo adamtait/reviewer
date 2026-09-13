@@ -94,3 +94,30 @@ Fixed by making the inventory section-aware — Go modules, npm packages, extern
 development tools are parsed and reconciled separately. That also improved ADR-0011's enforcement:
 the copyleft exemption for spawned binaries is now a property of which *section* a row is in, rather
 than a hardcoded list of names that a fourth external binary would have silently missed.
+
+## PR-13a — the shared TypeScript program
+
+**`buildCount()` exists so the central claim is a test, not an assertion in a document.** The whole
+Go-core decision rests on three analyzers costing one compiler pass; `program.test.ts` asserts exactly
+that. Without a counter the claim would be unfalsifiable.
+
+**The compiler comes from the repository under review, not from the plugin.** `createRequire` against
+the repository root resolves its `typescript`, so findings match what the author's own build and editor
+report. The fallback to the plugin's own copy is a code path that warns loudly, because a review the
+author cannot reproduce locally is worse than no review.
+
+**Diagnostics are cached alongside the program.** `getPreEmitDiagnostics` is the expensive half of a
+type-check and three analyzers want the same answer, so caching the program without caching its
+diagnostics would have left most of the cost on the table.
+
+**A test-glob bug found while adding the second test file.** `node --test dist/**/*.test.js` relies on
+shell globstar, which `/bin/sh` does not enable, so the nested analyzer tests were silently not running
+— 5 of 20. Quoting the pattern makes Node do its own globbing. Worth recording because the symptom was
+a *passing* suite: the tests existed, were compiled, and were never executed.
+
+**A racy error message, fixed in the code rather than the test.** `TestFaultContainment/exits_without_a_word`
+became flaky once the suite grew: a plugin that exits instantly makes the host's `hello` write fail with
+EPIPE, and the race between our write and its exit decides whether the reported fault is "plugin closed
+its stream" or `write |1: broken pipe`. Both describe the same thing; only one is useful to someone
+reading a run log. The host now checks whether the process has already exited and reports that instead
+of leaking an errno. Loosening the assertion would have kept a bad message.

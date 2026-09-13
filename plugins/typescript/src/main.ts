@@ -2,13 +2,14 @@
 
 /** Entry point. Registers the analyzers this plugin provides and serves them. */
 
+import { tscAnalyzer } from "./analyzers/tsc.js";
 import { protectStdout, serve, type Analyzer } from "./serve.js";
 
 const analyzers: Analyzer[] = [
-  // Analyzers land in PR-13a (tsc), PR-14 (typescript-eslint), PR-15
-  // (dependency-cruiser), PR-29 (knip), PR-31 (type-coverage) and PR-32
-  // (changed tests). The scaffold ships with none so the protocol can be proven
-  // across the language boundary before six analyzers depend on it.
+  tscAnalyzer,
+  // typescript-eslint lands in PR-14, dependency-cruiser in PR-15, Knip in
+  // PR-29, type-coverage in PR-31 and the changed-tests runner in PR-32. Each
+  // reuses the program tscAnalyzer already built.
 ];
 
 protectStdout();

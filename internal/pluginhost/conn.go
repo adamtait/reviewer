@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/adamtait/reviewer/pkg/finding"
@@ -66,6 +67,16 @@ func (c *conn) closeFiles() {
 			}
 		}
 	})
+}
+
+// hasExited reports whether the plugin process is already gone.
+func (c *conn) hasExited() bool {
+	select {
+	case <-c.exited:
+		return true
+	default:
+		return false
+	}
 }
 
 // abort stops a plugin that has stopped answering. A child process gets its
@@ -132,6 +143,12 @@ func (c *conn) handshake(ctx context.Context, hostID string, deadline time.Durat
 		Protocol: plugin.Protocol,
 		Host:     hostID,
 	}); err != nil {
+		// A plugin that exits immediately makes this write fail with EPIPE, and
+		// the race between our write and its exit decides which error surfaces.
+		// Both describe the same fault, so report the useful one.
+		if c.hasExited() || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.ErrClosedPipe) {
+			return errStreamClosed
+		}
 		return fmt.Errorf("sending hello: %w", err)
 	}
 

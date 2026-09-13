@@ -31,6 +31,7 @@ type options struct {
 	force      bool
 	provider   string
 	rulesDir   string
+	write      bool
 	yes        bool
 	version    bool
 }
@@ -51,6 +52,7 @@ flags:
                     with init, print the plan and write nothing
   --force           with init, replace files that already exist
   --rules DIR       with rules test, the rule directory (default: .review/rules)
+  --write           with baseline, record the measurement
   --provider NAME   with init, configure this model access path. One of
                     openai-compatible, openai, gemini, anthropic, claude-code, codex
   --yes             with init, do not prompt; leave the model lane unconfigured
@@ -60,6 +62,9 @@ flags:
   --version         print the version and exit
 
 subcommands:
+  baseline --write  record the type-coverage ratchet's mark, which future runs
+                    compare against
+
   rules test        check this repository's rule pack: that it loads, that no two
                     rules share an id, that every rule has a matching and a
                     non-matching case, and that the patterns agree with them
@@ -80,7 +85,9 @@ A usage error exits 2.
 // subcommands are recognised before flag parsing, because Go's flag package stops
 // at the first positional argument — so `reviewer watch --dry-run` would leave
 // --dry-run unparsed and report it as a stray argument.
-var subcommands = map[string]bool{"init": true, "watch": true, "version": true, "rules": true}
+var subcommands = map[string]bool{
+	"init": true, "watch": true, "version": true, "rules": true, "baseline": true,
+}
 
 // twoWordSubcommands take a second bare word. Recognised before flag parsing for
 // the same reason as the first: Go's flag package stops at the first positional
@@ -126,6 +133,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.force, "force", false, "")
 	fs.StringVar(&o.provider, "provider", "", "")
 	fs.StringVar(&o.rulesDir, "rules", "", "")
+	fs.BoolVar(&o.write, "write", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
@@ -161,6 +169,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("--provider applies to init; a review reads the provider from config")}
 	case o.rulesDir != "" && o.subcommand != "rules test":
 		return options{}, errUsage{fmt.Errorf("--rules applies to `rules test`; a review reads the rule directory from config")}
+	case o.write && o.subcommand != "baseline":
+		return options{}, errUsage{fmt.Errorf("--write applies to baseline; a review never writes to the repository")}
 	case o.yes && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--yes applies to init, which is the only subcommand that asks anything")}
 	}

@@ -827,3 +827,39 @@ func TestRulesTest(t *testing.T) {
 		}
 	})
 }
+
+func TestBaselineNeedsWrite(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"baseline"}, &stdout, &stderr, noEnv)
+	var usageErr errUsage
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+}
+
+// The analyzer that owns the measurement lives in the TypeScript plugin, so a
+// repository without it gets a failed check naming what is missing, not a crash
+// and not a silent success.
+func TestBaselineWithoutTheAnalyzer(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"baseline", "--write", "--root", repo.Root}, &stdout, &stderr, noEnv)
+	var checkErr errCheckFailed
+	if !errors.As(err, &checkErr) {
+		t.Fatalf("want a failed check, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "type-coverage") {
+		t.Errorf("want the missing analyzer named, got %v", err)
+	}
+}
+
+func TestWriteBelongsToBaselineOnly(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"--write"}, &stdout, &stderr, noEnv)
+	var usageErr errUsage
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("a review never writes to the repository; want a usage error, got %v", err)
+	}
+}

@@ -64,6 +64,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		_, err := fmt.Fprintf(stdout, "reviewer %s (plugin protocol %d)\n", version, protocolVersion)
 		return err
 	}
+	if o.subcommand == "baseline" {
+		return baseline(ctx, o, stdout, stderr, getenv)
+	}
 	if o.subcommand == "rules test" {
 		return rulesTest(ctx, o, stdout, stderr)
 	}

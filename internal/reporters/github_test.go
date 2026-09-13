@@ -390,3 +390,119 @@ func TestMultiLineMessagesCannotBreakTheSummaryMarkup(t *testing.T) {
 		}
 	}
 }
+
+// Resolving a thread is the only action this tool takes on a conversation, so it
+// is opt-in and fenced by three conditions. Each is a separate case here because
+// each protects a different mistake.
+func TestResolveStaleThreads(t *testing.T) {
+	ours := func(fp string) ghclient.ReviewThread {
+		return ghclient.ReviewThread{
+			ID: "thread-" + fp,
+			Comments: []ghclient.ReviewComment{{
+				Body: "a finding\n" + fingerprint.Marker(fp),
+				User: ghclient.User{Login: "reviewer[bot]"},
+			}},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		threads     []ghclient.ReviewThread
+		current     []finding.Finding
+		wantResolve []string
+	}{
+		{
+			name:        "a finding that is no longer reported is resolved",
+			threads:     []ghclient.ReviewThread{ours("f00d11")},
+			wantResolve: []string{"thread-f00d11"},
+		},
+		{
+			name:    "a finding still reported is left open",
+			threads: []ghclient.ReviewThread{ours("aaa111")},
+			current: []finding.Finding{high("aaa111", "a.ts", 3)},
+		},
+		{
+			name: "a human's thread is never touched",
+			threads: []ghclient.ReviewThread{{
+				ID:       "human",
+				Comments: []ghclient.ReviewComment{{Body: "I think this is fine", User: ghclient.User{Login: "alice"}}},
+			}},
+		},
+		{
+			// Marked as ours but written by someone else: a quoted comment, or a
+			// human who copied the body.
+			name: "our marker in someone else's comment is not ours",
+			threads: []ghclient.ReviewThread{{
+				ID: "quoted",
+				Comments: []ghclient.ReviewComment{{
+					Body: "quoting the bot: " + fingerprint.Marker("f00d11"),
+					User: ghclient.User{Login: "alice"},
+				}},
+			}},
+		},
+		{
+			name: "an already-resolved thread is left alone",
+			threads: []ghclient.ReviewThread{func() ghclient.ReviewThread {
+				t := ours("f00d11")
+				t.IsResolved = true
+				return t
+			}()},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeGitHub{threads: tc.threads}
+			var out bytes.Buffer
+			r := reporter(f, &out)
+			r.ResolveStale = true
+			if err := r.Report(context.Background(), Run{Findings: tc.current}); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(f.resolved, ",") != strings.Join(tc.wantResolve, ",") {
+				t.Fatalf("want resolved %v, got %v", tc.wantResolve, f.resolved)
+			}
+		})
+	}
+}
+
+// Off by default: the blast radius of resolving someone's thread wrongly is not
+// something to opt people into.
+func TestResolutionIsOffByDefault(t *testing.T) {
+	f := &fakeGitHub{threads: []ghclient.ReviewThread{{
+		ID: "t1",
+		Comments: []ghclient.ReviewComment{{
+			Body: "old finding\n" + fingerprint.Marker("f00d11"),
+			User: ghclient.User{Login: "reviewer[bot]"},
+		}},
+	}}}
+	var out bytes.Buffer
+	if err := reporter(f, &out).Report(context.Background(), Run{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.resolved) != 0 {
+		t.Fatalf("want nothing resolved without the flag, got %v", f.resolved)
+	}
+}
+
+func TestDryRunResolvesNothing(t *testing.T) {
+	f := &fakeGitHub{threads: []ghclient.ReviewThread{{
+		ID: "t1",
+		Comments: []ghclient.ReviewComment{{
+			Body: "old finding\n" + fingerprint.Marker("f00d11"),
+			User: ghclient.User{Login: "reviewer[bot]"},
+		}},
+	}}}
+	var out bytes.Buffer
+	r := reporter(f, &out)
+	r.ResolveStale, r.DryRun = true, true
+	if err := r.Report(context.Background(), Run{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.resolved) != 0 {
+		t.Fatal("a dry run must resolve nothing")
+	}
+	if !strings.Contains(out.String(), "would resolve 1 stale thread") {
+		t.Fatalf("want the intent reported, got %q", out.String())
+	}
+}

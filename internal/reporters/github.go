@@ -34,6 +34,10 @@ type GitHub struct {
 	// DryRun prints what would be posted and posts nothing. The default for any
 	// invocation a human is watching.
 	DryRun bool
+	// ResolveStale closes threads whose finding is no longer reported. Opt-in:
+	// resolving a thread is the only action this tool takes on a human's
+	// conversation (ADR-0020).
+	ResolveStale bool
 	// Out receives the dry-run payload and the posting summary.
 	Out io.Writer
 	// Log receives warnings and skips, which have no place in a pull request.
@@ -105,12 +109,27 @@ func (g GitHub) Report(ctx context.Context, run Run) error {
 		fmt.Fprintf(out, "would upsert the summary comment:\n%s\n", summaryBody)
 	}
 
+	var resolvedNote string
+	if g.ResolveStale {
+		resolved, err := g.resolveStale(ctx, currentFingerprints(run))
+		if err != nil {
+			fmt.Fprintf(logOr(g.Log, out), "warning: %v\n", err)
+		}
+		if resolved > 0 {
+			word := "resolved"
+			if g.DryRun {
+				word = "would resolve"
+			}
+			resolvedNote = fmt.Sprintf(", %s %d stale thread%s", word, resolved, plural(resolved))
+		}
+	}
+
 	verb := "posted"
 	if g.DryRun {
 		verb = "would post"
 	}
-	fmt.Fprintf(out, "%d finding%s, %s %d inline, %d deduped, %d in the summary (%s)\n",
-		len(run.Findings), plural(len(run.Findings)), verb, posted, deduped, len(deferred), summaryAction)
+	fmt.Fprintf(out, "%d finding%s, %s %d inline, %d deduped, %d in the summary (%s)%s\n",
+		len(run.Findings), plural(len(run.Findings)), verb, posted, deduped, len(deferred), summaryAction, resolvedNote)
 	return nil
 }
 

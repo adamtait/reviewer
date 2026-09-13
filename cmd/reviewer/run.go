@@ -184,7 +184,9 @@ func githubReporter(ctx context.Context, o options, cfg config.Config, secrets c
 	}
 	return reporters.GitHub{
 		Client: client, Writer: client, Repo: repo, Number: o.pr,
-		HeadSHA: pr.Head.SHA, DryRun: o.dryRun, Out: out, Log: log,
+		HeadSHA: pr.Head.SHA, DryRun: o.dryRun,
+		ResolveStale: cfg.GitHub.ResolveStaleThreads,
+		Out:          out, Log: log,
 	}, nil
 }
 

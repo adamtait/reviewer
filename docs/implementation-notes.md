@@ -76,3 +76,19 @@ wondering whether the tool ran at all.
 
 **Messages are flattened to one line.** A multi-line analyzer message would otherwise break out of its
 markdown list item and mangle the block; there is a test for it.
+
+## PR-20 — stale thread resolution
+
+**Three conditions, each guarding a different mistake.** A thread is resolved only if it carries one of
+our fingerprint markers, *and* its first comment was written by the token's own identity, *and* it is not
+already resolved. The second condition is the non-obvious one: a human who quotes the bot's comment
+inherits its marker, and resolving their thread would be the tool silently closing someone else's
+conversation. Each condition has its own test case.
+
+**It fails loudly if it cannot identify itself.** Without knowing which account the token belongs to,
+there is no way to tell our threads from a human's, and resolving the wrong one is not something the tool
+can undo. That path returns an error rather than guessing.
+
+**A test-data bug worth recording:** my first version of these tests used `gone111` as a fingerprint, and
+they failed. Fingerprints are hex, and `g`, `o` and `n` are not — the marker regex correctly refused it.
+The code was right and the fixture was wrong, which is the better way round.

@@ -42,6 +42,7 @@ here and what it costs.
 | `eslint` | 9.39.5 | MIT | The engine for the typescript-eslint analyzer, and the fallback copy for tests. |
 | `typescript-eslint` | 8.70.0 | MIT | Type-aware lint rules. |
 | `dependency-cruiser` | 16.10.4 | MIT | Architectural boundary analysis. |
+| `knip` | 6.35.1 | ISC | Dead-code analysis, and the copy the plugin's own tests run against. Resolved from the repository under review at run time, like every other engine (ADR-0014). |
 
 ## External binaries
 

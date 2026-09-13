@@ -4,6 +4,7 @@
 
 import { depCruiserAnalyzer } from "./analyzers/depcruiser.js";
 import { eslintAnalyzer } from "./analyzers/eslint.js";
+import { knipAnalyzer } from "./analyzers/knip.js";
 import { tscAnalyzer } from "./analyzers/tsc.js";
 import { protectStdout, serve, type Analyzer } from "./serve.js";
 
@@ -11,8 +12,8 @@ const analyzers: Analyzer[] = [
   tscAnalyzer,
   eslintAnalyzer,
   depCruiserAnalyzer,
-  // Knip lands in PR-29, type-coverage in PR-31 and the changed-tests runner in
-  // PR-32.
+  knipAnalyzer,
+  // Type-coverage lands in PR-31 and the changed-tests runner in PR-32.
 ];
 
 protectStdout();

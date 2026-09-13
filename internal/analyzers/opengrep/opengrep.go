@@ -171,19 +171,22 @@ func Analyze(ctx context.Context, req plugin.AnalyzeRequest, binary, rulesDir st
 // only a parseable report can. This is the same lesson the secrets scanner
 // taught, learned there against the real binary.
 //
-// The JSON shape and the flag names here are Semgrep's, which Opengrep forked, and
-// are NOT verified against the real binary in this environment. A wrong flag makes
-// the command fail, which surfaces as a warning naming the flag — diagnosable, and
-// the reason stderr's first line is carried into the error.
+// The flag names are verified against opengrep 1.9.0. They started as Semgrep's,
+// which Opengrep forked, and one of them did not survive the fork: `--metrics=off`
+// is rejected outright, so the analyzer failed on every run against a real binary
+// while every test passed against a fake one.
 func scan(ctx context.Context, binary, root, rulesDir string, targets []string) (output, []string, error) {
 	args := []string{
 		"scan",
 		"--json",
 		"--quiet",
-		// The deterministic lane makes no network egress. If this flag is ever
-		// rejected the analyzer fails loudly rather than sending anything.
-		"--metrics=off",
+		// The rules are a local directory. `--config auto` would fetch a rule pack
+		// over the network and hand a fork's pull request a say in what scans it.
 		"--config", rulesDir,
+		// The deterministic lane makes no network egress, and this is the whole of
+		// what that requires here: Opengrep dropped Semgrep's telemetry in the fork,
+		// so there is no metrics flag to turn off — `--metrics=off` is rejected —
+		// and the version check is the only call that would leave the machine.
 		"--disable-version-check",
 		// End of options. A repository can track a file whose name begins with a
 		// dash — git allows it and the diff parser passes it through verbatim — and

@@ -84,3 +84,102 @@ and got its finding in the report.
 `npm install --save-dev @adamtait/reviewer-plugin-typescript`, because neither is published
 yet — that is PR-45. The walkthrough substituted a local build and a local plugin path. The
 install instructions are the one part of the README a stranger cannot yet follow.
+
+## PR-44 — Harden public CI
+
+### The finding that shaped the rest
+
+`TestTheModelLaneIsNotInvokedWhenTheDiffCarriesACredential` — the test asserting that no
+diff reaches a model provider once a credential is found, which is the security property
+this design is arranged around — **had never run in CI**. It skips when gitleaks is absent,
+CI installed no gitleaks, and the job was green. Two other tests were in the same position.
+
+A skipped test and a passing test are the same colour. So CI now sets
+`REVIEWER_REQUIRE_TOOLS`, and `testfixture.RequireTool` turns a missing binary into a
+failure there while still skipping for a contributor who has not installed three
+third-party binaries. If the install step ever breaks, the suite fails rather than quietly
+covering less.
+
+### Pinning
+
+`.github/scripts/install-tools.sh` installs gitleaks 8.28.0, opengrep 1.9.0 and osv-scanner
+2.2.3 by URL and SHA-256, per platform, and `make tools` runs the same script — so "green
+locally" and "green in CI" mean the same thing. gitleaks publishes a checksums file;
+opengrep and osv-scanner publish bare binaries, so those hashes were computed from the
+downloaded artifacts and recorded. A mismatch exits 1 and installs nothing: a substituted
+secrets scanner is not a degraded review, it is a false clean.
+
+Verified by running it into an empty directory on a PATH with none of the three present,
+and by pinning a version whose checksum does not match — which refused, installed nothing,
+and exited 1.
+
+### opengrep turned out to be installable, and had never worked
+
+M4's PR description recorded that opengrep could not be installed in this environment and
+so the analyzer was unverified against the real binary. That was wrong: it installs fine.
+Running it immediately produced the defect the earlier note had been standing in for.
+
+**`opengrep scan` rejects `--metrics=off`.** Opengrep dropped Semgrep's telemetry in the
+fork, so the flag does not exist, and the analyzer failed on *every* run against a real
+binary — surfacing as a warning, fail-open per ADR-0013, which is why it was survivable
+enough to go unnoticed. Every test passed, against a fake binary that accepts any flag.
+The same invocation appears a second time in `rules test`, with the same flag and the same
+result. Both fixed; `--disable-version-check` covers the network-egress concern that
+`--metrics=off` was there for.
+
+Verified end to end: the analyzer now produces `conventions/no-console-in-lib` on the right
+line of a real file, using the example rule, through the real binary. That closes the gap
+M4 stated.
+
+A second, smaller one: opengrep's `--test` reporter writes `✖`, and its Python layer
+encodes stdout using the locale, so on a non-UTF-8 runner it died inside its own reporting
+with an encoding traceback instead of naming the failing rule. `PYTHONIOENCODING=utf-8` is
+locale-independent, which `LC_ALL` is not — `C.UTF-8` exists on Linux and not on macOS.
+
+### Two tests that only ever tested one branch
+
+`TestRulesTest/an absent engine is reported, never passed over` branched on whether
+opengrep happened to be on the machine's PATH. So the assertion that matters — a rule pack
+is never reported ready when no pattern ran — was tested only on machines *without*
+opengrep, and the engine path only on machines with it, and in CI neither ran. The absent
+engine is now configured rather than waited for, and the engine path is its own subtest, so
+both run everywhere.
+
+Its rule fixture was `id` and `message` and nothing else: no pattern, no language. The
+engine accepts that and runs zero tests against it, so the "installed" branch was asserting
+that opengrep exits 0 on a pack that tests nothing — the exact outcome the subtest is named
+for. Replaced with a real pattern and cases that exercise it, then confirmed by hand that a
+pack whose cases do not hold fails.
+
+### CI shape
+
+Matrix over Go 1.24 (the go.mod floor) and 1.25 × ubuntu and macos, `fail-fast: false`; a
+Node leg; caches for Go modules, npm and the pinned binaries, keyed on the install script so
+a changed pin cannot be served from a stale cache; `concurrency` cancelling superseded
+pull-request runs.
+
+One `required` job aggregates the rest, because the matrix's job names contain their
+parameters — naming them individually in branch protection means editing it whenever a Go
+release lands, and a required check matching no job blocks every pull request. It checks
+each result equals `success` rather than using `!failure()`, which a cancelled or skipped
+dependency would satisfy.
+
+### docs/architecture.md did not exist
+
+Four earlier PRs list it in their "touches" and the plan puts it in the repository layout,
+but it was never written. Written now: the two passes and why the gate is structural rather
+than conditional, the plugin boundary, the diff filter and the five analyzers it has caught,
+presentation versus severity, fingerprints, the two CI surfaces, and this repository's own
+CI.
+
+### Verification
+
+Simulated a clean runner — a PATH with none of the three binaries — ran the install script,
+and ran the full suite with `REVIEWER_REQUIRE_TOOLS=1`: green, with the three previously
+skipping tests actually executing. Confirmed the guard fails when a tool is absent and the
+variable is set, and still skips when it is not.
+
+**Not verified:** the workflow has not run on GitHub — no macOS leg, no Go 1.25 leg, and no
+cache behaviour has been exercised. The install script is verified on linux-x86_64 only;
+the darwin and linux-arm64 checksums are recorded from the published artifacts but nothing
+has run them.

@@ -126,6 +126,7 @@ See [docs/plugin-protocol.md](docs/plugin-protocol.md).
 
 ## Documentation
 
+- [How it fits together](docs/architecture.md)
 - [Writing convention rules](docs/writing-rules.md)
 - [Model access paths](docs/providers.md)
 - [The plugin protocol](docs/plugin-protocol.md)

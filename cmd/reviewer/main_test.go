@@ -92,9 +92,7 @@ func TestVersionPrintsTheProtocol(t *testing.T) {
 // which is the difference between a tool that needs setting up and one that is
 // useful the moment it is installed.
 func TestReviewWithNoConfigurationStillRunsTheBuiltins(t *testing.T) {
-	if _, err := exec.LookPath("gitleaks"); err != nil {
-		t.Skip("gitleaks is not installed; the built-in analyzer reports itself unavailable")
-	}
+	testfixture.RequireTool(t, "gitleaks")
 	repo := testfixture.Build(t, "tiny-ts-repo")
 
 	var stdout, stderr bytes.Buffer
@@ -374,9 +372,7 @@ func TestFlagOverridesConfigSkip(t *testing.T) {
 // credential. The spy records every invocation to a file, so the assertion is
 // about what actually crossed the process boundary rather than about a flag.
 func TestTheModelLaneIsNotInvokedWhenTheDiffCarriesACredential(t *testing.T) {
-	if _, err := exec.LookPath("gitleaks"); err != nil {
-		t.Skip("gitleaks is not installed; the gate would fail closed for a different reason")
-	}
+	testfixture.RequireTool(t, "gitleaks")
 
 	spyPlugin := func(t *testing.T, log string) string {
 		t.Helper()
@@ -822,27 +818,64 @@ func TestRulesTest(t *testing.T) {
 	t.Run("an absent engine is reported, never passed over", func(t *testing.T) {
 		root := t.TempDir()
 		rules := filepath.Join(root, "rules")
-		writeRuleFile(t, rules, "one.yaml", "rules:\n  - id: one\n    message: m\n")
-		writeRuleFile(t, rules, "one.ts", "// ruleid: one\nconst a = 1;\n// ok: one\nconst b = 2;\n")
+		// A real rule with a real pattern, and cases that genuinely exercise it.
+		//
+		// It used to be `id` and `message` and nothing else — no pattern, no
+		// language — which the engine accepts and runs zero tests against. That
+		// made the installed-engine branch assert only that opengrep exits 0 on a
+		// pack that tests nothing, which is precisely the "reported success while
+		// never executing a pattern" outcome this subtest is named for.
+		writeRuleFile(t, rules, "one.yaml",
+			"rules:\n  - id: one\n    languages: [typescript]\n    severity: WARNING\n"+
+				"    message: no console\n    pattern: console.log(...)\n")
+		writeRuleFile(t, rules, "one.ts",
+			"// ruleid: one\nconsole.log(\"x\");\n// ok: one\nconst b = 2;\n")
+
+		// The absent engine is configured, not waited for. Branching on whether
+		// opengrep happens to be on this machine's PATH meant the assertion that
+		// matters most here — that a pack is never reported ready when no pattern
+		// ran — was tested only on machines without opengrep, and the other branch
+		// only on machines with it. Neither was tested anywhere in CI, because CI
+		// installed opengrep and the tests skipped.
+		writeRuleFile(t, root, ".review/config.yaml",
+			"tools:\n  opengrep:\n    path: definitely-not-installed-xyz\n")
 
 		var stdout, stderr bytes.Buffer
 		err := run(context.Background(),
 			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
 
-		if _, lookErr := exec.LookPath("opengrep"); lookErr != nil {
-			// Reporting success while never executing a pattern is the one outcome
-			// that would make this command worse than not having it.
-			var checkErr errCheckFailed
-			if !errors.As(err, &checkErr) {
-				t.Fatalf("want the absent engine to fail the check, got %v", err)
-			}
-			if !strings.Contains(stdout.String(), "the patterns were not executed") {
-				t.Errorf("want the skip stated plainly, got:\n%s", stdout.String())
-			}
-			return
+		// Reporting success while never executing a pattern is the one outcome
+		// that would make this command worse than not having it.
+		var checkErr errCheckFailed
+		if !errors.As(err, &checkErr) {
+			t.Fatalf("want the absent engine to fail the check, got %v", err)
 		}
-		if err != nil {
-			t.Fatalf("with opengrep installed this pack should pass: %v", err)
+		if !strings.Contains(stdout.String(), "the patterns were not executed") {
+			t.Errorf("want the skip stated plainly, got:\n%s", stdout.String())
+		}
+	})
+
+	// The other half, against the engine itself. Separated so that both halves run
+	// on every machine that has the tools, rather than one half per machine.
+	t.Run("a pack whose cases hold passes against the real engine", func(t *testing.T) {
+		testfixture.RequireTool(t, "opengrep")
+
+		root := t.TempDir()
+		rules := filepath.Join(root, "rules")
+		writeRuleFile(t, rules, "one.yaml",
+			"rules:\n  - id: one\n    languages: [typescript]\n    severity: WARNING\n"+
+				"    message: no console\n    pattern: console.log(...)\n")
+		writeRuleFile(t, rules, "one.ts",
+			"// ruleid: one\nconsole.log(\"x\");\n// ok: one\nconst b = 2;\n")
+
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"},
+			&stdout, &stderr, noEnv); err != nil {
+			t.Fatalf("this pack's cases hold, so the check should pass: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "passed") {
+			t.Errorf("want the pass stated, got:\n%s", stdout.String())
 		}
 	})
 

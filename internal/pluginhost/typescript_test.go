@@ -5,8 +5,8 @@ package pluginhost_test
 import (
 	"bytes"
 	"context"
+	"github.com/adamtait/reviewer/internal/testfixture"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,16 +19,23 @@ import (
 // The two sides mirror one protocol by hand, so this is the test that catches a
 // drift between them — and it is the whole reason a Go core is affordable here.
 func TestTypeScriptPluginHandshake(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
+	// CI installs Node at a pinned major and builds the plugin before running the
+	// suite, so neither of this test's two escape hatches may be taken there. They
+	// are conveniences for a contributor without a Node toolchain, and a
+	// convenience that also silences the one test covering protocol drift between
+	// the Go host and the TypeScript plugin is not one.
+	node := testfixture.RequireTool(t, "node")
 	root, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry := filepath.Join(root, "..", "..", "plugins", "typescript", "dist", "main.js")
 	if _, err := os.Stat(entry); err != nil {
+		if os.Getenv(testfixture.RequireToolsVar) != "" {
+			t.Fatalf("the TypeScript plugin is not built at %s, but %s is set: CI builds it "+
+				"before running the suite, so this is a broken build step rather than a "+
+				"missing toolchain.", entry, testfixture.RequireToolsVar)
+		}
 		t.Skip("the TypeScript plugin is not built; run `npm --prefix plugins/typescript run build`")
 	}
 

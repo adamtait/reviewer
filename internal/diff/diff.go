@@ -72,6 +72,26 @@ func Changed(ctx context.Context, root, base string) ([]File, error) {
 	return parse(out)
 }
 
+// Unified returns the diff itself, with context, for the model lane.
+//
+// The line-range parser works from `--unified=0` because zero context is what
+// makes "which lines changed" unambiguous. A model needs the opposite: without
+// surrounding lines it cannot tell what the change is part of. So this is a second
+// invocation rather than a reinterpretation of the first — two questions, two
+// answers, neither derived from the other.
+func Unified(ctx context.Context, root, base string, contextLines int) (string, error) {
+	if contextLines < 0 {
+		contextLines = 0
+	}
+	args := []string{"diff", "--no-color", "--find-renames", fmt.Sprintf("--unified=%d", contextLines)}
+	if base == "" {
+		args = append(args, "--cached")
+	} else {
+		args = append(args, "--merge-base", base, "HEAD")
+	}
+	return git(ctx, root, args...)
+}
+
 // Staged returns the files staged in the index, for the pre-commit and agent
 // surfaces where there is no base branch to compare against.
 func Staged(ctx context.Context, root string) ([]File, error) {

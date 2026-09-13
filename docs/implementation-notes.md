@@ -43,3 +43,22 @@ gaps at every point in its life. Enforcing density would have made the first two
 
 **Done:** the check requires uniqueness only. A number is an identifier, not a position; the
 register is the reservation. Plan §B.3 corrected to match, with the reasoning inline.
+
+### Deviation: the findings JSON Schema is hand-written, not generated
+
+**Plan:** PR-02's proof reads `go run ./tools/genschema && git diff --exit-code schema/`.
+
+**Problem:** `tools/genschema` appears in that proof but in neither PR-02's file list nor the
+repository layout — an inconsistency in the plan. Building a Go-struct-to-JSON-Schema generator to
+serve one eleven-field struct is more machinery than the problem deserves, and the generator would
+need its own drift test anyway.
+
+**Done:** `schema/finding.schema.json` is authored by hand. `TestSchemaMatchesTheStruct` uses
+reflection to assert that the schema's `properties` exactly match the struct's JSON field names, and
+that the schema's `required` list exactly matches the fields without `omitempty`. Drift in either
+direction fails the build, which is what the generator would have bought.
+
+**Cost:** the schema's descriptions, enum values and the conditional `evidence` rule are not derived
+from Go and can drift in *content* while field names stay in sync. Judged acceptable: those are the
+parts a human reads, and a plugin author reading a stale description is a smaller failure than a
+plugin author missing a field entirely.

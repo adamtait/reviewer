@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/adamtait/reviewer/schema/finding.schema.json",
+  "title": "Finding",
+  "description": "One reported observation about one place in a diff. Every analyzer, in either lane and in any language, emits this shape (ADR-0003).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fingerprint", "ruleId", "lane", "confidence", "severity", "file", "line", "message"],
+  "properties": {
+    "fingerprint": {
+      "type": "string",
+      "description": "Stable across force-push and rebase; derived from the normalised snippet, not the line number. Filled in by the core — plugins may leave it empty."
+    },
+    "ruleId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Namespaced by category, e.g. arch/no-domain-to-infra. Acceptance is measured per ruleId, so it must be stable across releases."
+    },
+    "lane": {
+      "enum": ["deterministic", "llm"],
+      "description": "Declared by the analyzer's plugin descriptor. The secrets gate blocks every llm-lane analyzer outright."
+    },
+    "confidence": {
+      "enum": ["high", "medium", "low"],
+      "description": "Drives presentation: only high goes inline, everything else into the collapsed summary."
+    },
+    "severity": {
+      "enum": ["error", "warning", "info"],
+      "description": "How bad the thing found is, independently of how sure the analyzer is."
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "description": "Relative to the repository root, forward slashes."
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-indexed."
+    },
+    "endLine": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-indexed and inclusive. Omitted when the finding is one line."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "suggestion": {
+      "type": "string",
+      "description": "Replacement text for the reported span; becomes a GitHub suggested change."
+    },
+    "evidence": {
+      "type": "string",
+      "description": "Why the analyzer believes this. Required in the llm lane."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "lane": { "const": "llm" } }, "required": ["lane"] },
+      "then": { "required": ["evidence"], "properties": { "evidence": { "minLength": 1 } } }
+    }
+  ]
+}

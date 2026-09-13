@@ -183,3 +183,67 @@ variable is set, and still skips when it is not.
 cache behaviour has been exercised. The install script is verified on linux-x86_64 only;
 the darwin and linux-arm64 checksums are recorded from the published artifacts but nothing
 has run them.
+
+## PR-45 — Release automation for both artifacts
+
+### The pairing is the whole problem
+
+`reviewer init` pins the plugin devDependency to the binary's own version, so a binary
+released at 0.2.0 tells every repository it installs into to ask npm for plugin 0.2.0. If
+the tag and `plugins/typescript/package.json` disagree, nothing fails here — it fails later,
+in a stranger's repository, as an npm error about a version that was never published.
+
+So `verify` runs before anything is built, and refuses on three grounds: the tag and the
+plugin's package.json disagreeing; a tag that is not `vMAJOR.MINOR.PATCH` (the installer
+pins only when the version looks like a release and otherwise writes `latest`, which would
+silently unpin every repository installed by that release); and no `CHANGELOG.md` section
+for the version.
+
+Each gate was extracted and run locally against both accepting and refusing inputs, because
+a workflow that cannot be executed here is otherwise entirely unverified. `v0.1.0` and
+`v0.0.1-rc.1` pass the shape gate; `main`, `v1.2` and `0.1.0` are refused. The skew gate
+accepts a matching tag and refuses `v0.2.0` against a 0.1.0 package.json. The changelog gate
+accepts both `## [0.1.0]` and `## 0.3.0` heading styles.
+
+### Defects found by building the release
+
+**The package would have published its own tests.** `files: ["dist", ...]` included
+`dist/**/*.test.js`, and those import devDependencies a consumer does not install — a
+published test file is a broken import waiting for anyone who globs the package. Excluded,
+and the release now refuses to publish if any reappear, because the `files` field is easy to
+edit without thinking about what it lets through.
+
+**A snapshot build pinned a version that can never exist.** I had set GoReleaser's snapshot
+template to `{{ incpatch .Version }}-snapshot`, which is semver-shaped, so
+`pluginVersionFor` treated `0.0.1-snapshot` as a release and pinned the plugin to it. The
+regex is right — `-rc.1` is a genuine prerelease and does get published — so the fix belongs
+in the template: `snapshot-{{ .ShortCommit }}` is not semver, and `init` from a snapshot now
+prints "not a release" and writes `latest`, which is true.
+
+**`go mod tidy` had never been run.** GoReleaser's before-hook ran it and corrected
+`gopkg.in/yaml.v3` from `// indirect` to a direct dependency, which it plainly is. Harmless,
+but it means the tidy state was never checked; it is now, on every release, and a release
+from an untidy tree fails rather than quietly tidying.
+
+### Deliberately not done
+
+No `workflow_dispatch` on the release workflow, and no branch trigger. Every path to a
+published artifact goes through a tag, so "what was in v0.2.0" is answerable from the git
+history without trusting anyone's memory. The tag also re-runs the full suite with the
+pinned third-party binaries before publishing anything: CI gates branches, but a tag can
+point at a commit no pull request ever gated.
+
+### Verification
+
+`goreleaser check` validates. `goreleaser release --snapshot --clean` produced archives for
+linux and darwin × amd64 and arm64 with a SHA-256 checksums file, each archive carrying the
+binary plus LICENSE and README. The stamped binary reports its version, and — the thing that
+actually matters — a binary built with `-X main.version=v0.1.0` writes
+`@adamtait/reviewer-plugin-typescript@0.1.0` into the plan, while a snapshot build writes
+`latest` and says why. `npm pack --dry-run` ships `dist/main.js` and zero test files.
+
+**Not verified:** nothing has been published. The release workflow has never run — no
+GitHub Release, no npm publish, no provenance attestation, and `NPM_TOKEN` does not exist
+yet. The spec's proof calls for a `v0.0.1-rc.1` tag on a scratch branch; that publishes to a
+public registry under a name this project does not own yet, so it is left for whoever holds
+the npm account. Every gate that would refuse such a tag has been run by hand.

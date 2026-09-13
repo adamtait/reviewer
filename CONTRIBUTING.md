@@ -94,6 +94,31 @@ change's description, an entry in `THIRD_PARTY_LICENSES.md`, and a licence
 An external binary spawned as a process is not a dependency in that sense, which is
 how Opengrep (LGPL-2.1) is usable at all. That boundary is asserted by a test.
 
+## Releases
+
+A release is a tag, and only a tag. There is no manual publish step, no
+`workflow_dispatch`, and no path that publishes from `main` — so "what was in
+v0.2.0" is answerable from the git history without trusting anyone's memory.
+
+`vMAJOR.MINOR.PATCH` (a `-rc.1` suffix is fine) produces two artifacts from one
+commit: the binaries on the GitHub Release, and
+`@adamtait/reviewer-plugin-typescript` on npm at the same version. They must share
+it, because `reviewer init` pins the plugin devDependency to the binary's own
+version — so a binary released at 0.2.0 tells every repository it installs into to
+ask npm for plugin 0.2.0. The release refuses before building if the tag and
+`plugins/typescript/package.json` disagree, because a skew fails in a stranger's
+repository rather than here.
+
+Two version numbers, moving independently (ADR-0026): the product version above,
+and the plugin protocol version, which changes only when a plugin written against
+the old one would break. Both are printed by `reviewer --version`. See
+[CHANGELOG.md](CHANGELOG.md) for what counts as a breaking change; a new analyzer
+or a new finding from an existing rule is not one.
+
+To cut a release: add the section to `CHANGELOG.md`, set the plugin's version to
+match, commit, then tag. The release checks all three and refuses rather than
+publishing something half-consistent.
+
 ## Contribution terms
 
 By contributing you agree that your contribution is licensed under the MIT licence,

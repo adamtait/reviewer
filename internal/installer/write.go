@@ -253,6 +253,11 @@ type data struct {
 	ProviderWorksInCI bool
 	// ProviderEnv are the variables .env.example names.
 	ProviderEnv []string
+
+	// Projects is written only for a repository that has them, so a single-package
+	// repository's generated config is byte-for-byte what it was before monorepo
+	// support existed.
+	Projects []string
 }
 
 // templateData derives the generated files from the detection and from
@@ -279,6 +284,7 @@ func templateData(p Plan, pluginVersion string) data {
 		NeedsModelSecret:  p.Options.Provider.NeedsAPIKey(),
 		ProviderWorksInCI: p.Options.Provider.ID == "" || p.Options.Provider.WorksInCI,
 		ProviderEnv:       p.Options.Provider.Env,
+		Projects:          p.Projects,
 	}
 	out.InstallCommand = ciInstallCommand(out.PackageManager)
 

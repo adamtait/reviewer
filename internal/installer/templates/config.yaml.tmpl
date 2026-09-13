@@ -17,6 +17,16 @@ plugins:
 # spawn a binary still run.
 plugins: []
 {{- end }}
+{{- if .Projects }}
+
+# The directories this repository divides into. A change confined to one is
+# analyzed as one. This is a performance hint: every finding is filtered to the
+# changed lines regardless, so narrowing here cannot hide anything (ADR-0007).
+projects:
+{{- range .Projects }}
+  - {{ . }}
+{{- end }}
+{{- end }}
 
 analyzers:
   # Exceeding this kills the analyzer's process group; the run continues without

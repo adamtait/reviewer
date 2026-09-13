@@ -70,6 +70,9 @@ type Plan struct {
 	Detected        Detected
 	Files           []File
 	DevDependencies []Dependency
+	// Projects are the directories the repository divides into, written into the
+	// generated config so a change confined to one is analyzed as one.
+	Projects []string
 	// Options are the choices this plan was built with, carried so that rendering
 	// and reporting cannot disagree with what was planned.
 	Options Options
@@ -114,8 +117,14 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 		}
 	}
 
+	p.Projects = Projects(d)
 	p.Notes = append(p.Notes, gaps(d)...)
 	p.Notes = append(p.Notes, providerNotes(opts.Provider)...)
+	if projectsUnreadable(d, p.Projects) {
+		p.Notes = append(p.Notes,
+			"this looks like a monorepo but no project directory could be resolved: the "+
+				"review will run against the whole repository, which is correct and slower")
+	}
 	return p
 }
 
@@ -318,8 +327,19 @@ func (p Plan) detectedRows() [][2]string {
 		{"eslint config", orNotFound(d.ESLintConfig)},
 		{"dependency-cruiser", orNotFound(d.DepCruiserConfig)},
 		{"github repo", orNotFound(d.Remote)},
+		{"projects", projectsRow(p.Projects)},
 		{"model access path", orNone(p.Options.Provider.ID)},
 	}
+}
+
+func projectsRow(projects []string) string {
+	if len(projects) == 0 {
+		return "none: the whole repository is one unit"
+	}
+	if len(projects) <= 6 {
+		return fmt.Sprintf("%d (%s)", len(projects), strings.Join(projects, ", "))
+	}
+	return fmt.Sprintf("%d (%s, …)", len(projects), strings.Join(projects[:6], ", "))
 }
 
 func orNone(s string) string {

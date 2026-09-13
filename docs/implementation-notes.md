@@ -154,3 +154,52 @@ with no `isatty` and no behaviour that differs between a pipe and a terminal.
 **`BuildPlan` grew an `Options` struct** rather than a third positional bool. `--dry-run --provider
 gemini` has to show what choosing gemini would write, which means the choice belongs in the plan, and a
 plan built from `(force, provider, …)` positionally would be unreadable by the fourth one.
+
+## PR-26 — monorepo scoping
+
+**The Nx question the plan flagged as a blocker turned out not to need an answer.** PR-26 was marked
+"blocked on the Nx answer", the worry being that narrowing analysis to the changed projects would miss a
+finding in a project that depends on them — which would mean consulting Nx's dependency graph, running
+`nx show projects --affected`, and adding a config-driven command execution surface.
+
+It does not, and the reason is ADR-0007. Every finding is filtered to the changed lines before it
+reaches a reporter. A project with no changed line can therefore produce nothing reportable, whatever a
+change elsewhere did to it; and a project with a changed line is in the affected set by construction.
+Adding the dependency graph would add projects whose findings would all be dropped again by the diff
+filter. So the affected set is computed lexically, from path prefixes, and `projects:` is a static list.
+No `nx affected`, no command in config, no execution surface — and no accuracy lost.
+
+That also makes `Projects` in the analyze frame honestly advisory: a performance hint the plugin may
+ignore without changing what gets reported. The comment on `diff.Affected` states the argument, because
+a future reader will reasonably assume narrowing is a correctness decision.
+
+**Widening is the answer for a file outside every project.** A changed root `tsconfig.json`, workflow or
+shared script can affect anything, so `Affected` returns the empty list — which the protocol already
+defines as "all". Guessing which projects a root change reaches is exactly the kind of heuristic
+ADR-0020 exists to avoid.
+
+**Deletions neither narrow nor widen.** A deleted file has nothing left to analyze, so it does not put
+its project in the set; but a deletion outside every project must not widen the scope either, because
+there is nothing to analyze either way. Both directions have a test.
+
+**Longest match wins**, so a project nested inside another is credited with its own files. Sibling
+directories sharing a prefix (`pkg-a` and `pkg-alpha`) are not matches: the comparison is on path
+boundaries, not string prefixes.
+
+**Nx projects come from `project.json` files**, unioned with the package manager's workspaces, because
+an Nx repository routinely has projects the workspace globs never mention. The walk is bounded to four
+levels and skips `node_modules`, `dist`, `build` and dotted directories — `node_modules` is the one that
+matters, since a dependency's own `project.json` would otherwise be listed as this repository's project.
+Both traps have a test.
+
+**No protocol change was needed.** `AnalyzeRequest.Projects` already existed from PR-04 and the
+TypeScript plugin already reads it; this PR is the first thing to put a non-empty value in it. So the
+"additive change, old plugins still handshake" exit criterion is satisfied trivially.
+
+**The exit criterion is a test, not an eyeball.** A single-package repository's generated config
+contains no `projects` key at all — the template emits the block only when there is something to put in
+it — so its output is what it was before this PR existed.
+
+**A monorepo whose globs resolve to nothing gets a note.** `workspaces: ["packages/*"]` with no
+`packages/` directory is a correct install that will run against the whole repository; without the note,
+nobody would ever find out why it is slow.

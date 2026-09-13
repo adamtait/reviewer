@@ -594,3 +594,76 @@ func TestInitRejectsAnUnknownProvider(t *testing.T) {
 		t.Errorf("a refused provider still wrote files:\n%s", status)
 	}
 }
+
+// PR-26's proof: a change confined to one workspace reaches the plugin as that
+// one project. Asserted against the analyze frame the plugin actually received,
+// because "we computed the right list" and "the right list crossed the process
+// boundary" are different claims and only the second matters.
+func TestAffectedProjectsReachThePlugin(t *testing.T) {
+	recorder := func(t *testing.T, log string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "recorder.sh")
+		body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"rec","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[{"id":"rec","lane":"deterministic","order":10,"available":true}]}\n' ;;
+    *'"type":"analyze"'*)
+      echo "$frame" >> "` + log + `"
+      printf '{"type":"findings","analyzer":"rec","findings":[]}\n' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	frames := func(t *testing.T, root, changed string) string {
+		t.Helper()
+		git := testfixture.Git(t, root)
+		log := filepath.Join(t.TempDir(), "frames.log")
+		writeConfig(t, root,
+			"plugins:\n  - id: rec\n    command: "+recorder(t, log)+
+				"\nprojects: [packages/pkg-a, packages/pkg-b]\nanalyzers:\n  skip: [gitleaks]\n")
+
+		f, err := os.OpenFile(filepath.Join(root, filepath.FromSlash(changed)), os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\nexport const added = 1;\n"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		git("add", changed)
+
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(),
+			[]string{"--root", root, "--staged"}, &stdout, &stderr, noEnv); err != nil {
+			t.Fatal(err)
+		}
+		body, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatalf("the plugin was never asked to analyze anything: %v", err)
+		}
+		return string(body)
+	}
+
+	t.Run("a change in one workspace narrows to it", func(t *testing.T) {
+		root := testfixture.Destination(t, "tiny-monorepo")
+		got := frames(t, root, "packages/pkg-a/src/index.ts")
+		if !strings.Contains(got, `"projects":["packages/pkg-a"]`) {
+			t.Errorf("want the analyze frame narrowed to pkg-a, got:\n%s", got)
+		}
+	})
+
+	t.Run("a change at the root widens to the whole repository", func(t *testing.T) {
+		root := testfixture.Destination(t, "tiny-monorepo")
+		got := frames(t, root, "tsconfig.json")
+		if strings.Contains(got, `"projects"`) {
+			t.Errorf("a root change can affect anything; want no narrowing, got:\n%s", got)
+		}
+	})
+}

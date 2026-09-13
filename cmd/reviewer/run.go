@@ -70,9 +70,11 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	}
 
 	req := plugin.AnalyzeRequest{
-		Root:         cfg.Root,
-		Changed:      diff.ToPluginFiles(files),
-		Projects:     cfg.Projects,
+		Root:    cfg.Root,
+		Changed: diff.ToPluginFiles(files),
+		// The affected subset, not every declared project: a change confined to one
+		// workspace should not make a plugin build the other eleven.
+		Projects:     diff.Affected(files, cfg.Projects),
 		ContextLines: cfg.Analyzers.ContextLines,
 	}
 

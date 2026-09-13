@@ -89,3 +89,89 @@ exactly the noise this analyzer exists to avoid.
 
 **The finding lands at line 1 of the lockfile.** The fix is a version bump in the manifest, not an
 edit inside the lockfile, and pointing at a lockfile's internals invites someone to hand-edit one.
+
+## PR-29 — the Knip analyzer
+
+**npm is reachable in this environment even though the binary releases are not**, so Knip, Vitest and
+osv-scanner were all verified against the real thing. Opengrep is the one analyzer in this milestone
+that could not be.
+
+**Knip is spawned, not imported.** Its programmatic API is explicitly internal; the JSON reporter is
+the documented surface. A spawned process also cannot take the plugin down with it.
+
+**`require.resolve("knip/package.json")` fails on a perfectly present installation** with
+ERR_PACKAGE_PATH_NOT_EXPORTED, because a package's `exports` map decides what may be resolved by
+subpath and Knip's does not list its own manifest. The node_modules chain is walked instead, which is
+also the more honest question: is Knip installed *in this repository*.
+
+**It declines without a Knip config**, the way the ESLint analyzer declines without a flat config. A
+wrong guess at entry points makes every export in the codebase look unused, which is a worse first
+impression than no findings at all.
+
+**Unused exports are medium confidence, undeclared dependencies are high.** Knip cannot see a dynamic
+import, a re-export consumed from a barrel, or a symbol a published package exposes on purpose. An
+undeclared dependency is not a judgement: the import is there and the declaration is not.
+
+**An unused dependency is reported on the line that declares it.** Knip reports these against
+package.json with no line, and a finding at line 1 would be dropped by the core's diff filter on
+every real pull request — leaving an analyzer that appeared to work and reported nothing.
+
+## PR-31 — the type-coverage ratchet
+
+**Measured over the shared program**, not by spawning `type-coverage`, which would type-check the
+repository a second time — the single most expensive thing this tool does (ADR-0014).
+
+**The defect found by running the binary.** The regression was first reported against
+`.review/type-coverage-baseline.json`, which reads naturally and is invisible: no real pull request
+touches that file, so the core's diff filter drops the finding on every run. The analyzer reported
+"1 finding" and the report said "no findings". It now lands on the changed file carrying the most
+`any` identifiers on changed lines, which is also the most useful place for it.
+
+This is the third instance of the same class in this project — an analyzer whose output is correct and
+unreachable. It is worth naming as a rule: **a finding's location is part of its correctness, and the
+only way to check it is to run the thing.**
+
+**`error` is excluded from the `any` count.** The compiler's `any` flag covers both a real `any` and
+the `error` type an unresolved import produces; counting the second would move the ratchet whenever a
+dependency failed to install.
+
+**A tenth of a percentage point of tolerance.** Adding a well-typed file changes the denominator, so
+an entirely innocent change moves the fourth decimal place. Zero tolerance would make the ratchet a
+random-noise generator.
+
+**No baseline means record, not report.** Inventing one from the current run would silently bless
+whatever state the codebase is in today. An unreadable baseline is treated as absent rather than as
+zero, which would report a catastrophic regression on every run.
+
+**`baseline --write` reaches the analyzer through its settings block.** The measurement belongs to the
+component that can perform it — the core has no TypeScript compiler and no business having one
+(ADR-0002) — and the protocol already passes an analyzer's settings through untouched. A dedicated
+frame would be a protocol change for one command.
+
+## PR-32 — the changed-tests analyzer
+
+**Neither runner's selection logic is reimplemented.** `vitest --changed` and `jest --changedSince`
+already know what a change affects, and a second opinion about it would be a second thing to keep
+right.
+
+**Designed around the location trap rather than discovering it again.** A test that breaks because of
+a change to the code it covers lives in a file the pull request never opened. The assertion's own
+location is the right answer and the wrong place, so the comment lands on a line the change touched
+and the assertion's real location is carried in the message — where it is just as actionable.
+
+**The assertion's line comes from the stack trace, not from the runner's `location` field**, which
+points at the `test(...)` declaration. The first stack frame inside the repository is the assertion;
+everything after it is the runner's own machinery.
+
+**A file that failed to load is reported too.** It is the most common real failure — a syntax error,
+or an import of something the change removed — and it has no assertions to report against.
+
+**Exit code cannot decide.** A failing test and a runner that would not start are both non-zero, so
+only the presence of a report distinguishes them.
+
+**Nothing changed means the runner is never spawned.** Both runners interpret an empty selection as
+"run everything", which is minutes of a reviewer's time for a question nobody asked.
+
+**The test fixture has to be committed clean and then edited.** Both runners select by comparing
+against git, so a fixture where everything is committed has nothing changed and selects no tests —
+which is how the first version of these tests passed while measuring nothing.

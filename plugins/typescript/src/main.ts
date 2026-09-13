@@ -2,6 +2,7 @@
 
 /** Entry point. Registers the analyzers this plugin provides and serves them. */
 
+import { changedTestsAnalyzer } from "./analyzers/changedtests.js";
 import { depCruiserAnalyzer } from "./analyzers/depcruiser.js";
 import { eslintAnalyzer } from "./analyzers/eslint.js";
 import { knipAnalyzer } from "./analyzers/knip.js";
@@ -15,7 +16,7 @@ const analyzers: Analyzer[] = [
   depCruiserAnalyzer,
   knipAnalyzer,
   typecovAnalyzer,
-  // The changed-tests runner lands in PR-32.
+  changedTestsAnalyzer,
 ];
 
 protectStdout();

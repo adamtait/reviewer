@@ -27,6 +27,7 @@ type options struct {
 	only       []string
 	skip       []string
 	dryRun     bool
+	force      bool
 	version    bool
 }
 
@@ -42,12 +43,17 @@ flags:
   --pr N            review pull request N
   --config PATH     configuration file (default: .review/config.yaml under --root)
   --reporter NAME   text, rdjson or github (default: text)
-  --dry-run         with --reporter github, print what would be posted and post nothing
+  --dry-run         with --reporter github, print what would be posted and post nothing;
+                    with init, print the plan and write nothing
+  --force           with init, replace files that already exist
   --only IDs        run only these analyzers, comma-separated
   --skip IDs        run everything except these analyzers, comma-separated
   --version         print the version and exit
 
 subcommands:
+  init              inspect this repository and print what installing the
+                    reviewer into it would change
+
   watch             review every open pull request that changed since the last
                     poll, then exit. Run it from launchd, systemd or cron —
                     scheduling is not this tool's job.
@@ -61,7 +67,7 @@ A usage error exits 2.
 // subcommands are recognised before flag parsing, because Go's flag package stops
 // at the first positional argument — so `reviewer watch --dry-run` would leave
 // --dry-run unparsed and report it as a stray argument.
-var subcommands = map[string]bool{"watch": true, "version": true}
+var subcommands = map[string]bool{"init": true, "watch": true, "version": true}
 
 func parse(args []string, stderr io.Writer) (options, error) {
 	var o options
@@ -86,6 +92,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&skip, "skip", "", "")
 	fs.StringVar(&o.statePath, "state", ".review/watch-state.json", "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
+	fs.BoolVar(&o.force, "force", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
 	if err := fs.Parse(args); err != nil {
@@ -114,6 +121,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("pass --only or --skip, not both")}
 	case o.pr < 0:
 		return options{}, errUsage{fmt.Errorf("--pr must be a positive pull request number")}
+	case o.force && o.subcommand != "init":
+		return options{}, errUsage{fmt.Errorf("--force applies to init, which decides what to overwrite")}
 	}
 	return o, nil
 }

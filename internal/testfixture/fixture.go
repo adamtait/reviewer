@@ -40,23 +40,7 @@ func Build(t *testing.T, name string) Repo {
 	}
 
 	root := t.TempDir()
-	git := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
-		// A deterministic identity and no signing, so the fixture does not depend
-		// on whatever git config the machine happens to have.
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid",
-			"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return string(out)
-	}
+	git := Git(t, root)
 
 	git("init", "-q", "-b", "main")
 	copyTree(t, filepath.Join(src, "base"), root)
@@ -70,6 +54,51 @@ func Build(t *testing.T, name string) Repo {
 	head := trim(git("rev-parse", "HEAD"))
 
 	return Repo{Root: root, Base: base, Head: head}
+}
+
+// Destination materialises testdata/<name> as a single-commit git repository: a
+// repository the installer is pointed at, rather than a change under review. It
+// returns the working tree.
+//
+// It is committed rather than merely copied because the installer's exit
+// criterion is that a dry run leaves `git status --porcelain` empty, and an
+// uncommitted tree reports every file as untracked.
+func Destination(t *testing.T, name string) string {
+	t.Helper()
+
+	src := filepath.Join(repoRoot(t), "testdata", name)
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("fixture %s: %v", name, err)
+	}
+
+	root := t.TempDir()
+	git := Git(t, root)
+	git("init", "-q", "-b", "main")
+	copyTree(t, src, root)
+	git("add", "-A")
+	git("commit", "-q", "-m", "the destination repository")
+	return root
+}
+
+// Git runs git in root with a deterministic identity and no signing, so a fixture
+// does not depend on whatever git config the machine happens to have. It fails the
+// test on any non-zero exit.
+func Git(t *testing.T, root string) func(args ...string) string {
+	return func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid",
+			"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
 }
 
 // copyTree copies src over dst, overwriting files and creating directories. It

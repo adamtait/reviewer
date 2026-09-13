@@ -485,3 +485,36 @@ func TestVersionSubcommandAndFlagAgree(t *testing.T) {
 		}
 	}
 }
+
+// The installer's exit criterion: a dry run leaves the destination repository
+// untouched. Asserted with git status rather than by counting files, because the
+// failure this guards against is a writer that lands without a --dry-run check —
+// which would show up as a modified tracked file, not only as a new one.
+func TestInitDryRunWritesNothing(t *testing.T) {
+	root := testfixture.Destination(t, "tiny-monorepo")
+	git := testfixture.Git(t, root)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"init", "--root", root, "--dry-run"}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+
+	if status := git("status", "--porcelain"); status != "" {
+		t.Errorf("--dry-run changed the repository:\n%s", status)
+	}
+	if !strings.Contains(stdout.String(), "5 files to create, 1 devDependency to add, 0 overwrites") {
+		t.Errorf("want the plan summary on stdout, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "nothing written") {
+		t.Errorf("want the dry run said so on stderr, got:\n%s", stderr.String())
+	}
+}
+
+func TestInitRejectsForceOnOtherSubcommands(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"watch", "--force"}, &stdout, &stderr, noEnv)
+	var usageErr errUsage
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+}

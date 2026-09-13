@@ -38,6 +38,9 @@ type GitHub struct {
 	// resolving a thread is the only action this tool takes on a human's
 	// conversation (ADR-0020).
 	ResolveStale bool
+	// SelfLogin is the account this tool posts as, when the API cannot be asked.
+	// The installation token an Action runs with gets 403 from /user.
+	SelfLogin string
 	// Out receives the dry-run payload and the posting summary.
 	Out io.Writer
 	// Log receives warnings and skips, which have no place in a pull request.
@@ -64,7 +67,13 @@ func (g GitHub) Report(ctx context.Context, run Run) error {
 
 	// Read before writing. Without this the tool reposts everything on every
 	// push, which is the failure that makes a reviewer bot intolerable.
-	existing, err := g.existingFingerprints(ctx)
+	//
+	// Only *inline* comments suppress an inline post. A finding listed in the
+	// summary must still be able to become an inline comment: promoting a category
+	// once its acceptance justifies it is the intended path, and suppressing it
+	// here made a promoted finding vanish from the pull request entirely — deduped
+	// against its own summary entry, and dropped from the regenerated summary.
+	existing, err := g.existingInlineFingerprints(ctx)
 	if err != nil {
 		return fmt.Errorf("reading existing comments: %w", err)
 	}
@@ -79,6 +88,9 @@ func (g GitHub) Report(ctx context.Context, run Run) error {
 
 		if g.DryRun {
 			fmt.Fprintf(out, "would comment on %s:%d\n%s\n\n", comment.Path, comment.Line, comment.Body)
+			// Recorded in the dry run too, so the preview's counts match what a
+			// real run would do rather than double-counting duplicates.
+			existing[f.Fingerprint] = true
 			posted++
 			continue
 		}
@@ -110,9 +122,17 @@ func (g GitHub) Report(ctx context.Context, run Run) error {
 	}
 
 	var resolvedNote string
-	if g.ResolveStale {
-		resolved, err := g.resolveStale(ctx, currentFingerprints(run))
-		if err != nil {
+	// Resolution is only safe when this run is a faithful account of the current
+	// state. A run where analyzers failed, or where the gate stopped half the
+	// system, reports fewer findings than exist — and resolving against it would
+	// close every outstanding thread on the pull request.
+	switch {
+	case g.ResolveStale && !run.Trustworthy:
+		fmt.Fprintf(logOr(g.Log, out),
+			"skipped: not resolving stale threads because this run did not complete cleanly\n")
+	case g.ResolveStale && run.Trustworthy:
+		resolved, errs := g.resolveStale(ctx, currentFingerprints(run))
+		for _, err := range errs {
 			fmt.Fprintf(logOr(g.Log, out), "warning: %v\n", err)
 		}
 		if resolved > 0 {
@@ -147,29 +167,16 @@ func partition(findings []finding.Finding) (inline, deferred []finding.Finding) 
 	return inline, deferred
 }
 
-// existingFingerprints collects the identities this tool has already posted, from
-// both inline and conversation comments.
-func (g GitHub) existingFingerprints(ctx context.Context) (map[string]bool, error) {
-	seen := map[string]bool{}
-
+// existingInlineFingerprints collects the identities already posted as inline
+// comments. Summary entries are deliberately excluded; see the call site.
+func (g GitHub) existingInlineFingerprints(ctx context.Context) (map[string]bool, error) {
 	comments, err := g.Client.ListReviewComments(ctx, g.Repo, g.Number)
 	if err != nil {
 		return nil, err
 	}
+	seen := make(map[string]bool, len(comments))
 	for _, c := range comments {
 		if fp := fingerprint.ParseMarker(c.Body); fp != "" {
-			seen[fp] = true
-		}
-	}
-
-	// The summary comment carries the fingerprints of everything it lists, so a
-	// finding promoted from summary to inline is not posted twice.
-	issues, err := g.Client.ListIssueComments(ctx, g.Repo, g.Number)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range issues {
-		for _, fp := range fingerprint.ParseAllMarkers(c.Body) {
 			seen[fp] = true
 		}
 	}

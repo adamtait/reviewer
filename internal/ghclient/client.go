@@ -126,6 +126,11 @@ type REST struct {
 	// UserAgent identifies this tool in GitHub's logs, which is a courtesy that
 	// costs nothing and helps when debugging rate limits.
 	UserAgent string
+	// GraphQLURL is where the GraphQL endpoint lives. It is not derivable from
+	// BaseURL: github.com serves REST at api.github.com and GraphQL at
+	// api.github.com/graphql, while GitHub Enterprise serves them at
+	// <host>/api/v3 and <host>/api/graphql — sibling paths, not nested ones.
+	GraphQLURL string
 }
 
 // New returns a client. baseURL must be supplied; there is no default.
@@ -136,12 +141,24 @@ func New(baseURL, token, userAgent string) (*REST, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("%w: no token supplied", ErrUnauthorized)
 	}
+	base := strings.TrimRight(baseURL, "/")
 	return &REST{
-		BaseURL:   strings.TrimRight(baseURL, "/"),
-		Token:     token,
-		HTTP:      &http.Client{Timeout: 30 * time.Second},
-		UserAgent: userAgent,
+		BaseURL:    base,
+		GraphQLURL: defaultGraphQLURL(base),
+		Token:      token,
+		HTTP:       &http.Client{Timeout: 30 * time.Second},
+		UserAgent:  userAgent,
 	}, nil
+}
+
+// defaultGraphQLURL guesses the GraphQL endpoint from the REST one. It is only a
+// guess: a deployment that does not match either shape sets github.graphqlUrl.
+func defaultGraphQLURL(base string) string {
+	// GitHub Enterprise: .../api/v3 for REST, .../api/graphql for GraphQL.
+	if strings.HasSuffix(base, "/api/v3") {
+		return strings.TrimSuffix(base, "/v3") + "/graphql"
+	}
+	return base + "/graphql"
 }
 
 func (c *REST) Viewer(ctx context.Context) (User, error) {

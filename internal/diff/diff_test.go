@@ -328,3 +328,48 @@ diff --git a/second.ts b/second.ts
 		t.Fatalf("want the second file's range intact, got %v", got[1].Ranges)
 	}
 }
+
+// Reviewing a pull request whose base commit is not in the local checkout — a
+// shallow clone, or a branch the poller has never fetched — falls back to the
+// API's per-file patches. They go through the same parser, which is what makes a
+// missing fetch-depth cost accuracy of context rather than the whole review.
+func TestFromPatches(t *testing.T) {
+	files, err := FromPatches([]PatchedFile{
+		{
+			Path:   "src/a.ts",
+			Status: "modified",
+			Patch:  "@@ -1,0 +2,2 @@\n+const added = 1;\n+const also = 2;",
+		},
+		{Path: "src/new.ts", Status: "added", Patch: "@@ -0,0 +1,1 @@\n+export const n = 1;"},
+		// Binary files and very large diffs carry no patch at all.
+		{Path: "logo.png", Status: "modified", Patch: ""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byPath := map[string]File{}
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	if got := byPath["src/a.ts"].Ranges; !reflect.DeepEqual(got, [][2]int{{2, 3}}) {
+		t.Fatalf("want the hunk's range, got %v", got)
+	}
+	if byPath["src/new.ts"].Status != StatusAdded {
+		t.Fatalf("want the added status carried through, got %q", byPath["src/new.ts"].Status)
+	}
+	patchless := byPath["logo.png"]
+	if !patchless.Binary || len(patchless.Ranges) != 0 {
+		t.Fatalf("a file with no patch must be unreportable, got %+v", patchless)
+	}
+}
+
+func TestHasCommit(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	if !HasCommit(context.Background(), repo.Root, repo.Base) {
+		t.Fatal("want the base commit found in the checkout")
+	}
+	if HasCommit(context.Background(), repo.Root, "0000000000000000000000000000000000000000") {
+		t.Fatal("want an absent commit reported as absent")
+	}
+}

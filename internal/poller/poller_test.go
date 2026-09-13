@@ -192,3 +192,35 @@ func TestStateIsWrittenAtomically(t *testing.T) {
 		}
 	}
 }
+
+// The watermark is written after each review, not only at the end: a poll
+// interrupted part-way through keeps the progress it made. Ordering alone would
+// not have achieved that.
+func TestProgressIsPersistedAsItHappens(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	client := &fakeClient{prs: []ghclient.PullRequest{pr(1, 0), pr(2, 5), pr(3, 10)}}
+
+	// Fail on the third, as an interrupted poll would.
+	stopAfterTwo := func(_ context.Context, n int) error {
+		if n == 3 {
+			return errors.New("interrupted")
+		}
+		return nil
+	}
+	opts := Options{Repo: ghclient.Repo{Owner: "o", Name: "r"}, StatePath: statePath, Log: io.Discard}
+	if err := Poll(context.Background(), client, stopAfterTwo, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next poll must review only the one that did not complete.
+	var second []int
+	if err := Poll(context.Background(), client, func(_ context.Context, n int) error {
+		second = append(second, n)
+		return nil
+	}, opts); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(second) != "[3]" {
+		t.Fatalf("want only the interrupted pull request retried, got %v", second)
+	}
+}

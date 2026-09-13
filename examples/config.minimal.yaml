@@ -62,6 +62,18 @@ laneB:
   invalidate: true
 
 github:
+  # No default is compiled in (ADR-0004). For github.com this is
+  # https://api.github.com; for GitHub Enterprise, https://<host>/api/v3.
+  apiBaseUrl: ""
+  repo: ""
+  # Only needed where REST and GraphQL are not at github.com's or GitHub
+  # Enterprise's usual relative paths — they are siblings, not nested.
+  graphqlUrl: ""
+  # The account this tool's token posts as, used to tell its own review threads
+  # from a human's. GitHub's /user endpoint answers this for a personal token but
+  # returns 403 for the installation token an Action runs with, so state it when
+  # running in Actions: github-actions[bot].
+  selfLogin: ""
   # Resolving a thread is the only action this tool takes on a human's
   # conversation, so it is opt-in.
   resolveStaleThreads: false

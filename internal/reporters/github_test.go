@@ -25,9 +25,14 @@ type fakeGitHub struct {
 	resolved       []string
 	threads        []ghclient.ReviewThread
 	failPost       error
+	failResolve    map[string]error
+	viewerErr      error
 }
 
 func (f *fakeGitHub) Viewer(context.Context) (ghclient.User, error) {
+	if f.viewerErr != nil {
+		return ghclient.User{}, f.viewerErr
+	}
 	return ghclient.User{Login: "reviewer[bot]", Type: "Bot"}, nil
 }
 func (f *fakeGitHub) GetPullRequest(context.Context, ghclient.Repo, int) (ghclient.PullRequest, error) {
@@ -64,6 +69,9 @@ func (f *fakeGitHub) UpdateIssueComment(_ context.Context, _ ghclient.Repo, id i
 	return ghclient.IssueComment{ID: id, Body: body}, nil
 }
 func (f *fakeGitHub) ResolveReviewThread(_ context.Context, id string) error {
+	if err, ok := f.failResolve[id]; ok {
+		return err
+	}
 	f.resolved = append(f.resolved, id)
 	return nil
 }
@@ -143,22 +151,32 @@ func TestAlreadyPostedFindingsAreNotRepeated(t *testing.T) {
 	}
 }
 
-// A finding listed in the summary comment must not then be posted inline as if it
-// were new.
-func TestFingerprintsInTheSummaryCountAsAlreadySaid(t *testing.T) {
+// A finding that was in the summary and is now high confidence must become an
+// inline comment.
+//
+// This is the promotion path: a category whose acceptance rate justifies it gets
+// raised from medium to high, and the finding should move from the collapsed
+// summary to an inline comment. An earlier version suppressed the inline post
+// because the fingerprint appeared in the summary, *and* dropped the finding from
+// the regenerated summary because it was no longer medium — so it vanished from
+// the pull request entirely.
+func TestAPromotedFindingMovesFromTheSummaryToInline(t *testing.T) {
 	f := &fakeGitHub{
 		issueComments: []ghclient.IssueComment{{
 			ID:   9,
-			Body: "<!-- rv:summary -->\n- a thing " + fingerprint.Marker("aaa111") + "\n- another " + fingerprint.Marker("ddd444"),
+			Body: SummaryMarker + "\n- a thing " + fingerprint.Marker("aaa111"),
 		}},
 	}
 	var out bytes.Buffer
-	run := Run{Findings: []finding.Finding{high("aaa111", "a.ts", 3), high("ddd444", "d.ts", 2)}}
+	run := Run{Findings: []finding.Finding{high("aaa111", "a.ts", 3)}}
 	if err := reporter(f, &out).Report(context.Background(), run); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.posted) != 0 {
-		t.Fatalf("both findings were already listed in the summary, got %+v", f.posted)
+	if len(f.posted) != 1 {
+		t.Fatalf("a promoted finding must be posted inline, got %+v", f.posted)
+	}
+	if fingerprint.ParseMarker(f.posted[0].Body) != "aaa111" {
+		t.Fatalf("want the promoted finding, got %q", f.posted[0].Body)
 	}
 }
 
@@ -456,7 +474,7 @@ func TestResolveStaleThreads(t *testing.T) {
 			var out bytes.Buffer
 			r := reporter(f, &out)
 			r.ResolveStale = true
-			if err := r.Report(context.Background(), Run{Findings: tc.current}); err != nil {
+			if err := r.Report(context.Background(), Run{Findings: tc.current, Trustworthy: true}); err != nil {
 				t.Fatal(err)
 			}
 			if strings.Join(f.resolved, ",") != strings.Join(tc.wantResolve, ",") {
@@ -496,7 +514,7 @@ func TestDryRunResolvesNothing(t *testing.T) {
 	var out bytes.Buffer
 	r := reporter(f, &out)
 	r.ResolveStale, r.DryRun = true, true
-	if err := r.Report(context.Background(), Run{}); err != nil {
+	if err := r.Report(context.Background(), Run{Trustworthy: true}); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.resolved) != 0 {
@@ -504,5 +522,112 @@ func TestDryRunResolvesNothing(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "would resolve 1 stale thread") {
 		t.Fatalf("want the intent reported, got %q", out.String())
+	}
+}
+
+// A run that did not complete cleanly reports fewer findings than exist, so
+// resolving against it would close every outstanding thread on the pull request.
+func TestAnUntrustworthyRunResolvesNothing(t *testing.T) {
+	f := &fakeGitHub{threads: []ghclient.ReviewThread{{
+		ID: "t1",
+		Comments: []ghclient.ReviewComment{{
+			Body: "old finding\n" + fingerprint.Marker("f00d11"),
+			User: ghclient.User{Login: "reviewer[bot]"},
+		}},
+	}}}
+	var out bytes.Buffer
+	r := reporter(f, &out)
+	r.ResolveStale = true
+
+	// Trustworthy is false: an analyzer failed, or none ran.
+	if err := r.Report(context.Background(), Run{Trustworthy: false}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.resolved) != 0 {
+		t.Fatalf("want nothing resolved after an incomplete run, got %v", f.resolved)
+	}
+	if !strings.Contains(out.String(), "did not complete cleanly") {
+		t.Fatalf("want the reason reported, got %q", out.String())
+	}
+}
+
+// One thread failing to resolve must not skip the rest.
+func TestOneFailedResolutionDoesNotSkipTheOthers(t *testing.T) {
+	thread := func(id, fp string) ghclient.ReviewThread {
+		return ghclient.ReviewThread{ID: id, Comments: []ghclient.ReviewComment{{
+			Body: "old\n" + fingerprint.Marker(fp), User: ghclient.User{Login: "reviewer[bot]"},
+		}}}
+	}
+	f := &fakeGitHub{
+		threads:     []ghclient.ReviewThread{thread("bad", "f00d11"), thread("good", "f00d22")},
+		failResolve: map[string]error{"bad": errors.New("thread is locked")},
+	}
+	var out bytes.Buffer
+	r := reporter(f, &out)
+	r.ResolveStale = true
+	if err := r.Report(context.Background(), Run{Trustworthy: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(f.resolved, ",") != "good" {
+		t.Fatalf("want the second thread still resolved, got %v", f.resolved)
+	}
+	if !strings.Contains(out.String(), "thread is locked") {
+		t.Fatalf("want the failure reported, got %q", out.String())
+	}
+}
+
+// The installation token an Action runs with gets 403 from /user, so a configured
+// login is the fallback — and with neither, resolution is skipped rather than
+// guessed at.
+func TestIdentityFallsBackToConfigurationThenSkips(t *testing.T) {
+	threads := []ghclient.ReviewThread{{
+		ID: "t1",
+		Comments: []ghclient.ReviewComment{{
+			Body: "old\n" + fingerprint.Marker("f00d11"),
+			User: ghclient.User{Login: "github-actions[bot]"},
+		}},
+	}}
+
+	t.Run("configured login is used when the API refuses", func(t *testing.T) {
+		f := &fakeGitHub{threads: threads, viewerErr: errors.New("403 Forbidden")}
+		var out bytes.Buffer
+		r := reporter(f, &out)
+		r.ResolveStale, r.SelfLogin = true, "github-actions[bot]"
+		if err := r.Report(context.Background(), Run{Trustworthy: true}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(f.resolved, ",") != "t1" {
+			t.Fatalf("want the thread resolved via the configured login, got %v", f.resolved)
+		}
+	})
+
+	t.Run("no identity means no resolution", func(t *testing.T) {
+		f := &fakeGitHub{threads: threads, viewerErr: errors.New("403 Forbidden")}
+		var out bytes.Buffer
+		r := reporter(f, &out)
+		r.ResolveStale = true
+		if err := r.Report(context.Background(), Run{Trustworthy: true}); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.resolved) != 0 {
+			t.Fatalf("want nothing resolved without an identity, got %v", f.resolved)
+		}
+		if !strings.Contains(out.String(), "github.selfLogin") {
+			t.Fatalf("want the fix named in the warning, got %q", out.String())
+		}
+	})
+}
+
+// An already-cleared summary must not be rewritten every run: that re-notifies
+// every subscriber to say nothing changed.
+func TestAnAlreadyClearedSummaryIsLeftAlone(t *testing.T) {
+	cleared := SummaryMarker + "\nNo further observations on the current revision.\n"
+	f := &fakeGitHub{issueComments: []ghclient.IssueComment{{ID: 7, Body: cleared}}}
+	var out bytes.Buffer
+	if err := reporter(f, &out).Report(context.Background(), Run{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.updatedIssues) != 0 {
+		t.Fatalf("want no rewrite of an already-cleared summary, got %v", f.updatedIssues)
 	}
 }

@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// defaultBase is what --base means when nobody said. For a pull request review it
+// is replaced by the pull request's own base, so the default only matters for a
+// local run.
+const defaultBase = "main"
+
 // options is the parsed command line.
 type options struct {
 	subcommand string
@@ -72,7 +77,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 
 	fs.StringVar(&o.root, "root", ".", "")
-	fs.StringVar(&o.base, "base", "main", "")
+	fs.StringVar(&o.base, "base", defaultBase, "")
 	fs.BoolVar(&o.staged, "staged", false, "")
 	fs.IntVar(&o.pr, "pr", 0, "")
 	fs.StringVar(&o.config, "config", "", "")
@@ -101,6 +106,10 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	switch {
 	case o.staged && o.pr != 0:
 		return options{}, errUsage{fmt.Errorf("--staged and --pr describe different things to review")}
+	case o.staged && o.subcommand == "watch":
+		// watch sets --pr per pull request. With --staged also set, the staged
+		// diff's findings would be posted onto every open pull request.
+		return options{}, errUsage{fmt.Errorf("watch reviews pull requests; --staged reviews your index")}
 	case len(o.only) > 0 && len(o.skip) > 0:
 		return options{}, errUsage{fmt.Errorf("pass --only or --skip, not both")}
 	case o.pr < 0:

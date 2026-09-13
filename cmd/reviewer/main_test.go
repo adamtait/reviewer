@@ -202,17 +202,30 @@ func TestUnknownReporterIsAUsageError(t *testing.T) {
 	}
 }
 
-// --pr is parsed but not yet wired to the GitHub client. It must say so rather
-// than silently reviewing the working tree instead.
-func TestPRFlagSaysItIsNotWiredUpYet(t *testing.T) {
+// --pr needs GitHub configured. Without it the run must say which piece is
+// missing rather than silently reviewing the working tree instead.
+func TestPRFlagNeedsGitHubConfigured(t *testing.T) {
 	repo := testfixture.Build(t, "tiny-ts-repo")
 	var stdout, stderr bytes.Buffer
 	if err := run(context.Background(),
 		[]string{"--root", repo.Root, "--pr", "7"}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "not wired up yet") {
-		t.Fatalf("want an explicit not-yet message, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), "GitHub API base URL") {
+		t.Fatalf("want the missing configuration named, got %q", stdout.String())
+	}
+}
+
+// watch sets --pr per pull request, so --staged alongside it would post the local
+// index's findings onto every open pull request.
+func TestWatchRefusesStaged(t *testing.T) {
+	_, err := parse([]string{"watch", "--staged"}, new(bytes.Buffer))
+	var usage errUsage
+	if !errors.As(err, &usage) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "index") {
+		t.Fatalf("want the conflict explained, got %v", err)
 	}
 }
 

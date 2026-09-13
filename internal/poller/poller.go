@@ -72,8 +72,10 @@ func Poll(ctx context.Context, client ghclient.Client, review Reviewer, opts Opt
 	next := state{Seen: map[int]time.Time{}}
 	var reviewed, skipped int
 
-	// Oldest first, so a crash part-way through leaves the watermark advanced for
-	// the ones that did complete.
+	// Oldest first, and the watermark is written after each review rather than at
+	// the end: a poll interrupted part-way through then keeps the progress it made
+	// instead of repeating every review on the next tick. Ordering alone would not
+	// have achieved that — the saves are what makes it true.
 	sort.Slice(open, func(i, j int) bool { return open[i].UpdatedAt.Before(open[j].UpdatedAt) })
 
 	for _, pr := range open {
@@ -110,6 +112,11 @@ func Poll(ctx context.Context, client ghclient.Client, review Reviewer, opts Opt
 		}
 		next.Seen[pr.Number] = pr.UpdatedAt
 		reviewed++
+		if err := saveState(opts.StatePath, next); err != nil {
+			// Losing the watermark costs a repeated review, not correctness, so it
+			// is a warning rather than a failure.
+			fmt.Fprintf(log, "could not record progress in %s: %v\n", opts.StatePath, err)
+		}
 	}
 
 	fmt.Fprintf(log, "%d reviewed, %d unchanged\n", reviewed, skipped)
@@ -117,6 +124,9 @@ func Poll(ctx context.Context, client ghclient.Client, review Reviewer, opts Opt
 	if opts.DryRun {
 		return nil
 	}
+	// Written once more so that pull requests skipped as unchanged, and any whose
+	// watermark was carried forward after a failure, are recorded even when nothing
+	// was reviewed at all.
 	return saveState(opts.StatePath, next)
 }
 

@@ -141,6 +141,65 @@ func Filter(findings []finding.Finding, files []File) (kept []finding.Finding, d
 	return kept, dropped
 }
 
+// FromPatches builds the changed-file set from a pull request's per-file patches,
+// for the case where the base commit is not in the local checkout.
+//
+// A shallow clone is the normal case on a CI runner that forgot fetch-depth, and
+// on a poller reviewing a branch it has never fetched. The API's patch is the same
+// unified diff git would have produced, so it goes through the same parser.
+func FromPatches(files []PatchedFile) ([]File, error) {
+	var out []File
+	for _, f := range files {
+		if f.Patch == "" {
+			// Binary files and very large diffs carry no patch. Recording the file
+			// with no ranges means nothing can be reported against it, which is
+			// the same treatment a binary file gets locally.
+			out = append(out, File{Path: f.Path, Status: statusFrom(f.Status), Binary: true})
+			continue
+		}
+		// The API omits the "diff --git" header, so it is reconstructed: the parser
+		// keys file identity off it.
+		header := fmt.Sprintf("diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n", f.Path, f.Path, f.Path, f.Path)
+		parsed, err := parse(header + f.Patch + "\n")
+		if err != nil {
+			return nil, fmt.Errorf("parsing the patch for %s: %w", f.Path, err)
+		}
+		for i := range parsed {
+			parsed[i].Path = f.Path
+			parsed[i].Status = statusFrom(f.Status)
+		}
+		out = append(out, parsed...)
+	}
+	return out, nil
+}
+
+// PatchedFile is one file from a pull request's file list.
+type PatchedFile struct {
+	Path   string
+	Status string
+	Patch  string
+}
+
+func statusFrom(apiStatus string) Status {
+	switch apiStatus {
+	case "added":
+		return StatusAdded
+	case "removed":
+		return StatusDeleted
+	case "renamed":
+		return StatusRenamed
+	default:
+		return StatusModified
+	}
+}
+
+// HasCommit reports whether a revision is present in the local checkout, which is
+// what decides between diffing locally and asking the API.
+func HasCommit(ctx context.Context, root, rev string) bool {
+	_, err := git(ctx, root, "cat-file", "-e", rev+"^{commit}")
+	return err == nil
+}
+
 // TotalLines counts the changed lines across every file, for the run summary.
 func TotalLines(files []File) int {
 	n := 0

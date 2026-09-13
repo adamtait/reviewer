@@ -102,6 +102,15 @@ type GitHub struct {
 	APIBaseURL string `yaml:"apiBaseUrl"`
 	// Repo is "owner/name". Detected from the remote when unset.
 	Repo string `yaml:"repo"`
+	// GraphQLURL overrides the endpoint derived from APIBaseURL. Needed only for a
+	// deployment whose REST and GraphQL paths are not github.com's or GitHub
+	// Enterprise's shapes.
+	GraphQLURL string `yaml:"graphqlUrl"`
+	// SelfLogin is the account this tool's token posts as. Used to tell our own
+	// threads from a human's when resolving stale ones. GitHub's /user endpoint
+	// answers this for a personal token but returns 403 for the installation token
+	// an Action runs with, so it can be stated instead.
+	SelfLogin string `yaml:"selfLogin"`
 
 	// ResolveStaleThreads is opt-in: resolving a thread is the only action this
 	// tool takes on a human's conversation.

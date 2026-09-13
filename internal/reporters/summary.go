@@ -110,8 +110,14 @@ func (g GitHub) upsertSummary(ctx context.Context, body string) (action string, 
 	case body == "" && found == nil:
 		return "none needed", nil
 	case body == "" && found != nil:
-		if _, err := g.Writer.UpdateIssueComment(ctx, g.Repo, found.ID,
-			SummaryMarker+"\nNo further observations on the current revision.\n"); err != nil {
+		cleared := SummaryMarker + "\nNo further observations on the current revision.\n"
+		if found.Body == cleared {
+			// Already cleared. Rewriting it every run would re-notify every
+			// subscriber to say nothing has changed, which is the same mistake the
+			// update branch guards against.
+			return "unchanged", nil
+		}
+		if _, err := g.Writer.UpdateIssueComment(ctx, g.Repo, found.ID, cleared); err != nil {
 			return "", err
 		}
 		return "cleared", nil

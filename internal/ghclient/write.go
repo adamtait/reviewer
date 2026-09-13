@@ -90,7 +90,7 @@ func (c *REST) UpdateIssueComment(ctx context.Context, repo Repo, id int64, body
 // resolution has no REST equivalent.
 func (c *REST) graphQL(ctx context.Context, query string, variables map[string]any, into any) error {
 	body := map[string]any{"query": query, "variables": variables}
-	_, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", body, into)
+	_, err := c.do(ctx, http.MethodPost, c.GraphQLURL, body, into)
 	return err
 }
 

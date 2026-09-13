@@ -1014,7 +1014,8 @@ criterion; ADR-0022's and ADR-0023's at the acceptance-rate floors.
 
 The tool fails the build on any of:
 
-1. a duplicate or non-sequential ADR number, or a filename not matching `NNNN-kebab-slug.md`;
+1. a duplicate ADR number, or a filename not matching `NNNN-kebab-slug.md` (gaps are legitimate:
+   numbers are reserved by this plan and land with the PR that implements each decision);
 2. a missing or invalid `Status`, or a missing `Implemented by` line;
 3. an ADR absent from `docs/adr/README.md`, or an index title disagreeing with the file's H1;
 4. a one-way supersession — `Superseded by` without the reciprocal `Supersedes`, or either naming a

@@ -17,3 +17,4 @@ precede any code land in PR-00.
 | [0000](0000-record-architecture-decisions.md) | Record architecture decisions in an append-only log | Accepted | PR-00 |
 | [0001](0001-license-mit-with-spdx-headers.md) | License the project MIT with per-file SPDX headers | Accepted | PR-00 |
 | [0002](0002-go-core-typescript-plugin.md) | Implement the core in Go and reach TypeScript tooling through a plugin | Accepted | PR-00 |
+| [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |

@@ -170,18 +170,19 @@ func refsIn(field string) []int {
 	return out
 }
 
+// checkNumbering requires numbers to be unique, not dense. The implementation
+// plan reserves an ADR number per decision up front but lands each record with
+// the PR that implements it, so the log legitimately has gaps at any moment: a
+// number is an identifier, not a position.
 func checkNumbering(adrs []adr) []string {
 	var violations []string
 	seen := map[int]string{}
-	for i, a := range adrs {
+	for _, a := range adrs {
 		if prev, dup := seen[a.num]; dup {
 			violations = append(violations, fmt.Sprintf("%s: duplicate ADR number %04d, already used by %s", a.file, a.num, prev))
 			continue
 		}
 		seen[a.num] = a.file
-		if i != a.num {
-			violations = append(violations, fmt.Sprintf("%s: non-sequential numbering, expected %04d at this position", a.file, i))
-		}
 	}
 	return violations
 }

@@ -101,9 +101,11 @@ func TestCheckNumbering(t *testing.T) {
 	if got := checkNumbering(dup); len(got) != 1 || !strings.Contains(got[0], "duplicate ADR number") {
 		t.Fatalf("want a duplicate-number violation, got %v", got)
 	}
-	gap := []adr{{num: 0, file: "0000-a.md"}, {num: 2, file: "0002-c.md"}}
-	if got := checkNumbering(gap); len(got) != 1 || !strings.Contains(got[0], "non-sequential") {
-		t.Fatalf("want a non-sequential violation, got %v", got)
+	// Gaps are expected: numbers are reserved by the implementation plan and
+	// land with the PR that implements each decision.
+	gap := []adr{{num: 0, file: "0000-a.md"}, {num: 26, file: "0026-c.md"}}
+	if got := checkNumbering(gap); len(got) != 0 {
+		t.Fatalf("gaps in ADR numbering are legitimate, got %v", got)
 	}
 	ok := []adr{{num: 0, file: "0000-a.md"}, {num: 1, file: "0001-b.md"}}
 	if got := checkNumbering(ok); len(got) != 0 {

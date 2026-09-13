@@ -32,3 +32,14 @@ recorded before the code that implements them — is preserved.
 
 **Alternative rejected:** writing `checkadrs` as a shell script so PR-00 needs no module. It would
 have to be rewritten in Go by PR-09 anyway, when `checklicenses` needs the same git plumbing.
+
+### Deviation: ADR numbering is unique, not sequential
+
+**Plan:** §B.3 rule 1 — `checkadrs` fails on "a duplicate or non-sequential ADR number".
+
+**Problem:** the plan's own register (§B.1) reserves ADR numbers by topic but lands each record with
+the PR that implements it. ADR-0026 lands in PR-01 while ADR-0003 lands in PR-02, so the log has
+gaps at every point in its life. Enforcing density would have made the first two commits fail.
+
+**Done:** the check requires uniqueness only. A number is an identifier, not a position; the
+register is the reservation. Plan §B.3 corrected to match, with the reasoning inline.

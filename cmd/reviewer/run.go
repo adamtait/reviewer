@@ -11,6 +11,7 @@ import (
 	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/diff"
+	"github.com/adamtait/reviewer/internal/fingerprint"
 	"github.com/adamtait/reviewer/internal/pluginhost"
 	"github.com/adamtait/reviewer/internal/reporters"
 	"github.com/adamtait/reviewer/internal/sequencer"
@@ -93,6 +94,9 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 			fmt.Sprintf("%d finding(s) outside the diff", result.Dropped))
 	}
 	all := result.Findings
+	// Identity is assigned by the core, not by analyzers: a plugin has no reason
+	// to know how dedupe works, and one that guessed would break it (ADR-0015).
+	fingerprint.ComputeAll(cfg.Root, all)
 	finding.Sort(all)
 
 	run.Findings = all

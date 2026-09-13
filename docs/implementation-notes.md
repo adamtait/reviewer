@@ -59,3 +59,57 @@ untracked. The git-invocation helper is now exported as `testfixture.Git` so a t
 and `git remote get-url origin` answers for the enclosing repository. That is correct behaviour for a
 subdirectory of a real repository, but it means the tests copy the fixture out to a temp directory
 rather than reading it in place, or they would assert against whatever remote the machine has.
+
+## PR-24 — installer writers and templates
+
+**The devDependency is not written into `package.json`.** The plan says `init` adds it; the installer
+prints the command instead. Editing `package.json` without the lockfile leaves the repository in a
+state where `npm ci` fails — and `npm ci` is what the workflow `init` just generated runs. Editing the
+lockfile correctly means resolving a dependency tree, which is the package manager's whole job, and
+running the package manager would need the network during an install that is otherwise offline and
+reversible. So `init` prints `npm install --save-dev …` (or `pnpm add -Dw`, `yarn add -D`, `bun add -d`,
+matching what was detected) as an outstanding step, and the package manager edits both files together.
+
+**Two placeholders the installer cannot fill, both named as outstanding steps.** The generated workflow
+pins a release and verifies its checksum. The binary cannot know the checksum — it covers the archive
+containing the running binary — and resolving it over the network at install time would mean trusting
+whoever can move a tag, which is what the checksum exists to prevent. A development build also has no
+release to pin, so `adamtait/reviewer@vdev` would be an unresolvable ref; it writes
+`v0.0.0-REPLACE-WITH-A-RELEASE-VERSION` instead, which fails obviously rather than cryptically.
+
+**`.env.example` gained content in this PR rather than waiting for PR-25.** It names `GITHUB_TOKEN`,
+which `reviewer watch` needs on a laptop and which has nothing to do with provider selection. Without
+this the plan promised five files and the writer produced four, so `--dry-run` would have been wrong
+about its own file list — the one thing it exists to be right about. PR-25 adds the provider's variable
+to the same file.
+
+**Bug found by running the binary, again.** The generated config pointed the plugin at
+`node_modules/@adamtait/reviewer-plugin-typescript/dist/serve.js`, taken from the package's `main`
+field. `serve.js` is the *library*; the executable is `dist/main.js`. The symptom is a process that
+starts, exits 0 without answering the handshake, and produces "no analyzers ran" — no error, no stack,
+nothing pointing at the config line that caused it. Every unit test passed. Caught by installing into a
+copied repository, symlinking the built plugin where the generated config said it should be, and
+reviewing a real type error.
+
+**Three causes of "nothing ran" now get three messages.** That bug surfaced a second one: the review
+warned "no analyzers are configured; see .review/config.yaml and `reviewer init`" at someone who had
+just run `init`. The causes are distinct — nothing configured, a configured plugin that offered
+nothing, and everything offered filtered out by only/skip — and each needs a different next step. One
+existing test asserted the old wording for the skip case and was updated: it encoded the conflation.
+
+**`TestNoEndpointsInTheSource` caught the endpoint.** `https://api.github.com` was a `const` in
+`write.go`. The guard is right: the engine compiles in no endpoint, and this one is a *value the
+destination's config carries*, so it belongs in `config.yaml.tmpl` where the rest of the generated
+config lives. Moved.
+
+**A failed install is not rolled back.** Everything written is a git-tracked file in the destination, so
+`git checkout` is a better undo than anything this tool could attempt, and a rollback that itself failed
+would leave a worse state than the one it found. What was written is reported before the error.
+
+**`Render` and `Install` are separate**, and a test asserts `Render` produces content for exactly the
+paths the plan names and no others. A writer able to invent a path makes `--dry-run`'s file list a guess
+rather than a promise.
+
+**The strongest test here loads the generated config with the real loader** and calls `Validate()`. The
+loader rejects unknown keys, so a template that drifts from the schema fails at install time in a test
+rather than on someone's first real review.

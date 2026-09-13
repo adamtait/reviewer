@@ -26,13 +26,24 @@ func initialize(o options, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if !o.dryRun {
-		// Not a usage error: the command is right, the writers are not built yet.
-		// Exiting 0 keeps ADR-0009's promise that only misuse is non-zero.
-		fmt.Fprintln(stderr,
-			"reviewer: nothing written — init can only plan so far; run with --dry-run to say so explicitly")
+	if o.dryRun {
+		fmt.Fprintln(stderr, "reviewer: --dry-run, nothing written")
 		return nil
 	}
-	fmt.Fprintln(stderr, "reviewer: --dry-run, nothing written")
-	return nil
+
+	report, err := installer.Install(plan, version)
+	if err != nil {
+		// Partial writes are left in place rather than rolled back: everything
+		// written is a git-tracked file in the destination, so `git checkout` is a
+		// better undo than anything this tool could attempt, and a rollback that
+		// itself failed would leave a worse state than the one it found.
+		fmt.Fprintln(stdout)
+		if writeErr := report.Write(stdout); writeErr != nil {
+			return writeErr
+		}
+		return fmt.Errorf("installing into %s: %w", plan.Detected.Root, err)
+	}
+
+	fmt.Fprintln(stdout)
+	return report.Write(stdout)
 }

@@ -258,8 +258,10 @@ func TestConfigSkipIsApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := stdout.String()
-	// Both analyzers skipped, so nothing ran and the report says so.
-	if !strings.Contains(out, "no analyzers are configured") {
+	// Both analyzers skipped, so nothing ran and the report names the skip as the
+	// reason. "No analyzers are configured" would be the wrong explanation here:
+	// one is, and it was filtered out.
+	if !strings.Contains(out, "removed by only/skip") {
 		t.Fatalf("want the configured skip to take effect, got:\n%s", out)
 	}
 	if strings.Contains(out, "outside the diff") || strings.Contains(out, "secrets/") {
@@ -284,7 +286,7 @@ func TestFlagOverridesConfigSkip(t *testing.T) {
 		&stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(stdout.String(), "no analyzers are configured") {
+	if strings.Contains(stdout.String(), "no analyzers") {
 		t.Fatalf("--only must override the file's skip, got:\n%s", stdout.String())
 	}
 }
@@ -516,5 +518,37 @@ func TestInitRejectsForceOnOtherSubcommands(t *testing.T) {
 	var usageErr errUsage
 	if !errors.As(err, &usageErr) {
 		t.Fatalf("want a usage error, got %v", err)
+	}
+}
+
+// The whole of M3's claim in one test: a repository this tool has never seen goes
+// from clean to reviewing in one command.
+func TestInitThenReviewOnAFreshRepository(t *testing.T) {
+	root := testfixture.Destination(t, "tiny-monorepo")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"init", "--root", root}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "5 files created") {
+		t.Fatalf("want the file set written, got:\n%s", stdout.String())
+	}
+
+	// The review must find the config the installer just wrote, and the config
+	// must load. Nothing can run — the plugin is not installed here — but "no
+	// analyzers ran" is a different failure from "the config is unreadable", and
+	// only the second is this test's concern.
+	stdout.Reset()
+	if err := run(context.Background(), []string{"--root", root, "--staged"}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatalf("reviewing with the generated config: %v", err)
+	}
+	if strings.Contains(stdout.String(), "no analyzers are configured") {
+		t.Errorf("the generated config configures a plugin; got:\n%s", stdout.String())
+	}
+	// The plugin cannot start here — it is not installed in the fixture — and that
+	// has to be reported against the plugin by name. Whether anything else ran
+	// depends on which binaries this machine has, so that is not asserted.
+	if !strings.Contains(stdout.String(), "plugin typescript") {
+		t.Errorf("want the plugin's failure reported by name; got:\n%s", stdout.String())
 	}
 }

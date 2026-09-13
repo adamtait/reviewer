@@ -28,6 +28,10 @@ const (
 	Overwrite Action = "overwrite"
 	// Unchanged leaves a file alone because it already exists.
 	Unchanged Action = "unchanged"
+	// Add is a dependency the destination's own package manager must install.
+	// The installer prints the command rather than running it or editing
+	// package.json; see manualSteps in write.go for why.
+	Add Action = "add"
 )
 
 // File is one entry in the plan. Purpose is printed alongside the path: a list of
@@ -84,7 +88,7 @@ func BuildPlan(d Detected, pluginVersion string, force bool) Plan {
 		p.DevDependencies = append(p.DevDependencies, Dependency{
 			Name:    PluginPackage,
 			Version: version,
-			Action:  Create,
+			Action:  Add,
 			Purpose: "the TypeScript analyzers: tsc, eslint, dependency-cruiser",
 		})
 		if note != "" {

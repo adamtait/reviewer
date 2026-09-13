@@ -110,6 +110,9 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 
 	run.Findings = all
 	run.Skipped = append(run.Skipped, unavailable(host)...)
+	// Read before Close, so the reason a run found nothing is about what the
+	// plugins offered rather than about a shut-down host.
+	offered := len(host.Analyzers())
 
 	// Shut the plugins down before reading their warnings. Closing is where "did
 	// not exit within 5s, killing its process group" is recorded, and a deferred
@@ -118,10 +121,27 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	run.Warnings = append(run.Warnings, host.Warnings()...)
 
 	if result.Selected == 0 {
-		run.Warnings = append(run.Warnings,
-			"no analyzers are configured; see .review/config.yaml and `reviewer init`")
+		run.Warnings = append(run.Warnings, nothingRanReason(cfg, offered))
 	}
 	return rep.Report(ctx, run)
+}
+
+// nothingRanReason explains a run with no analyzers. The three causes need three
+// different answers, and the wrong one sends a person to the wrong place: being
+// told to run `reviewer init` when the real problem is an uninstalled plugin, or
+// being told to install something when a skip list in the config removed
+// everything.
+func nothingRanReason(cfg config.Config, offered int) string {
+	switch {
+	case offered > 0:
+		return "no analyzers ran: every one offered was removed by only/skip"
+	case len(cfg.Plugins) > 0:
+		return fmt.Sprintf(
+			"no analyzers ran: %d configured plugin(s) offered none; check they are installed",
+			len(cfg.Plugins))
+	default:
+		return "no analyzers are configured; see .review/config.yaml and `reviewer init`"
+	}
 }
 
 // changedFiles works out what the review is about.

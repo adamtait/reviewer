@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/adamtait/reviewer/pkg/finding"
 )
@@ -40,6 +41,21 @@ func (t Text) Report(_ context.Context, run Run) error {
 	}
 	if len(run.Warnings) > 0 || len(run.Skipped) > 0 {
 		fmt.Fprintln(out)
+	}
+
+	if len(run.Timings) > 0 {
+		var total time.Duration
+		for _, t := range run.Timings {
+			total += t.Elapsed
+		}
+		for _, t := range run.Timings {
+			status := fmt.Sprintf("%d finding%s", t.Findings, plural(t.Findings))
+			if t.Failed {
+				status = "failed"
+			}
+			fmt.Fprintf(out, "  %-24s %8s  %s\n", t.Analyzer, t.Elapsed.Round(time.Millisecond), status)
+		}
+		fmt.Fprintf(out, "  %-24s %8s\n\n", "total", total.Round(time.Millisecond))
 	}
 
 	c := summarise(run.Findings)

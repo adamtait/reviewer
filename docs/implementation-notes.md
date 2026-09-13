@@ -44,3 +44,21 @@ secrets scanner then closes the gate without the gate being taught about it.
 file every time it receives an `analyze` frame. The assertion is on what actually crossed the process
 boundary — zero invocations with the fixture's credential present, exactly one after it is removed and
 committed. A flag-level assertion would have passed even if the gate were checked after the call.
+
+## PR-12 — the sequencer
+
+**It owns the policy, and `run.go` owns the plumbing.** Ordering, `--only`/`--skip`, the two-pass gate
+split, timings and the fail-open rule moved out of the CLI into `internal/sequencer`, behind a
+two-method `Host` interface. The policy is now testable without starting a process, which is why the
+gate has a table test covering "clean", "credential found" and "scan failed" rather than only the
+end-to-end spy.
+
+**Skipping the secrets analyzer closes the gate rather than opening it.** `--skip gitleaks` means
+nothing checked the diff, which is exactly the fail-closed case. This was not obvious from the plan and
+has its own test, because the intuitive reading — skip the analyzer, skip its consequences — is the
+unsafe one.
+
+**Timings are reported by default, not behind `--verbose`.** The plan put per-analyzer timings in the
+text output; keeping them unconditional is a small decision with a reason worth writing down: the
+type-aware lint latency kill criterion is measured in minutes of wall clock, and a number nobody knows
+to ask for is a number nobody measures.

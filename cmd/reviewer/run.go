@@ -7,15 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 
-	"github.com/adamtait/reviewer/internal/analyzers/gitleaks"
 	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/diff"
-	"github.com/adamtait/reviewer/internal/gate"
 	"github.com/adamtait/reviewer/internal/pluginhost"
 	"github.com/adamtait/reviewer/internal/reporters"
+	"github.com/adamtait/reviewer/internal/sequencer"
 	"github.com/adamtait/reviewer/pkg/finding"
 	"github.com/adamtait/reviewer/pkg/plugin"
 )
@@ -67,7 +65,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	if len(only) == 0 && len(skip) == 0 {
 		only, skip = cfg.Analyzers.Only, cfg.Analyzers.Skip
 	}
-	analyzers := selectAnalyzers(host.Analyzers(), only, skip)
+
 	req := plugin.AnalyzeRequest{
 		Root:         cfg.Root,
 		Changed:      diff.ToPluginFiles(files),
@@ -75,24 +73,16 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		ContextLines: cfg.Analyzers.ContextLines,
 	}
 
-	// Two passes with the gate between them. Every deterministic analyzer runs
-	// first; only then, and only if nothing turned up a credential, may anything
-	// in the model lane run (ADR-0012). The ordering is structural rather than a
-	// check inside the loop, so there is no path from a finding to a model call.
-	deterministic, llm := splitByLane(analyzers)
-
-	all, scanned := runPass(ctx, host, deterministic, req, &run)
-
-	gateState := gate.Decide(all, scanned)
-	switch {
-	case gateState.Blocked && len(llm) > 0:
-		run.Skipped = append(run.Skipped, gateState.Reason)
-	case gateState.Blocked:
-		// Nothing in the model lane to block; saying so would be noise.
-	default:
-		found, _ := runPass(ctx, host, llm, req, &run)
-		all = append(all, found...)
-	}
+	result := sequencer.Run(ctx, host, req, sequencer.Options{
+		Only:    only,
+		Skip:    skip,
+		Timeout: cfg.Analyzers.Timeout,
+	})
+	all := result.Findings
+	run.Warnings = append(run.Warnings, result.Warnings...)
+	run.Skipped = append(run.Skipped, result.Skipped...)
+	run.Timings = timings(result.Timings)
+	ranAnything := len(result.Timings) > 0
 
 	kept, dropped := diff.Filter(all, files)
 	if dropped > 0 {
@@ -110,43 +100,11 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	host.Close()
 	run.Warnings = append(run.Warnings, host.Warnings()...)
 
-	if len(analyzers) == 0 {
+	if !ranAnything {
 		run.Warnings = append(run.Warnings,
 			"no analyzers are configured; see .review/config.yaml and `reviewer init`")
 	}
 	return rep.Report(ctx, run)
-}
-
-// splitByLane separates the analyzers the gate may block from those it may not.
-func splitByLane(in []pluginhost.Registered) (deterministic, llm []pluginhost.Registered) {
-	for _, a := range in {
-		if a.Lane == finding.LaneLLM {
-			llm = append(llm, a)
-		} else {
-			deterministic = append(deterministic, a)
-		}
-	}
-	return deterministic, llm
-}
-
-// runPass runs one lane's analyzers. It also reports whether a secrets analyzer
-// completed, which is what lets the gate tell "clean" from "not checked".
-func runPass(ctx context.Context, host *pluginhost.Manager, analyzers []pluginhost.Registered,
-	req plugin.AnalyzeRequest, run *reporters.Run) (found []finding.Finding, secretsScanned bool) {
-
-	for _, a := range analyzers {
-		results, warnings, err := host.Analyze(ctx, a.PluginID, a.ID, req)
-		if err != nil {
-			run.Warnings = append(run.Warnings, fmt.Sprintf("%s: %v", a.ID, err))
-			continue
-		}
-		if a.ID == gitleaks.ID {
-			secretsScanned = true
-		}
-		run.Warnings = append(run.Warnings, warnings...)
-		found = append(found, results...)
-	}
-	return found, secretsScanned
 }
 
 func changedFiles(ctx context.Context, o options, root string) ([]diff.File, error) {
@@ -161,32 +119,6 @@ func changedFiles(ctx context.Context, o options, root string) ([]diff.File, err
 	default:
 		return diff.Changed(ctx, root, o.base)
 	}
-}
-
-// selectAnalyzers applies --only and --skip and puts the survivors in the order
-// their descriptors asked for. The ordering policy itself, with timings and the
-// fail-open rules, lands in PR-12.
-func selectAnalyzers(in []pluginhost.Registered, only, skip []string) []pluginhost.Registered {
-	wanted := func(id string) bool {
-		if len(only) > 0 {
-			return contains(only, id)
-		}
-		return !contains(skip, id)
-	}
-
-	out := make([]pluginhost.Registered, 0, len(in))
-	for _, a := range in {
-		if wanted(a.ID) {
-			out = append(out, a)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Order != out[j].Order {
-			return out[i].Order < out[j].Order
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out
 }
 
 func unavailable(host *pluginhost.Manager) []string {
@@ -213,11 +145,18 @@ func reporter(name string, out, log io.Writer) (reporters.Reporter, error) {
 	return nil, errUsage{fmt.Errorf("unknown reporter %q; want text or rdjson", name)}
 }
 
-func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
+// timings formats the per-analyzer timings for the report. Latency is the risk
+// this project's kill criteria are written against, so a run always says where
+// its time went.
+func timings(in []sequencer.Timing) []reporters.Timing {
+	out := make([]reporters.Timing, 0, len(in))
+	for _, t := range in {
+		out = append(out, reporters.Timing{
+			Analyzer: t.Analyzer,
+			Elapsed:  t.Elapsed,
+			Findings: t.Findings,
+			Failed:   t.Failed,
+		})
 	}
-	return false
+	return out
 }

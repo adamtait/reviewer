@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -15,13 +16,26 @@ import (
 // Writing is deliberately a later step. An installer that inspects and writes in
 // one pass gives a person no moment at which to disagree with a detection, and
 // every detection here is a guess that ends up in a generated config.
-func initialize(o options, stdout, stderr io.Writer) error {
+func initialize(o options, stdin io.Reader, stdout, stderr io.Writer) error {
 	detected, err := installer.Detect(o.root)
 	if err != nil {
 		return fmt.Errorf("inspecting %s: %w", o.root, err)
 	}
 
-	plan := installer.BuildPlan(detected, version, o.force)
+	// Asked before the plan is built, because the answer changes what the plan
+	// says. A prompt after the plan would be asking someone to approve a plan and
+	// then altering it.
+	provider, err := installer.ChooseProvider(stdin, stdout, o.provider, o.yes)
+	if err != nil && !errors.Is(err, installer.ErrNoProviderChosen) {
+		// A name that is not a provider is misuse: installing something other than
+		// what was asked for would be worse than refusing.
+		return errUsage{err}
+	}
+
+	plan := installer.BuildPlan(detected, version, installer.Options{
+		Force:    o.force,
+		Provider: provider,
+	})
 	if err := plan.Write(stdout); err != nil {
 		return err
 	}

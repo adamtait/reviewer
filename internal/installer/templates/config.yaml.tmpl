@@ -41,6 +41,11 @@ laneB:
   enabled: false
 {{- if .Provider }}
   provider: {{ .Provider }}
+  # The model itself is named by REVIEW_MODEL_NAME in the environment, so that
+  # changing it is not a commit. See .env.example.
+{{- else }}
+  # No access path was chosen at install. Add one with `reviewer init --provider`,
+  # or set laneB.provider by hand; see docs/providers.md in adamtait/reviewer.
 {{- end }}
 
 github:

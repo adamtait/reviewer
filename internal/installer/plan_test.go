@@ -11,7 +11,7 @@ import (
 
 func TestPlanForTheFixtureRepository(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
-	p := BuildPlan(mustDetect(t, root), "v0.1.0", false)
+	p := BuildPlan(mustDetect(t, root), "v0.1.0", Options{})
 
 	if got, want := p.Summary(), "5 files to create, 1 devDependency to add, 0 overwrites"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
@@ -51,7 +51,7 @@ func TestPlanLeavesExistingFilesAloneUnlessForced(t *testing.T) {
 	write(t, root, ".review/config.yaml", "analyzers: []\n")
 	d := mustDetect(t, root)
 
-	plain := BuildPlan(d, "v0.1.0", false)
+	plain := BuildPlan(d, "v0.1.0", Options{})
 	if got, want := plain.Summary(), "4 files to create, 1 devDependency to add, 0 overwrites"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
@@ -59,7 +59,7 @@ func TestPlanLeavesExistingFilesAloneUnlessForced(t *testing.T) {
 		t.Errorf("want the existing config left alone, got %q", plain.Files[0].Action)
 	}
 
-	forced := BuildPlan(d, "v0.1.0", true)
+	forced := BuildPlan(d, "v0.1.0", Options{Force: true})
 	if got, want := forced.Summary(), "4 files to create, 1 devDependency to add, 1 overwrites"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
@@ -72,7 +72,7 @@ func TestPlanAddsNoPluginToARepositoryWithoutTypeScript(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "package.json", `{"name":"plain"}`)
 
-	p := BuildPlan(mustDetect(t, root), "v0.1.0", false)
+	p := BuildPlan(mustDetect(t, root), "v0.1.0", Options{})
 	if len(p.DevDependencies) != 0 {
 		t.Errorf("nothing for the plugin to analyze; got %+v", p.DevDependencies)
 	}
@@ -87,14 +87,15 @@ func TestPlanAddsNoPluginToARepositoryWithoutTypeScript(t *testing.T) {
 func TestPlanNamesWhatItCouldNotFind(t *testing.T) {
 	root := t.TempDir()
 
-	p := BuildPlan(mustDetect(t, root), "v0.1.0", false)
+	p := BuildPlan(mustDetect(t, root), "v0.1.0", Options{})
 	if !mentions(p.Notes, "not a Node project") {
 		t.Errorf("want the absence of package.json explained, got %v", p.Notes)
 	}
-	// One note, not seven: once there is no package.json, every other Node-shaped
-	// absence follows from it and repeating them buries the one that matters.
-	if len(p.Notes) != 1 {
-		t.Errorf("want a single explanation, got %v", p.Notes)
+	// One Node-shaped note, not seven: once there is no package.json, every other
+	// such absence follows from it and repeating them buries the one that matters.
+	// The provider note is about a choice, not a gap, and is counted separately.
+	if got := len(gaps(mustDetect(t, root))); got != 1 {
+		t.Errorf("want a single explanation for the absences, got %d: %v", got, p.Notes)
 	}
 	// A non-Node repository still gets a full install: the binary analyzers work.
 	if got, want := p.Summary(), "5 files to create, 0 devDependencies to add, 0 overwrites"; got != want {

@@ -243,7 +243,16 @@ type data struct {
 	InstallCommand   string
 	ReviewerVersion  string
 	ReviewerChecksum string
-	LaneBEnabled     bool
+
+	// NeedsModelSecret puts the model credential into the generated workflow's
+	// env. It follows the provider, not laneB.enabled, so that turning the model
+	// lane on is the one edit the exit criterion promises rather than two.
+	NeedsModelSecret bool
+	// ProviderWorksInCI is false for the subscription paths, and the generated
+	// workflow says so where someone would otherwise wonder why the lane is quiet.
+	ProviderWorksInCI bool
+	// ProviderEnv are the variables .env.example names.
+	ProviderEnv []string
 }
 
 // templateData derives the generated files from the detection and from
@@ -265,7 +274,11 @@ func templateData(p Plan, pluginVersion string) data {
 		PackageManager:   packageManagerOrNpm(d.PackageManager),
 		ReviewerVersion:  workflowVersion(pluginVersion),
 		ReviewerChecksum: checksumPlaceholder,
-		LaneBEnabled:     defaults.LaneB.Enabled,
+
+		Provider:          p.Options.Provider.ID,
+		NeedsModelSecret:  p.Options.Provider.NeedsAPIKey(),
+		ProviderWorksInCI: p.Options.Provider.ID == "" || p.Options.Provider.WorksInCI,
+		ProviderEnv:       p.Options.Provider.Env,
 	}
 	out.InstallCommand = ciInstallCommand(out.PackageManager)
 

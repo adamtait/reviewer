@@ -101,7 +101,7 @@ func TestForceReplacesAnExistingFile(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
 	write(t, root, ".review/config.yaml", "plugins: []\n")
 
-	plan := BuildPlan(mustDetect(t, root), releaseV, true)
+	plan := BuildPlan(mustDetect(t, root), releaseV, Options{Force: true})
 	report, err := Install(plan, releaseV)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestTheGeneratedWorkflowUsesTheDetectedPackageManager(t *testing.T) {
 // carries an obvious placeholder and says so as an outstanding step.
 func TestTheGeneratedWorkflowPinsAReleaseOrSaysItCannot(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
-	plan := BuildPlan(mustDetect(t, root), releaseV, false)
+	plan := BuildPlan(mustDetect(t, root), releaseV, Options{})
 	if _, err := Install(plan, releaseV); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestTheGeneratedWorkflowPinsAReleaseOrSaysItCannot(t *testing.T) {
 	}
 
 	dev := testfixture.Destination(t, "tiny-monorepo")
-	devPlan := BuildPlan(mustDetect(t, dev), "dev", false)
+	devPlan := BuildPlan(mustDetect(t, dev), "dev", Options{})
 	report, err := Install(devPlan, "dev")
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestInstallCommandFollowsThePackageManager(t *testing.T) {
 // invent a path makes --dry-run's file list a guess.
 func TestRenderProducesOnlyPlannedFiles(t *testing.T) {
 	root := testfixture.Destination(t, "tiny-monorepo")
-	plan := BuildPlan(mustDetect(t, root), releaseV, false)
+	plan := BuildPlan(mustDetect(t, root), releaseV, Options{})
 
 	files, err := Render(plan, releaseV)
 	if err != nil {
@@ -244,7 +244,7 @@ func TestRenderProducesOnlyPlannedFiles(t *testing.T) {
 
 func install(t *testing.T, root string) Report {
 	t.Helper()
-	plan := BuildPlan(mustDetect(t, root), releaseV, false)
+	plan := BuildPlan(mustDetect(t, root), releaseV, Options{})
 	report, err := Install(plan, releaseV)
 	if err != nil {
 		t.Fatal(err)

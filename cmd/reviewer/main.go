@@ -28,6 +28,11 @@ var version = "dev"
 // exitUsage is the one non-zero status this program may return.
 const exitUsage = 2
 
+// stdin is what `init` reads a provider choice from. A package variable rather
+// than a parameter threaded through run: only one subcommand asks anything, and
+// widening run's signature for it would touch every call site that does not.
+var stdin io.Reader = os.Stdin
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, os.Getenv); err != nil {
 		fmt.Fprintf(os.Stderr, "reviewer: %v\n", err)
@@ -50,7 +55,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		return err
 	}
 	if o.subcommand == "init" {
-		return initialize(o, stdout, stderr)
+		return initialize(o, stdin, stdout, stderr)
 	}
 	if o.subcommand == "watch" {
 		return watch(ctx, o, stdout, stderr, getenv)

@@ -113,3 +113,44 @@ rather than a promise.
 **The strongest test here loads the generated config with the real loader** and calls `Validate()`. The
 loader rejects unknown keys, so a template that drifts from the schema fails at install time in a test
 rather than on someone's first real review.
+
+## PR-25 — provider selection
+
+**One canonical set of environment variable names across all six paths.** `REVIEW_MODEL_API_KEY`,
+`REVIEW_MODEL_BASE_URL`, `REVIEW_MODEL_NAME` — not `OPENAI_API_KEY` for one path and `GEMINI_API_KEY`
+for another. The generated workflow then wires one secret regardless of provider, and switching
+providers is a one-line config edit rather than a re-plumbing of CI.
+
+**No endpoint and no model name in the provider table.** An endpoint belongs to config (ADR-0004), and
+a model name goes stale faster than a release does; both are named as variables. A test greps every
+field of every provider for anything host-shaped, and another asserts the generated config carries no
+`laneB.model`.
+
+**The installer's six and the engine's six are asserted to be the same six.** A provider the installer
+could write but `config.Validate` would reject is a config that fails on the first real review, which is
+the worst place to discover it.
+
+**The subscription paths carry a real consequence, and it is written where it will be read.** A hosted
+runner has no signed-in `claude` or `codex` session, and storing one would mean putting a person's
+subscription credentials in a shared secret. So the generated workflow, on those paths, omits the model
+secret and carries a comment saying why the lane is quiet there — at the exact place someone would
+otherwise go looking.
+
+**Deviation: `review.yml.tmpl` changed too**, though the plan lists only `config.yaml.tmpl` for this PR.
+The workflow's model-secret line was previously gated on `laneB.enabled`, which is always false in a
+generated config — so it never appeared, and turning the lane on would have been two edits in two files
+rather than the one edit the exit criterion promises. It is now gated on whether the chosen provider
+needs a key.
+
+**An unknown `--provider` is a usage error and exits 2, before anything is written.** Silently
+installing something other than what was asked for is worse than refusing, and an install that
+half-happened and then complained is worse than one that never started. A test asserts `git status`
+is clean after a refusal.
+
+**No terminal detection.** `ChooseProvider` prints the list and reads one line; EOF with nothing read
+means no provider. A non-interactive caller therefore gets the same answer as someone pressing enter,
+with no `isatty` and no behaviour that differs between a pipe and a terminal.
+
+**`BuildPlan` grew an `Options` struct** rather than a third positional bool. `--dry-run --provider
+gemini` has to show what choosing gemini would write, which means the choice belongs in the plan, and a
+plan built from `(force, provider, …)` positionally would be unreadable by the fourth one.

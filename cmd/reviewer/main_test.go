@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/testfixture"
 )
 
@@ -550,5 +551,46 @@ func TestInitThenReviewOnAFreshRepository(t *testing.T) {
 	// depends on which binaries this machine has, so that is not asserted.
 	if !strings.Contains(stdout.String(), "plugin typescript") {
 		t.Errorf("want the plugin's failure reported by name; got:\n%s", stdout.String())
+	}
+}
+
+func TestInitProviderFlagWritesTheProviderBlock(t *testing.T) {
+	root := testfixture.Destination(t, "tiny-monorepo")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"init", "--root", root, "--provider", "gemini", "--yes"},
+		&stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.Resolve(root, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LaneB.Provider != "gemini" || cfg.LaneB.Enabled {
+		t.Errorf("want gemini configured and the lane off, got %+v", cfg.LaneB)
+	}
+	// --yes must have asked nothing.
+	if strings.Contains(stdout.String(), "Which model access path") {
+		t.Errorf("--yes prompted:\n%s", stdout.String())
+	}
+}
+
+func TestInitRejectsAnUnknownProvider(t *testing.T) {
+	root := testfixture.Destination(t, "tiny-monorepo")
+	git := testfixture.Git(t, root)
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"init", "--root", root, "--provider", "nope", "--yes"},
+		&stdout, &stderr, noEnv)
+	var usageErr errUsage
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+	// Refused before anything was written: an install that half-happened and then
+	// complained would be worse than one that did not start.
+	if status := git("status", "--porcelain"); status != "" {
+		t.Errorf("a refused provider still wrote files:\n%s", status)
 	}
 }

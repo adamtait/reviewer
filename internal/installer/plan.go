@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/adamtait/reviewer/internal/config"
 )
 
 // PluginPackage is the npm name of the TypeScript plugin. The installer adds it
@@ -50,6 +52,17 @@ type Dependency struct {
 	Purpose string
 }
 
+// Options are the choices a person makes, as distinct from the facts Detect
+// gathers. Kept separate because every field here is something the plan cannot
+// work out for itself.
+type Options struct {
+	// Force replaces files that already exist.
+	Force bool
+	// Provider is the chosen model access path. The zero value means none was
+	// chosen, which is a complete install: the model lane is off regardless.
+	Provider Provider
+}
+
 // Plan is every decision init makes, gathered before any of it happens, so that
 // --dry-run can print the whole thing and writing is a separate step over a value
 // that has already been inspected.
@@ -57,17 +70,22 @@ type Plan struct {
 	Detected        Detected
 	Files           []File
 	DevDependencies []Dependency
+	// Options are the choices this plan was built with, carried so that rendering
+	// and reporting cannot disagree with what was planned.
+	Options Options
 	// Notes are the things the installer could not determine, each with what it
 	// means for the resulting review. A plan that silently omits what it did not
 	// find is how an install looks successful and reviews nothing.
 	Notes []string
 }
 
-// BuildPlan decides what init would do to the detected repository. force says
-// whether an existing file would be replaced; it changes the plan's shape rather
-// than the writer's behaviour, so --dry-run --force shows what --force would do.
-func BuildPlan(d Detected, pluginVersion string, force bool) Plan {
-	p := Plan{Detected: d}
+// BuildPlan decides what init would do to the detected repository. Options change
+// the plan's shape rather than the writer's behaviour, so `--dry-run --force`
+// shows what `--force` would do and `--dry-run --provider gemini` shows what
+// choosing gemini would write.
+func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
+	p := Plan{Detected: d, Options: opts}
+	force := opts.Force
 
 	for _, f := range []struct{ path, purpose string }{
 		{".review/config.yaml", "what runs, against what, and how it is reported"},
@@ -97,6 +115,7 @@ func BuildPlan(d Detected, pluginVersion string, force bool) Plan {
 	}
 
 	p.Notes = append(p.Notes, gaps(d)...)
+	p.Notes = append(p.Notes, providerNotes(opts.Provider)...)
 	return p
 }
 
@@ -129,6 +148,30 @@ func pluginVersionFor(binaryVersion string) (version, note string) {
 	return "latest", fmt.Sprintf(
 		"this binary reports version %q, which is not a release, so the plugin would be "+
 			"added as \"latest\" instead of pinned to a matching version", binaryVersion)
+}
+
+// providerNotes says what the chosen path implies. Both notes are consequences a
+// person would otherwise discover after the install rather than before it.
+func providerNotes(p Provider) []string {
+	if p.ID == "" {
+		return []string{
+			"no model access path chosen: the deterministic lane is fully installed and the " +
+				"model lane has nothing to call. Re-run with --provider to add one",
+		}
+	}
+	var notes []string
+	if !p.WorksInCI {
+		notes = append(notes, fmt.Sprintf(
+			"%s drives the %s CLI and a signed-in subscription, neither of which exists on a "+
+				"hosted runner: the model lane will run locally and be skipped in the workflow",
+			p.ID, p.Binary))
+	}
+	if p.NeedsAPIKey() {
+		notes = append(notes, fmt.Sprintf(
+			"%s needs %s in the environment. .env.example names it; no value is written anywhere",
+			p.ID, config.EnvModelAPIKey))
+	}
+	return notes
 }
 
 // gaps reports what the installer did not find and what each absence costs. Every
@@ -275,7 +318,15 @@ func (p Plan) detectedRows() [][2]string {
 		{"eslint config", orNotFound(d.ESLintConfig)},
 		{"dependency-cruiser", orNotFound(d.DepCruiserConfig)},
 		{"github repo", orNotFound(d.Remote)},
+		{"model access path", orNone(p.Options.Provider.ID)},
 	}
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none chosen"
+	}
+	return s
 }
 
 func orNotFound(s string) string {

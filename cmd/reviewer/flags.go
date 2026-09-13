@@ -28,6 +28,8 @@ type options struct {
 	skip       []string
 	dryRun     bool
 	force      bool
+	provider   string
+	yes        bool
 	version    bool
 }
 
@@ -46,6 +48,10 @@ flags:
   --dry-run         with --reporter github, print what would be posted and post nothing;
                     with init, print the plan and write nothing
   --force           with init, replace files that already exist
+  --provider NAME   with init, configure this model access path. One of
+                    openai-compatible, openai, gemini, anthropic, claude-code, codex
+  --yes             with init, do not prompt; leave the model lane unconfigured
+                    unless --provider says otherwise
   --only IDs        run only these analyzers, comma-separated
   --skip IDs        run everything except these analyzers, comma-separated
   --version         print the version and exit
@@ -93,6 +99,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.statePath, "state", ".review/watch-state.json", "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.force, "force", false, "")
+	fs.StringVar(&o.provider, "provider", "", "")
+	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
 	if err := fs.Parse(args); err != nil {
@@ -123,6 +131,10 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("--pr must be a positive pull request number")}
 	case o.force && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--force applies to init, which decides what to overwrite")}
+	case o.provider != "" && o.subcommand != "init":
+		return options{}, errUsage{fmt.Errorf("--provider applies to init; a review reads the provider from config")}
+	case o.yes && o.subcommand != "init":
+		return options{}, errUsage{fmt.Errorf("--yes applies to init, which is the only subcommand that asks anything")}
 	}
 	return o, nil
 }

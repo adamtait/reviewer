@@ -37,7 +37,13 @@ jobs:
           checksum: "{{ .ReviewerChecksum }}"
         env:
           GITHUB_TOKEN: ${{ "{{" }} secrets.GITHUB_TOKEN {{ "}}" }}
-{{- if .LaneBEnabled }}
+{{- if .NeedsModelSecret }}
           # Absent on a fork's pull request, which is what skips the model lane.
+          # Set this secret before turning laneB.enabled on in .review/config.yaml.
           REVIEW_MODEL_API_KEY: ${{ "{{" }} secrets.REVIEW_MODEL_API_KEY {{ "}}" }}
+{{- end }}
+{{- if not .ProviderWorksInCI }}
+          # The chosen model access path ({{ .Provider }}) drives a CLI signed in to
+          # a subscription. A hosted runner has no such session, so the model lane
+          # is skipped here and runs only from a machine where you are logged in.
 {{- end }}

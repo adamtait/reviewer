@@ -17,23 +17,24 @@ const defaultBase = "main"
 
 // options is the parsed command line.
 type options struct {
-	subcommand string
-	statePath  string
-	root       string
-	base       string
-	staged     bool
-	pr         int
-	config     string
-	reporter   string
-	only       []string
-	skip       []string
-	dryRun     bool
-	force      bool
-	provider   string
-	rulesDir   string
-	write      bool
-	yes        bool
-	version    bool
+	subcommand   string
+	statePath    string
+	root         string
+	base         string
+	staged       bool
+	pr           int
+	config       string
+	reporter     string
+	only         []string
+	skip         []string
+	dryRun       bool
+	force        bool
+	provider     string
+	rulesDir     string
+	write        bool
+	noInvalidate bool
+	yes          bool
+	version      bool
 }
 
 const usage = `reviewer — advisory code review over a pull request or a local diff
@@ -53,6 +54,9 @@ flags:
   --force           with init, replace files that already exist
   --rules DIR       with rules test, the rule directory (default: .review/rules)
   --write           with baseline, record the measurement
+  --no-invalidate   skip the model lane's second, disproving pass. For debugging
+                    what the first pass produces; the run says its findings are
+                    unchecked
   --provider NAME   with init, configure this model access path. One of
                     openai-compatible, openai, gemini, anthropic, claude-code, codex
   --yes             with init, do not prompt; leave the model lane unconfigured
@@ -134,6 +138,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.provider, "provider", "", "")
 	fs.StringVar(&o.rulesDir, "rules", "", "")
 	fs.BoolVar(&o.write, "write", false, "")
+	fs.BoolVar(&o.noInvalidate, "no-invalidate", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 

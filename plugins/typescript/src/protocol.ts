@@ -63,6 +63,8 @@ export interface AnalyzeRequest {
   projects?: string[];
   /** The ref the diff was taken against; absent for a staged diff. */
   base?: string;
+  /** What the deterministic lane already found. Set only for model-lane analyzers. */
+  prior?: Finding[];
   contextLines?: number;
   /** This analyzer's config block, passed through untouched. */
   settings?: unknown;

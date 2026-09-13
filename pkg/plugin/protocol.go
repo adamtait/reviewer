@@ -118,6 +118,14 @@ type AnalyzeRequest struct {
 	// ContextLines is how much surrounding source to include where an analyzer
 	// has a choice.
 	ContextLines int `json:"contextLines,omitempty"`
+	// Prior carries what the deterministic lane already reported, and is set only
+	// for analyzers in the model lane — which run in a second pass, after the
+	// secrets gate has decided (ADR-0012). An analyzer that sees it can avoid
+	// rediscovering what a cheaper analyzer already found, and spend its attention
+	// on what those cannot see.
+	//
+	// Empty in the first pass, by construction: nothing has been found yet.
+	Prior []finding.Finding `json:"prior,omitempty"`
 	// Settings is this analyzer's block from the destination repository's config,
 	// passed through untouched. The protocol does not know its shape, which is how
 	// an analyzer gains an option without a protocol change.

@@ -86,7 +86,7 @@ func TestTheCapIsAPropertyOfTheCategoryTable(t *testing.T) {
 	// And the prompt does not carry the ceiling, so nobody can weaken it by
 	// editing wording.
 	r := Reviewer{}
-	prompt, err := r.prompt("review.md")
+	prompt, err := r.prompt("review.md", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestARefusalIsAWarningRatherThanAFailure(t *testing.T) {
 // The prompt carries the vocabulary, so adding a category cannot leave the model
 // unaware of it.
 func TestThePromptListsEveryCategory(t *testing.T) {
-	prompt, err := Reviewer{}.prompt("review.md")
+	prompt, err := Reviewer{}.prompt("review.md", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestThePromptListsEveryCategory(t *testing.T) {
 	}
 	// Byte-stable: the category list is sorted, so the prompt does not change
 	// between runs and a cached response stays valid.
-	again, err := Reviewer{}.prompt("review.md")
+	again, err := Reviewer{}.prompt("review.md", nil)
 	if err != nil || again != prompt {
 		t.Error("the prompt is not stable across calls")
 	}
@@ -238,7 +238,7 @@ func TestADestinationCanOverrideAPrompt(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, ".review/prompts/review.md", "Our own instructions. Categories:\n{{ .Categories }}")
 
-	got, err := Reviewer{Root: root, PromptDir: ".review/prompts"}.prompt("review.md")
+	got, err := Reviewer{Root: root, PromptDir: ".review/prompts"}.prompt("review.md", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

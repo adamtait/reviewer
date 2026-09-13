@@ -958,3 +958,12 @@ func TestAStagedReviewCarriesNoBase(t *testing.T) {
 		t.Errorf("want no base for a staged review, got %q", base)
 	}
 }
+
+func TestNoInvalidateBelongsToAReview(t *testing.T) {
+	// It is a review flag, so it parses on a review and is rejected nowhere else
+	// in particular — but it must actually reach the configuration.
+	o, err := parse([]string{"--no-invalidate"}, &bytes.Buffer{})
+	if err != nil || !o.noInvalidate {
+		t.Fatalf("got %+v %v", o, err)
+	}
+}

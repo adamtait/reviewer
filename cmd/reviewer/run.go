@@ -33,6 +33,11 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		return err
 	}
 
+	if o.noInvalidate {
+		// A flag overrides the file, as everywhere else.
+		cfg.LaneB.Invalidate = false
+	}
+
 	rep, err := reporter(ctx, o, cfg, secrets, stdout, stderr)
 	if err != nil {
 		return err
@@ -52,7 +57,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	host := pluginhost.New("reviewer/"+version, stderr)
 	// The built-in analyzers are a plugin like any other, reached over the
 	// protocol through in-memory pipes rather than a subprocess (ADR-0027).
-	if err := host.AddLocal(ctx, builtin.New(cfg, version), cfg.Analyzers.Timeout); err != nil {
+	if err := host.AddLocal(ctx, builtin.New(cfg, secrets, version), cfg.Analyzers.Timeout); err != nil {
 		run.Warnings = append(run.Warnings, err.Error())
 	}
 	// Closed explicitly below so that shutdown warnings reach the report; the

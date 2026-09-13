@@ -34,13 +34,13 @@ func baseline(ctx context.Context, o options, stdout, stderr io.Writer, getenv f
 		return errUsage{fmt.Errorf("baseline needs --write; there is nothing else it does yet")}
 	}
 
-	cfg, _, err := config.Resolve(o.root, o.config, getenv)
+	cfg, secrets, err := config.Resolve(o.root, o.config, getenv)
 	if err != nil {
 		return err
 	}
 
 	host := pluginhost.New("reviewer/"+version, stderr)
-	if err := host.AddLocal(ctx, builtin.New(cfg, version), cfg.Analyzers.Timeout); err != nil {
+	if err := host.AddLocal(ctx, builtin.New(cfg, secrets, version), cfg.Analyzers.Timeout); err != nil {
 		fmt.Fprintf(stderr, "reviewer: %v\n", err)
 	}
 	defer host.Close()

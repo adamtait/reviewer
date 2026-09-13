@@ -64,7 +64,7 @@ type candidate struct {
 // discards half of what it is told looks identical to one that found nothing, and
 // the difference matters when deciding whether the lane earns its cost.
 func (r Reviewer) Review(ctx context.Context, in Input) ([]finding.Finding, []string, error) {
-	system, err := r.prompt("review.md")
+	system, err := r.prompt("review.md", nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -134,7 +134,11 @@ func (r Reviewer) parse(reply string) ([]finding.Finding, []string, error) {
 }
 
 // prompt loads a prompt, preferring the destination repository's override.
-func (r Reviewer) prompt(name string) (string, error) {
+//
+// The data a prompt can reference is passed in rather than assembled here, because
+// a placeholder this function does not know about renders as `<no value>` and
+// disappears — silently, and looking exactly like a prompt that never had it.
+func (r Reviewer) prompt(name string, data map[string]string) (string, error) {
 	body, err := r.promptBody(name)
 	if err != nil {
 		return "", err
@@ -143,8 +147,18 @@ func (r Reviewer) prompt(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("prompt %s: %w", name, err)
 	}
+	if data == nil {
+		data = map[string]string{}
+	}
+	if _, ok := data["Categories"]; !ok {
+		data["Categories"] = CategoryList()
+	}
+	// Missing keys are an error rather than `<no value>`: a prompt missing the
+	// thing it is about would otherwise be sent, and answered.
+	tmpl = tmpl.Option("missingkey=error")
+
 	out := &strings.Builder{}
-	if err := tmpl.Execute(out, map[string]string{"Categories": CategoryList()}); err != nil {
+	if err := tmpl.Execute(out, data); err != nil {
 		return "", fmt.Errorf("prompt %s: %w", name, err)
 	}
 	return out.String(), nil

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/adamtait/reviewer/pkg/finding"
@@ -42,6 +43,8 @@ type conn struct {
 
 	// files are the parent's ends of stdin, stdout and stderr, closed together
 	// when the conn is finished with.
+	// files are the parent's ends of the three pipes for a child process. A
+	// built-in plugin has none.
 	files     []*os.File
 	closeOnce sync.Once
 }
@@ -64,6 +67,27 @@ func (c *conn) closeFiles() {
 			}
 		}
 	})
+}
+
+// hasExited reports whether the plugin process is already gone.
+func (c *conn) hasExited() bool {
+	select {
+	case <-c.exited:
+		return true
+	default:
+		return false
+	}
+}
+
+// abort stops a plugin that has stopped answering. A child process gets its
+// group killed; a built-in handler only has its input closed, since there is no
+// process and no way to interrupt a goroutine mid-call.
+func (c *conn) abort() {
+	if c.isLocal() {
+		_ = c.stdin.Close()
+		return
+	}
+	_ = killGroup(c.cmd)
 }
 
 func (c *conn) say(f plugin.Frame) error {
@@ -104,10 +128,10 @@ func (c *conn) hear(ctx context.Context, d time.Duration) (plugin.Frame, error) 
 		}
 		return r.frame, r.err
 	case <-timer.C:
-		_ = killGroup(c.cmd)
+		c.abort()
 		return plugin.Frame{}, fmt.Errorf("no response within %s", d)
 	case <-ctx.Done():
-		_ = killGroup(c.cmd)
+		c.abort()
 		return plugin.Frame{}, ctx.Err()
 	}
 }
@@ -119,6 +143,12 @@ func (c *conn) handshake(ctx context.Context, hostID string, deadline time.Durat
 		Protocol: plugin.Protocol,
 		Host:     hostID,
 	}); err != nil {
+		// A plugin that exits immediately makes this write fail with EPIPE, and
+		// the race between our write and its exit decides which error surfaces.
+		// Both describe the same fault, so report the useful one.
+		if c.hasExited() || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.ErrClosedPipe) {
+			return errStreamClosed
+		}
 		return fmt.Errorf("sending hello: %w", err)
 	}
 
@@ -182,7 +212,7 @@ func (c *conn) analyze(ctx context.Context, id string, req plugin.AnalyzeRequest
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			_ = killGroup(c.cmd)
+			c.abort()
 			return nil, nil, fmt.Errorf("no response within %s", c.timeout)
 		}
 		f, err := c.hear(ctx, remaining)

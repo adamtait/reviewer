@@ -26,5 +26,10 @@ precede any code land in PR-00.
 | [0009](0009-never-block-a-pull-request.md) | Never block a pull request | Accepted | PR-07 |
 | [0010](0010-keep-internal-data-out-of-history.md) | Keep secrets and internal data out of this repository's history | Accepted | PR-08 |
 | [0011](0011-opengrep-as-separate-process.md) | Invoke Opengrep only as a separate process | Accepted | PR-09 |
+| [0012](0012-abort-llm-lane-on-secret-detection.md) | Abort the model lane on any secret detection, and when the scan could not run | Accepted | PR-11 |
+| [0013](0013-fixed-analyzer-order-fail-open.md) | Run analyzers cheap-first in a fixed order, and fail open | Accepted | PR-12 |
+| [0014](0014-one-warm-plugin-one-ts-program.md) | Host every TypeScript analyzer in one warm plugin sharing one program | Accepted | PR-13a |
 | [0025](0025-ndjson-over-stdio.md) | Speak newline-delimited JSON over stdio | Accepted | PR-04 |
 | [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |
+| [0027](0027-builtin-plugins-over-in-memory-pipes.md) | Serve built-in analyzers over in-memory pipes | Accepted | PR-10 |
+| [0028](0028-inventory-distributed-dependencies-fully.md) | Inventory distributed dependencies in full, development dependencies at depth one | Accepted | PR-14 |

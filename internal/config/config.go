@@ -28,6 +28,7 @@ type Config struct {
 	Rules     Rules             `yaml:"rules"`
 	Guidance  []string          `yaml:"guidance"`
 	Projects  []string          `yaml:"projects"`
+	Gate      Gate              `yaml:"gate"`
 	LaneB     LaneB             `yaml:"laneB"`
 	GitHub    GitHub            `yaml:"github"`
 	Baselines map[string]string `yaml:"baselines"`
@@ -83,6 +84,16 @@ type LaneB struct {
 	Invalidate bool   `yaml:"invalidate"`
 }
 
+// Gate configures the secrets gate.
+type Gate struct {
+	// SecretsAnalyzers names the analyzers whose successful completion means the
+	// diff was actually checked. It is a list rather than a constant because
+	// gate.Decide matches findings by the "secrets/" rule namespace precisely so a
+	// replacement scanner works — and a hardcoded id here would undo that by
+	// leaving the model lane permanently blocked with "the scan could not run".
+	SecretsAnalyzers []string `yaml:"secretsAnalyzers"`
+}
+
 // GitHub holds the behaviour of the GitHub reporter.
 type GitHub struct {
 	// ResolveStaleThreads is opt-in: resolving a thread is the only action this
@@ -100,6 +111,7 @@ func Defaults() Config {
 			ContextLines: 20,
 		},
 		Rules: Rules{Dir: ".review/rules"},
+		Gate:  Gate{SecretsAnalyzers: []string{"gitleaks"}},
 		LaneB: LaneB{
 			Enabled:    false,
 			PromptDir:  ".review/prompts",
@@ -133,6 +145,12 @@ func (c Config) Validate() error {
 		}
 	}
 
+	if len(c.Gate.SecretsAnalyzers) == 0 {
+		// An empty list means nothing can ever mark the diff as checked, which
+		// would block the model lane forever. Refuse it rather than fail closed
+		// in a way nobody could diagnose.
+		problems = append(problems, errors.New("gate.secretsAnalyzers: must name at least one analyzer"))
+	}
 	if c.Analyzers.Timeout <= 0 {
 		problems = append(problems, errors.New("analyzers.timeout: must be greater than zero"))
 	}

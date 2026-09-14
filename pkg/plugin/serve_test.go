@@ -4,6 +4,7 @@ package plugin
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +25,7 @@ func (f *fakeHandler) Version() string { return "0.0.1" }
 func (f *fakeHandler) Describe() []Descriptor {
 	return f.descriptors
 }
-func (f *fakeHandler) Analyze(id string, req AnalyzeRequest) ([]finding.Finding, []string, error) {
+func (f *fakeHandler) Analyze(_ context.Context, id string, req AnalyzeRequest) ([]finding.Finding, []string, error) {
 	f.calls = append(f.calls, id)
 	if f.analyze != nil {
 		return f.analyze(id, req)
@@ -36,7 +37,7 @@ func (f *fakeHandler) Analyze(id string, req AnalyzeRequest) ([]finding.Finding,
 func converse(t *testing.T, h Handler, lines ...string) ([]Frame, string, error) {
 	t.Helper()
 	var out, logs bytes.Buffer
-	err := serve(h, strings.NewReader(strings.Join(lines, "\n")+"\n"), &out, &logs)
+	err := serve(context.Background(), h, strings.NewReader(strings.Join(lines, "\n")+"\n"), &out, &logs)
 
 	var frames []Frame
 	r := NewReader(bytes.NewReader(out.Bytes()))
@@ -172,7 +173,7 @@ func TestServeSurvivesGarbageOnTheWire(t *testing.T) {
 func TestServeTreatsAClosedStreamAsANormalExit(t *testing.T) {
 	// The host timed out or was killed. There is nothing to clean up and nothing
 	// to report, so this is not an error.
-	if err := serve(&fakeHandler{}, strings.NewReader(`{"type":"hello","protocol":1}`+"\n"), io.Discard, io.Discard); err != nil {
+	if err := serve(context.Background(), &fakeHandler{}, strings.NewReader(`{"type":"hello","protocol":1}`+"\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("want a clean exit on a closed stream, got %v", err)
 	}
 }

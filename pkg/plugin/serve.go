@@ -3,6 +3,7 @@
 package plugin
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -31,7 +32,13 @@ type Handler interface {
 	// Analyze runs one analyzer. Returning an error is not fatal to the run: the
 	// host records it and continues without this analyzer's findings. Warnings are
 	// for things worth saying that are not failures.
-	Analyze(id string, req AnalyzeRequest) (findings []finding.Finding, warnings []string, err error)
+	//
+	// The context carries the run's deadline. For a plugin in its own process it
+	// is the process lifetime and the host enforces the timeout by killing the
+	// process group; for a built-in plugin sharing the host's address space
+	// (ADR-0027) it is the only thing that can stop work in flight, so an
+	// implementation that spawns anything must pass it through.
+	Analyze(ctx context.Context, id string, req AnalyzeRequest) (findings []finding.Finding, warnings []string, err error)
 }
 
 // Serve runs the protocol conversation against r and w until the host says bye or
@@ -42,10 +49,23 @@ type Handler interface {
 // Serve writes protocol frames to w and nothing else, so a plugin must keep its
 // own diagnostics off that stream.
 func Serve(h Handler) error {
-	return serve(h, os.Stdin, os.Stdout, os.Stderr)
+	return serve(context.Background(), h, os.Stdin, os.Stdout, os.Stderr)
 }
 
-func serve(h Handler, r io.Reader, w, logw io.Writer) error {
+// ServeStreams is Serve against explicit streams. It exists for a plugin that is
+// compiled into the host and reached over in-memory pipes (ADR-0027), and for
+// tests that drive a handler without a process.
+func ServeStreams(h Handler, r io.Reader, w, logw io.Writer) error {
+	return serve(context.Background(), h, r, w, logw)
+}
+
+// ServeContext is ServeStreams with a context handed to every Analyze call. Used
+// by the host for built-in plugins, whose work cannot otherwise be bounded.
+func ServeContext(ctx context.Context, h Handler, r io.Reader, w, logw io.Writer) error {
+	return serve(ctx, h, r, w, logw)
+}
+
+func serve(ctx context.Context, h Handler, r io.Reader, w, logw io.Writer) error {
 	in, out := NewReader(r), NewWriter(w)
 	greeted := false
 
@@ -100,7 +120,7 @@ func serve(h Handler, r io.Reader, w, logw io.Writer) error {
 			if f.Request != nil {
 				req = *f.Request
 			}
-			findings, warnings, err := h.Analyze(f.Analyzer, req)
+			findings, warnings, err := h.Analyze(ctx, f.Analyzer, req)
 			if err != nil {
 				fmt.Fprintf(logw, "%s: %s: %v\n", h.Name(), f.Analyzer, err)
 				if err := out.Write(Frame{

@@ -4,24 +4,45 @@
 # drift apart. `make check` is the whole gate.
 
 SHELL := /bin/sh
+# Fail on the first failing stage even when make's output is piped.
+.SHELLFLAGS := -eu -c
 
 # Files that carry no SPDX header: prose, configuration, data, and the example
 # config a user copies into their own repository.
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
-                  -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**'
+                  -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**' \
+                  -ignore '**/node_modules/**' -ignore '**/dist/**'
 
-.PHONY: check build vet fmt-check test staticcheck license-check adrs licenses tools hooks secrets
+.PHONY: check build plugin plugin-test vet fmt-check test staticcheck license-check adrs licenses tools hooks secrets
 
-check: build vet fmt-check test staticcheck license-check adrs licenses
+check: build plugin vet fmt-check test staticcheck license-check adrs licenses
 
 build:
 	go build ./...
 
+# The cross-language conformance test drives the real plugin, so the gate builds
+# it. A skipped conformance test would hide a drift between the two sides of the
+# protocol, which is the one failure neither side's own tests can catch.
+plugin:
+	@if [ -d plugins/typescript/node_modules ]; then \
+		npm --prefix plugins/typescript run build; \
+	else \
+		echo "plugins/typescript: node_modules missing; run 'npm --prefix plugins/typescript ci'" >&2; \
+		exit 1; \
+	fi
+
+plugin-test:
+	npm --prefix plugins/typescript test
+
 vet:
 	go vet ./...
 
+# Driven by `go list` rather than by the filesystem: npm packages vendor Go
+# sources (eslint pulls in flatted, which ships a Go package), and `gofmt -l .`
+# would format-check third-party code. Clean today, one dependency bump from
+# breaking CI.
 fmt-check:
-	@unformatted="$$(gofmt -l .)"; \
+	@unformatted="$$(gofmt -l $$(go list -f '{{.Dir}}' ./...))"; \
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 
 test:

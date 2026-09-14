@@ -7,6 +7,7 @@ package reporters
 
 import (
 	"context"
+	"time"
 
 	"github.com/adamtait/reviewer/pkg/finding"
 )
@@ -28,6 +29,18 @@ type Run struct {
 	Warnings []string
 	// Skipped names analyzers that declined to run and why, one line each.
 	Skipped []string
+	// Timings is how long each analyzer took. Reported by default: latency is the
+	// risk this project's kill criteria are written against, so a slow analyzer
+	// should be visible without anyone thinking to ask.
+	Timings []Timing
+}
+
+// Timing is one analyzer's contribution to the run's wall clock.
+type Timing struct {
+	Analyzer string
+	Elapsed  time.Duration
+	Findings int
+	Failed   bool
 }
 
 // Reporter writes a run somewhere.

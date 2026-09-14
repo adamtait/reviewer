@@ -43,6 +43,14 @@ guidance:
 # means the whole repository.
 projects: []
 
+gate:
+  # The analyzers whose successful completion means the diff was actually
+  # checked. A list rather than a constant: the gate recognises a credential by
+  # the finding's `secrets/` rule namespace, so a replacement scanner works — and
+  # a hardcoded name here would undo that by leaving the model lane permanently
+  # blocked with "the scan could not run".
+  secretsAnalyzers: [gitleaks]
+
 laneB:
   # Off until someone turns it on deliberately. The installer never enables it.
   enabled: false

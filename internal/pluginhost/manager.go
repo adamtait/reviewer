@@ -179,6 +179,14 @@ func (m *Manager) Close() {
 		}
 		_ = c.stdin.Close()
 
+		if c.isLocal() {
+			// No process to signal; closing the pipe is the whole shutdown.
+			<-c.exited
+			c.drain()
+			c.dead = true
+			continue
+		}
+
 		select {
 		case <-c.exited:
 		case <-time.After(shutdownGrace):
@@ -201,6 +209,12 @@ func (m *Manager) kill(c *conn, reason string) {
 	}
 	c.dead = true
 	m.warnf("plugin %s: dropped for the rest of the run (%s)", c.id, reason)
+	if c.isLocal() {
+		_ = c.stdin.Close()
+		<-c.exited
+		c.drain()
+		return
+	}
 	_ = killGroup(c.cmd)
 	<-c.exited
 	c.drain()

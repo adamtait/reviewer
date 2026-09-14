@@ -33,7 +33,60 @@ var copyleft = []string{"GPL", "AGPL", "LGPL", "MPL", "EPL", "CDDL", "SSPL"}
 // dependency manifest.
 var boundaryOnly = []string{"opengrep", "semgrep"}
 
-var rowRe = regexp.MustCompile(`(?m)^\|\s*` + "`" + `([^` + "`" + `]+)` + "`" + `\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|`)
+var (
+	rowRe     = regexp.MustCompile(`(?m)^\|\s*` + "`" + `([^` + "`" + `]+)` + "`" + `\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|`)
+	sectionRe = regexp.MustCompile(`(?m)^## (.+)$`)
+)
+
+// section names the four parts of the inventory. Each is reconciled against its
+// own dependency source: mixing them would report every Go module as missing
+// from the npm tree, which is a real bug this shape prevents.
+type section int
+
+const (
+	sectionUnknown section = iota
+	sectionGo
+	// sectionNPM holds packages that are distributed inside the published npm
+	// package. Reconciled against the full transitive production tree.
+	sectionNPM
+	// sectionNPMDev holds direct development dependencies only. They are not
+	// distributed, so their transitive trees are not inventoried (ADR-0028).
+	sectionNPMDev
+	sectionBinaries
+	sectionTools
+)
+
+func sectionOf(heading string) section {
+	switch strings.ToLower(strings.TrimSpace(heading)) {
+	case "go modules":
+		return sectionGo
+	case "npm packages":
+		return sectionNPM
+	case "npm development dependencies":
+		return sectionNPMDev
+	case "external binaries":
+		return sectionBinaries
+	case "development tools":
+		return sectionTools
+	}
+	return sectionUnknown
+}
+
+// inventory is the parsed THIRD_PARTY_LICENSES.md: a license per name, per section.
+type inventory struct {
+	licenses map[string]string
+	sections map[string]section
+}
+
+func (inv inventory) namesIn(s section) map[string]string {
+	out := map[string]string{}
+	for name, sec := range inv.sections {
+		if sec == s {
+			out[name] = inv.licenses[name]
+		}
+	}
+	return out
+}
 
 func main() {
 	root := flag.String("root", ".", "repository root")
@@ -60,50 +113,73 @@ func check(root string) (violations []string, summary string, err error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("reading the inventory: %w", err)
 	}
-	inventory := parseInventory(string(raw))
+	inv := parseInventory(string(raw))
 
 	goMods, err := goModules(root)
 	if err != nil {
 		return nil, "", err
 	}
-	violations = append(violations, reconcile("go module", goMods, inventory)...)
+	violations = append(violations, reconcile("go module", goMods, inv.namesIn(sectionGo))...)
 
-	npmPkgs, npmChecked, err := npmPackages(root)
+	// Two npm reads, for two different questions. The distributed tree is what
+	// ships to a user and is inventoried in full; development dependencies are
+	// not distributed, so only the direct ones are listed (ADR-0028).
+	npmProd, npmChecked, err := npmPackages(root, "--all", "--omit=dev")
+	if err != nil {
+		return nil, "", err
+	}
+	npmDev, _, err := npmPackages(root, "--depth=0")
 	if err != nil {
 		return nil, "", err
 	}
 	if npmChecked {
-		violations = append(violations, reconcile("npm package", npmPkgs, inventory)...)
+		violations = append(violations, reconcile("distributed npm package", npmProd, inv.namesIn(sectionNPM))...)
+		violations = append(violations, reconcile("npm development dependency", npmDev, inv.namesIn(sectionNPMDev))...)
+	} else if listed := len(inv.namesIn(sectionNPM)) + len(inv.namesIn(sectionNPMDev)); listed > 0 {
+		violations = append(violations, fmt.Sprintf(
+			"THIRD_PARTY_LICENSES.md lists %d npm packages but the plugin's dependency tree could not be read", listed))
 	}
 
-	violations = append(violations, checkCopyleft(inventory, goMods, npmPkgs)...)
+	npmPkgs := merge(npmProd, npmDev)
+	violations = append(violations, checkCopyleft(inv, goMods, npmPkgs)...)
 	violations = append(violations, checkBoundary(root, goMods, npmPkgs)...)
 
 	sort.Strings(violations)
 
 	npmNote := "npm: not yet present"
 	if npmChecked {
-		npmNote = fmt.Sprintf("npm: %d packages", len(npmPkgs))
+		npmNote = fmt.Sprintf("npm: %d distributed, %d direct dev", len(npmProd), len(npmDev))
 	}
 	return violations, fmt.Sprintf("Go: %d modules, %s, 0 copyleft, inventory in sync", len(goMods), npmNote), nil
 }
 
-// parseInventory maps every backticked name in a table row to the license column
-// beside it.
-func parseInventory(md string) map[string]string {
-	out := map[string]string{}
-	for _, m := range rowRe.FindAllStringSubmatch(md, -1) {
-		name, second, third := m[1], strings.TrimSpace(m[2]), strings.TrimSpace(m[3])
-		// Module and package tables are name | version | license; the binary and
-		// tool tables are name | license | …, so take whichever column looks like
-		// a license.
-		license := third
-		if looksLikeLicense(second) {
-			license = second
+// parseInventory reads the document section by section, so each name is
+// reconciled against the dependency source it actually belongs to.
+func parseInventory(md string) inventory {
+	inv := inventory{licenses: map[string]string{}, sections: map[string]section{}}
+
+	// Split on headings, keeping each heading with the body that follows it.
+	headings := sectionRe.FindAllStringSubmatchIndex(md, -1)
+	for i, h := range headings {
+		current := sectionOf(md[h[2]:h[3]])
+		end := len(md)
+		if i+1 < len(headings) {
+			end = headings[i+1][0]
 		}
-		out[name] = license
+		for _, m := range rowRe.FindAllStringSubmatch(md[h[1]:end], -1) {
+			name, second, third := m[1], strings.TrimSpace(m[2]), strings.TrimSpace(m[3])
+			// Module and package tables are name | version | license; the binary
+			// and tool tables are name | license | …, so take whichever column
+			// looks like a license.
+			license := third
+			if looksLikeLicense(second) {
+				license = second
+			}
+			inv.licenses[name] = license
+			inv.sections[name] = current
+		}
 	}
-	return out
+	return inv
 }
 
 func looksLikeLicense(s string) bool {
@@ -145,12 +221,12 @@ func goModules(root string) (map[string]string, error) {
 // npmPackages reads the TypeScript plugin's dependency tree. It reports
 // checked=false when the plugin does not exist yet, so the absence of an npm
 // section is never mistaken for an npm section that passed.
-func npmPackages(root string) (pkgs map[string]string, checked bool, err error) {
+func npmPackages(root string, args ...string) (pkgs map[string]string, checked bool, err error) {
 	dir := filepath.Join(root, "plugins", "typescript")
 	if _, statErr := os.Stat(filepath.Join(dir, "package.json")); statErr != nil {
 		return map[string]string{}, false, nil
 	}
-	cmd := exec.Command("npm", "ls", "--all", "--json")
+	cmd := exec.Command("npm", append([]string{"ls", "--json"}, args...)...)
 	cmd.Dir = dir
 	out, _ := cmd.Output() // npm exits non-zero on peer-dep warnings; the JSON is still good
 	if len(out) == 0 {
@@ -180,43 +256,35 @@ func npmPackages(root string) (pkgs map[string]string, checked bool, err error) 
 	return pkgs, true, nil
 }
 
-func reconcile(kind string, actual map[string]string, inventory map[string]string) []string {
+// reconcile compares one section of the inventory against one dependency source,
+// failing in both directions: an undocumented dependency, and a documented one
+// that no longer exists.
+func reconcile(kind string, actual, listed map[string]string) []string {
 	var violations []string
 	for name := range actual {
-		if _, ok := inventory[name]; !ok {
+		if _, ok := listed[name]; !ok {
 			violations = append(violations,
 				fmt.Sprintf("%s %s is not listed in THIRD_PARTY_LICENSES.md", kind, name))
 		}
 	}
-	for name := range inventory {
-		if isBinaryOrTool(name) {
-			continue
-		}
+	for name := range listed {
 		if _, ok := actual[name]; !ok {
 			violations = append(violations,
-				fmt.Sprintf("THIRD_PARTY_LICENSES.md lists %s, which is no longer a dependency", name))
+				fmt.Sprintf("THIRD_PARTY_LICENSES.md lists %s as a %s, which is no longer a dependency", name, kind))
 		}
 	}
 	return violations
 }
 
-// isBinaryOrTool recognises inventory rows that describe spawned binaries and
-// development tools rather than linked dependencies. Those legitimately have no
-// entry in any dependency manifest — that is the whole point of ADR-0011.
-func isBinaryOrTool(name string) bool {
-	switch name {
-	case "opengrep", "gitleaks", "osv-scanner",
-		"honnef.co/go/tools", "github.com/google/addlicense":
-		return true
-	}
-	return false
-}
-
-func checkCopyleft(inventory, goMods, npmPkgs map[string]string) []string {
+// checkCopyleft refuses a copyleft license on anything this project links.
+// Spawned binaries and development tools are exempt by section, not by a hardcoded
+// name list: that is the distinction ADR-0011 turns on.
+func checkCopyleft(inv inventory, goMods, npmPkgs map[string]string) []string {
 	var violations []string
-	for name, license := range inventory {
-		if isBinaryOrTool(name) {
-			continue // spawned, not linked; see ADR-0011
+	for name, license := range inv.licenses {
+		switch inv.sections[name] {
+		case sectionBinaries, sectionTools:
+			continue // spawned or dev-only, not linked; see ADR-0011
 		}
 		_, isDep := goMods[name]
 		if !isDep {
@@ -265,4 +333,16 @@ func checkBoundary(root string, goMods, npmPkgs map[string]string) []string {
 		}
 	}
 	return violations
+}
+
+// merge combines two dependency sets for the copyleft check, which cares about
+// every license present rather than about which tree it came from.
+func merge(sets ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, set := range sets {
+		for name, version := range set {
+			out[name] = version
+		}
+	}
+	return out
 }

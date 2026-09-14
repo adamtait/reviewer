@@ -119,10 +119,18 @@ func TestAnalyzeReadsTheReport(t *testing.T) {
 	// A non-zero exit means "found something" for this class of tool, so it must
 	// not be read as a failure — only an unparseable report is one.
 	args := readFile(t, argsLog)
-	for _, want := range []string{"scan", "--json", "--metrics=off", "src/domain/order.ts"} {
+	for _, want := range []string{"scan", "--json", "--disable-version-check", "src/domain/order.ts"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the invocation omits %q: %s", want, args)
 		}
+	}
+	// Semgrep's flag, which Opengrep rejects. Asserting its absence rather than
+	// only asserting the replacement, because this test asserted its presence for
+	// three milestones: against a fake binary that accepts anything, a flag the
+	// real tool refuses looks exactly like a flag it accepts, and the analyzer
+	// failed on every real run while this passed.
+	if strings.Contains(args, "--metrics") {
+		t.Errorf("the invocation passes --metrics, which opengrep rejects: %s", args)
 	}
 }
 

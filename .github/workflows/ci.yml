@@ -8,31 +8,92 @@ on:
 permissions:
   contents: read
 
+# A new push supersedes the previous run on the same branch. Without this a busy
+# pull request queues runs that are already answering an old question.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Turns a test that would skip for a missing third-party binary into a failing
+  # one. CI installs all three by pinned version and checksum, so a skip here
+  # means the install step did not work — and a skipped test is indistinguishable
+  # from a passing one in a green job. The secrets-gate test spent this project's
+  # whole history skipping on every runner.
+  REVIEWER_REQUIRE_TOOLS: "1"
+
 jobs:
-  go:
-    runs-on: ubuntu-latest
+  # The matrix leg: the full suite, on the two most recent Go releases and on
+  # both operating systems anyone runs this on.
+  test:
+    name: test (go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # one platform's failure should not hide another's
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ["1.24", "1.25"]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # checkadrs compares against the merge base
+
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache: true
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/typescript/package-lock.json
+
+      # Keyed on the script, so a changed version or checksum misses the cache and
+      # re-downloads — a new pin can never be served from an old cache.
+      - name: Cache the pinned third-party binaries
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/reviewer-tools
+          key: tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/install-tools.sh') }}
+
+      # Only on a miss. Without the condition the install step overwrote whatever
+      # the cache restored, so every leg re-downloaded ~200 MB on every run and the
+      # cache was pure cost — restored, ignored, and saved again.
+      - name: Install gitleaks, opengrep and osv-scanner
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/reviewer-tools
+          .github/scripts/install-tools.sh ~/.local/reviewer-tools
+
+      # Separate from the install, because a cache hit skips the install and the
+      # PATH still has to be set. Folding the two together is what would make a
+      # cached run fail with "gitleaks: not found" instead of using the cache.
+      - name: Put them on PATH
+        run: echo "$HOME/.local/reviewer-tools" >> "$GITHUB_PATH"
+
+      - name: Check the versions that were actually installed
+        run: gitleaks version && opengrep --version && osv-scanner --version
+
       # Go checks first, before npm writes anything into the tree.
       - run: make build
       - run: make vet
       - run: make fmt-check
+
       # The cross-language conformance test drives the real plugin, so it has to
       # exist. Without this the test skips, which would hide a protocol drift.
       - run: npm ci && npm run build
         working-directory: plugins/typescript
+
       - run: make test
+
+      # PLAN §10.5 budgets the review's wall clock. Printing one analyzer's
+      # timing on every run is what makes a regression visible before it is a
+      # problem, rather than after someone complains the review is slow.
+      - name: Report analyzer timing
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        run: go run ./cmd/reviewer --base "origin/${{ github.base_ref || 'main' }}" --only eslint || true
 
   lint:
     runs-on: ubuntu-latest
@@ -59,6 +120,31 @@ jobs:
           cache: true
       - run: go run ./tools/checkadrs -base origin/${{ github.base_ref || 'main' }}
       - run: make licenses
+
+  # Nothing belonging to somewhere else, anywhere in the history.
+  #
+  # Publishing a repository publishes its history, so a value deleted in the next
+  # commit is still published. This reads git objects rather than the working
+  # tree, which is the only reading of "is this safe to publish" that is true.
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the audit is about history; a shallow clone has none
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # On a pull request, only what the branch adds — a few dozen blobs, so it
+      # runs on every push. The full history is audited on main, where it is the
+      # standing answer to "is this still safe to publish".
+      - name: Audit what this branch adds
+        if: github.event_name == 'pull_request'
+        run: go run ./tools/audithistory --base "origin/${{ github.base_ref }}"
+      - name: Audit the whole history
+        if: github.event_name != 'pull_request'
+        run: go run ./tools/audithistory --all
 
   plugin:
     runs-on: ubuntu-latest
@@ -87,3 +173,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+
+  # One job to name as the required check. The matrix's job names contain their
+  # parameters, so requiring them by name means editing branch protection every
+  # time a Go release lands — and a required check that no longer matches any job
+  # blocks every pull request.
+  required:
+    name: ci
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [test, lint, adrs, plugin, secrets, provenance]
+    steps:
+      - name: Fail unless every job succeeded
+        # Explicitly not `!failure()`: a cancelled or skipped dependency would
+        # pass that, and a required check that passes when nothing ran is worse
+        # than no required check.
+        run: |
+          results='${{ join(needs.*.result, " ") }}'
+          echo "job results: $results"
+          for r in $results; do
+            [ "$r" = "success" ] || { echo "a required job reported: $r"; exit 1; }
+          done

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -114,9 +115,18 @@ func runEngineTest(ctx context.Context, root, dir string, cfg config.Config) eng
 		return engineResult{skipped: fmt.Sprintf("%s is not installed or not on PATH", binary)}
 	}
 
-	cmd := exec.CommandContext(ctx, path, "scan", "--test", "--metrics=off",
+	// No --metrics: Opengrep dropped Semgrep's telemetry in the fork and rejects
+	// the flag outright. --disable-version-check is the whole of what keeping this
+	// off the network requires.
+	cmd := exec.CommandContext(ctx, path, "scan", "--test",
 		"--disable-version-check", "--config", dir, dir)
 	cmd.Dir = root
+	// Opengrep's test reporter writes ✖ and ✔. Its Python layer encodes stdout
+	// using the locale, so on a runner with a non-UTF-8 LANG it dies inside its
+	// own reporting with an encoding traceback instead of naming the rule that
+	// failed. Stating the encoding is locale-independent, which LC_ALL is not:
+	// C.UTF-8 exists on Linux and not on macOS.
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return engineResult{err: fmt.Errorf("%s reported a failing case: %v", binary, runErr),

@@ -92,9 +92,7 @@ func TestVersionPrintsTheProtocol(t *testing.T) {
 // which is the difference between a tool that needs setting up and one that is
 // useful the moment it is installed.
 func TestReviewWithNoConfigurationStillRunsTheBuiltins(t *testing.T) {
-	if _, err := exec.LookPath("gitleaks"); err != nil {
-		t.Skip("gitleaks is not installed; the built-in analyzer reports itself unavailable")
-	}
+	testfixture.RequireTool(t, "gitleaks")
 	repo := testfixture.Build(t, "tiny-ts-repo")
 
 	var stdout, stderr bytes.Buffer
@@ -130,9 +128,16 @@ func TestAMissingScannerIsReportedNotFatal(t *testing.T) {
 	}
 }
 
-// End to end through a real plugin process: the shell example reports a finding
-// on README.md, which the diff filter then drops because the fixture's change
-// does not touch that file. Both halves matter.
+// End to end through a real plugin process: the shell example must produce a
+// finding a reader can actually see.
+//
+// This test used to assert the opposite — the example reported at README.md:1,
+// the diff filter dropped it, and the drop was the assertion. That made the
+// documentation's own example a demonstration of the trap it warns about: a
+// stranger who copied it got a plugin that logged findings and showed none, which
+// reads as a broken plugin rather than as diff scoping. The example now anchors
+// to a changed line, and the drop path is covered by a plugin written to be wrong
+// on purpose, below.
 func TestReviewEndToEndThroughAPlugin(t *testing.T) {
 	repo := testfixture.Build(t, "tiny-ts-repo")
 	root, err := os.Getwd()
@@ -153,12 +158,60 @@ func TestReviewEndToEndThroughAPlugin(t *testing.T) {
 	if strings.Contains(out, "no analyzers are configured") {
 		t.Fatalf("the plugin should have registered an analyzer:\n%s\nstderr:\n%s", out, stderr.String())
 	}
-	// README.md is unchanged in this fixture, so the finding is correctly dropped.
-	if !strings.Contains(out, "outside the diff") {
-		t.Fatalf("want the out-of-diff finding accounted for, got:\n%s", out)
+	if strings.Contains(out, "outside the diff") {
+		t.Fatalf("the example plugin reported outside the diff, so nobody sees it:\n%s", out)
+	}
+	if !strings.Contains(out, "example/shell-plugin-ran") {
+		t.Fatalf("want the example plugin's finding in the report, got:\n%s", out)
 	}
 	if !strings.Contains(stderr.String(), "shell-hello: started") {
 		t.Fatalf("want the plugin's diagnostics in the run log, got %q", stderr.String())
+	}
+}
+
+// A plugin that reports outside the diff has its findings dropped and counted.
+//
+// The plugin here is written to be wrong on purpose. Covering this with a
+// deliberately broken plugin rather than with the example keeps the two claims
+// separate: the core drops out-of-diff findings, and the example does not produce
+// any. Tying them together is how the example stayed wrong.
+func TestFindingsOutsideTheDiffAreDroppedAndCounted(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	script := filepath.Join(t.TempDir(), "wrong.sh")
+	// Answers the handshake, then reports at a location the fixture's change does
+	// not touch. NOT_A_FILE.md exists in no fixture, so this can never accidentally
+	// start landing inside a diff.
+	body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '%s\n' '{"type":"hello","protocol":1,"plugin":"wrong","version":"0"}' ;;
+    *'"type":"describe"'*) printf '%s\n' '{"type":"describe","analyzers":[{"id":"wrong","lane":"deterministic","order":900,"available":true}]}' ;;
+    *'"type":"analyze"'*)  printf '%s\n' '{"type":"findings","analyzer":"wrong","findings":[{"fingerprint":"","ruleId":"example/out-of-diff","lane":"deterministic","confidence":"high","severity":"error","file":"NOT_A_FILE.md","line":1,"message":"reported where nobody is looking"}]}' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeConfig(t, repo.Root, "plugins:\n  - id: wrong\n    command: sh\n    args: [\""+script+"\"]\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "text"},
+		&stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+	out := stdout.String()
+	if strings.Contains(out, "example/out-of-diff") {
+		t.Errorf("a finding outside the diff reached the report:\n%s", out)
+	}
+	// Dropped silently is the failure mode that cost this project five analyzers,
+	// so the count has to be visible.
+	if !strings.Contains(out, "outside the diff") {
+		t.Errorf("the drop was not accounted for in the report:\n%s", out)
 	}
 }
 
@@ -319,9 +372,7 @@ func TestFlagOverridesConfigSkip(t *testing.T) {
 // credential. The spy records every invocation to a file, so the assertion is
 // about what actually crossed the process boundary rather than about a flag.
 func TestTheModelLaneIsNotInvokedWhenTheDiffCarriesACredential(t *testing.T) {
-	if _, err := exec.LookPath("gitleaks"); err != nil {
-		t.Skip("gitleaks is not installed; the gate would fail closed for a different reason")
-	}
+	testfixture.RequireTool(t, "gitleaks")
 
 	spyPlugin := func(t *testing.T, log string) string {
 		t.Helper()
@@ -767,27 +818,64 @@ func TestRulesTest(t *testing.T) {
 	t.Run("an absent engine is reported, never passed over", func(t *testing.T) {
 		root := t.TempDir()
 		rules := filepath.Join(root, "rules")
-		writeRuleFile(t, rules, "one.yaml", "rules:\n  - id: one\n    message: m\n")
-		writeRuleFile(t, rules, "one.ts", "// ruleid: one\nconst a = 1;\n// ok: one\nconst b = 2;\n")
+		// A real rule with a real pattern, and cases that genuinely exercise it.
+		//
+		// It used to be `id` and `message` and nothing else — no pattern, no
+		// language — which the engine accepts and runs zero tests against. That
+		// made the installed-engine branch assert only that opengrep exits 0 on a
+		// pack that tests nothing, which is precisely the "reported success while
+		// never executing a pattern" outcome this subtest is named for.
+		writeRuleFile(t, rules, "one.yaml",
+			"rules:\n  - id: one\n    languages: [typescript]\n    severity: WARNING\n"+
+				"    message: no console\n    pattern: console.log(...)\n")
+		writeRuleFile(t, rules, "one.ts",
+			"// ruleid: one\nconsole.log(\"x\");\n// ok: one\nconst b = 2;\n")
+
+		// The absent engine is configured, not waited for. Branching on whether
+		// opengrep happens to be on this machine's PATH meant the assertion that
+		// matters most here — that a pack is never reported ready when no pattern
+		// ran — was tested only on machines without opengrep, and the other branch
+		// only on machines with it. Neither was tested anywhere in CI, because CI
+		// installed opengrep and the tests skipped.
+		writeRuleFile(t, root, ".review/config.yaml",
+			"tools:\n  opengrep:\n    path: definitely-not-installed-xyz\n")
 
 		var stdout, stderr bytes.Buffer
 		err := run(context.Background(),
 			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
 
-		if _, lookErr := exec.LookPath("opengrep"); lookErr != nil {
-			// Reporting success while never executing a pattern is the one outcome
-			// that would make this command worse than not having it.
-			var checkErr errCheckFailed
-			if !errors.As(err, &checkErr) {
-				t.Fatalf("want the absent engine to fail the check, got %v", err)
-			}
-			if !strings.Contains(stdout.String(), "the patterns were not executed") {
-				t.Errorf("want the skip stated plainly, got:\n%s", stdout.String())
-			}
-			return
+		// Reporting success while never executing a pattern is the one outcome
+		// that would make this command worse than not having it.
+		var checkErr errCheckFailed
+		if !errors.As(err, &checkErr) {
+			t.Fatalf("want the absent engine to fail the check, got %v", err)
 		}
-		if err != nil {
-			t.Fatalf("with opengrep installed this pack should pass: %v", err)
+		if !strings.Contains(stdout.String(), "the patterns were not executed") {
+			t.Errorf("want the skip stated plainly, got:\n%s", stdout.String())
+		}
+	})
+
+	// The other half, against the engine itself. Separated so that both halves run
+	// on every machine that has the tools, rather than one half per machine.
+	t.Run("a pack whose cases hold passes against the real engine", func(t *testing.T) {
+		testfixture.RequireTool(t, "opengrep")
+
+		root := t.TempDir()
+		rules := filepath.Join(root, "rules")
+		writeRuleFile(t, rules, "one.yaml",
+			"rules:\n  - id: one\n    languages: [typescript]\n    severity: WARNING\n"+
+				"    message: no console\n    pattern: console.log(...)\n")
+		writeRuleFile(t, rules, "one.ts",
+			"// ruleid: one\nconsole.log(\"x\");\n// ok: one\nconst b = 2;\n")
+
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"},
+			&stdout, &stderr, noEnv); err != nil {
+			t.Fatalf("this pack's cases hold, so the check should pass: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "passed") {
+			t.Errorf("want the pass stated, got:\n%s", stdout.String())
 		}
 	})
 

@@ -1,0 +1,150 @@
+name: release
+
+# A tag, and nothing else. There is no workflow_dispatch and no branch trigger:
+# every path to a published artifact goes through a tag, so what was released is
+# always answerable from the git history alone.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # Refuses the release before anything is built or published.
+  #
+  # The binary and the plugin are one release (ADR-0026): `reviewer init` pins the
+  # plugin devDependency to the binary's own version, so a destination repository
+  # installed by v0.2.0 asks npm for plugin 0.2.0. If the tag and the plugin's
+  # package.json disagree, that pin names a version that does not exist, and the
+  # failure lands in a stranger's repository rather than here.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag and the plugin version must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          plugin="$(node -p "require('./plugins/typescript/package.json').version")"
+          echo "tag: $tag   plugin package.json: $plugin"
+          if [ "$tag" != "$plugin" ]; then
+            echo "::error::version skew: the tag says $tag and the plugin says $plugin."
+            echo "Set plugins/typescript/package.json to $tag and re-tag."
+            echo 'reviewer init pins the plugin to the binary version, so a skew publishes'
+            echo 'a binary that asks npm for a package version that was never published.'
+            exit 1
+          fi
+
+      - name: The tag must be a version the installer recognises
+        # The installer pins only when the version looks like a release, and
+        # otherwise writes "latest" — which would silently unpin every repository
+        # installed by this release.
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::$tag is not a release version, so the installer would write"
+            echo "\"latest\" instead of pinning the plugin. Tag as vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+      - name: CHANGELOG.md must describe this version
+        # A release nobody wrote a line about is a release nobody can tell apart
+        # from the one before it.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          grep -q "^## \[\?${tag}\]\?" CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no section for $tag."
+            exit 1
+          }
+
+  # The suite, on the exact commit being released. CI already ran it on the
+  # branch, but a tag can point at a commit no pull request ever gated.
+  test:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      REVIEWER_REQUIRE_TOOLS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/typescript/package-lock.json
+      - name: Install the pinned third-party binaries
+        run: |
+          mkdir -p ~/.local/reviewer-tools
+          .github/scripts/install-tools.sh ~/.local/reviewer-tools
+          echo "$HOME/.local/reviewer-tools" >> "$GITHUB_PATH"
+      - run: npm ci && npm run build
+        working-directory: plugins/typescript
+      - run: make check
+
+  # After the plugin, never beside it.
+  #
+  # Both used to hang off `needs: test` and run in parallel, which has an
+  # asymmetric failure: if GoReleaser publishes and npm then fails, the release's
+  # binaries tell every repository they install into to fetch a plugin version
+  # that never reached npm — the exact failure in a stranger's repository that
+  # `verify` above exists to prevent. The other order is harmless: a plugin on npm
+  # with no binaries released is a version nobody can ask for yet.
+  binaries:
+    needs: [test, plugin]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creating the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser reads tags to build the changelog
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  plugin:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance is signed with this
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: plugins/typescript/package-lock.json
+      - run: npm ci
+        working-directory: plugins/typescript
+      - run: npm run build
+        working-directory: plugins/typescript
+      # The package must not carry its own tests: they import devDependencies
+      # that a consumer does not install, so a published test file is a broken
+      # import waiting for anyone who globs the package.
+      - name: The package must not publish its tests
+        working-directory: plugins/typescript
+        run: |
+          if npm pack --dry-run 2>&1 | grep -qE '\.test\.(js|d\.ts)'; then
+            echo "::error::the package would publish test files; check the files field"
+            exit 1
+          fi
+      - name: Publish
+        working-directory: plugins/typescript
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -5,6 +5,7 @@ package osv
 import (
 	"context"
 	"errors"
+	"github.com/adamtait/reviewer/internal/testfixture"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,9 +185,7 @@ func TestIntroducedTreatsAVersionBumpAsNew(t *testing.T) {
 // The real binary, if it is installed. The network is usually unreachable in CI,
 // which is precisely the case the analyzer must not report as clean.
 func TestAgainstTheRealScanner(t *testing.T) {
-	if _, err := exec.LookPath(Binary); err != nil {
-		t.Skip("osv-scanner is not installed")
-	}
+	testfixture.RequireTool(t, Binary)
 	root := gitRepo(t)
 	writeFile(t, root, "package-lock.json", realLockfile)
 	git(t, root, "add", "-A")

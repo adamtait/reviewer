@@ -68,9 +68,23 @@ licenses:
 	go run ./tools/checklicenses
 
 # Install the developer tools CI pins. Versions here must match .github/workflows/ci.yml.
+# The Go tools are installed by version; the third-party binaries the analyzers
+# spawn are installed by version and checksum, by the same script CI runs — so a
+# contributor and a runner get the same versions, and "green locally" means
+# something.
 tools:
 	go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
 	go install github.com/google/addlicense@v1.1.1
+	./.github/scripts/install-tools.sh
+
+# Scans every object in the history for detail belonging to somewhere else.
+#
+# Not part of `check`: it asks about the repository rather than about your
+# change, so a finding is somebody's old commit and not something this commit can
+# fix. CI runs it against what a branch adds on every pull request, and against
+# the whole history on main.
+audit:
+	go run ./tools/audithistory --all
 
 # Opt in to the pre-commit secret scan. Not installed automatically: a hook that
 # appears without being asked for is a hook people disable.

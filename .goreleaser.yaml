@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds the binaries a release publishes. The plugin is published separately by
+# the same workflow, from the same tag — see .github/workflows/release.yml.
+version: 2
+
+project_name: reviewer
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: reviewer
+    main: ./cmd/reviewer
+    binary: reviewer
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    # Stamps the tag into the binary. `version` is what `reviewer --version`
+    # prints and, more consequentially, what `reviewer init` writes into a
+    # destination repository: the installer pins the plugin devDependency to the
+    # binary's own version, so an unstamped binary silently installs "latest"
+    # instead of a matching pair.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    # Same input, same bytes. A user comparing a downloaded binary against the
+    # published checksum is doing a supply-chain check, and it only means
+    # anything if the build is reproducible.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+
+archives:
+  - id: reviewer
+    formats: [tar.gz]
+    # The generated GitHub workflow downloads this exact name and verifies it
+    # against the checksums file below, so the shape is part of the contract.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+changelog:
+  # CHANGELOG.md is written by hand and is the thing people read. This is the
+  # commit list, which is a different artifact for a different question.
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  # A release is never created from a branch, only from a tag. GoReleaser refuses
+  # a dirty or untagged tree by default; this makes the intent explicit.
+  prerelease: auto
+  footer: |
+    ---
+    The plugin for this release is `@adamtait/reviewer-plugin-typescript@{{ .Version }}`.
+    `reviewer init` pins it to this binary's version, so the two are installed as a pair.
+
+snapshot:
+  # Deliberately not semver-shaped. The installer pins the plugin devDependency to
+  # the binary's own version whenever that version looks like a release, and a
+  # prerelease like 0.1.0-rc.1 genuinely is one — it gets published. A snapshot is
+  # not: it exists only on the machine that built it. Giving it a semver shape made
+  # `init` from a snapshot build write a pin to a package version that will never
+  # exist on npm, instead of printing the "not a release" note that says so.
+  version_template: "snapshot-{{ .ShortCommit }}"

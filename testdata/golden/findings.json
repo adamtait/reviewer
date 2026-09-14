@@ -1,0 +1,35 @@
+[
+  {
+    "fingerprint": "a3f9c2d1e4b7",
+    "ruleId": "arch/no-domain-to-infra",
+    "lane": "deterministic",
+    "confidence": "high",
+    "severity": "error",
+    "file": "src/domain/order.ts",
+    "line": 3,
+    "message": "domain/ must not import infra/ — inject a port instead"
+  },
+  {
+    "fingerprint": "b1c4e7a0d3f6",
+    "ruleId": "logic/no-floating-promises",
+    "lane": "deterministic",
+    "confidence": "high",
+    "severity": "error",
+    "file": "src/infra/http.ts",
+    "line": 9,
+    "endLine": 11,
+    "message": "Promise returned from send() is not awaited",
+    "suggestion": "  await send(request)"
+  },
+  {
+    "fingerprint": "c7d0a3f6b9e2",
+    "ruleId": "llm/missing-abstraction",
+    "lane": "llm",
+    "confidence": "medium",
+    "severity": "info",
+    "file": "src/domain/order.ts",
+    "line": 42,
+    "message": "Four call sites repeat the same retry-and-log wrapper",
+    "evidence": "order.ts:42, order.ts:61, invoice.ts:18 and invoice.ts:44 each wrap a call in the same try/catch with identical backoff constants."
+  }
+]

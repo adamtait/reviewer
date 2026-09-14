@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/adamtait/reviewer/schema/plugin-protocol.schema.json",
+  "title": "Plugin protocol frame, version 1",
+  "description": "One line of the newline-delimited JSON stream between the reviewer core and an analyzer plugin (ADR-0025). Stdout carries frames and nothing else; diagnostics go to stderr.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "enum": ["hello", "describe", "analyze", "findings", "error", "bye"],
+      "description": "A receiver ignores types it does not know, which is what makes the protocol additively extensible."
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "hello, both directions. A mismatch is refused explicitly rather than guessed at."
+    },
+    "host": { "type": "string", "description": "hello, host to plugin: host name and version." },
+    "plugin": { "type": "string", "description": "hello, plugin to host: plugin name." },
+    "version": { "type": "string", "description": "hello, plugin to host: plugin version." },
+    "analyzers": {
+      "type": "array",
+      "description": "describe, plugin to host.",
+      "items": { "$ref": "#/$defs/descriptor" }
+    },
+    "analyzer": {
+      "type": "string",
+      "description": "The analyzer an analyze, findings or error frame concerns."
+    },
+    "request": { "$ref": "#/$defs/analyzeRequest" },
+    "findings": {
+      "type": "array",
+      "description": "findings, plugin to host.",
+      "items": { "$ref": "finding.schema.json" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Things worth saying that are not failures."
+    },
+    "message": { "type": "string", "description": "error, plugin to host. Never fatal to the run." }
+  },
+  "$defs": {
+    "descriptor": {
+      "type": "object",
+      "required": ["id", "lane", "order", "available"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Stable analyzer name, used in --only and --skip." },
+        "lane": {
+          "enum": ["deterministic", "llm"],
+          "description": "Declared here so the core can block the model lane without trusting the analyzer."
+        },
+        "order": { "type": "integer", "description": "Lower runs earlier. The core leaves gaps so plugins can interleave." },
+        "available": {
+          "type": "boolean",
+          "description": "False when the analyzer cannot run in this repository. The core skips it and reports the reason once."
+        },
+        "unavailable": { "type": "string", "description": "One line explaining available: false." }
+      }
+    },
+    "analyzeRequest": {
+      "type": "object",
+      "required": ["root", "changed"],
+      "additionalProperties": false,
+      "properties": {
+        "root": { "type": "string", "description": "Absolute path of the repository under review." },
+        "changed": {
+          "type": "array",
+          "description": "The files and line ranges in the diff. Analyzers restrict findings to these; the core filters again.",
+          "items": {
+            "type": "object",
+            "required": ["path", "ranges"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "ranges": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 1 },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "description": "Inclusive [start, end] pairs, 1-indexed."
+              }
+            }
+          }
+        },
+        "projects": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Monorepo workspaces in scope. Empty means all."
+        },
+        "contextLines": { "type": "integer", "minimum": 0 },
+        "settings": {
+          "description": "This analyzer's config block, passed through untouched. The protocol does not know its shape, which is how an analyzer gains an option without a protocol change."
+        }
+      }
+    }
+  }
+}

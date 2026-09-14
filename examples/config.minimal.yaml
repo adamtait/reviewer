@@ -1,0 +1,62 @@
+# The configuration a destination repository keeps at .review/config.yaml.
+# `reviewer init` writes one of these; this file is the documented shape, with
+# generic values only. Nothing here names a real host, organisation or rule.
+
+# Analyzer plugins. Each is a process the core starts once per run and talks to
+# over the plugin protocol. The TypeScript plugin serves every TypeScript
+# analyzer from one shared compiler program, so it is one entry, not six.
+plugins:
+  - id: typescript
+    command: node
+    args: ["node_modules/@adamtait/reviewer-plugin-typescript/dist/serve.js"]
+
+analyzers:
+  # Bounds a single analyzer. On expiry its process group is killed and the run
+  # continues without it.
+  timeout: 2m
+  # Lines of surrounding source carried into the model lane.
+  contextLines: 20
+  # Filter by analyzer id. Set one or the other, never both.
+  # only: [tsc, eslint]
+  # skip: [knip]
+
+# External binaries an analyzer spawns. Absent binaries downgrade that analyzer
+# to a warning; they never fail a run.
+tools:
+  gitleaks:
+    version: "8.28.0"
+  opengrep:
+    version: "1.9.0"
+  osv-scanner:
+    version: "2.2.3"
+
+rules:
+  dir: .review/rules
+
+# Documents the model lane reads as context. Paths are relative to the
+# repository root and their contents never leave the destination repository
+# unless the model lane is enabled.
+guidance:
+  - AGENTS.md
+
+# Workspaces or Nx projects, written by `reviewer init` in a monorepo. Empty
+# means the whole repository.
+projects: []
+
+laneB:
+  # Off until someone turns it on deliberately. The installer never enables it.
+  enabled: false
+  # One of: openai-compatible, openai, gemini, anthropic, claude-code, codex.
+  provider: openai-compatible
+  model: ""
+  promptDir: .review/prompts
+  # The second pass that tries to disprove each finding before it is emitted.
+  invalidate: true
+
+github:
+  # Resolving a thread is the only action this tool takes on a human's
+  # conversation, so it is opt-in.
+  resolveStaleThreads: false
+
+baselines:
+  type-coverage: .review/type-coverage-baseline.json

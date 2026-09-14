@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/adamtait/reviewer/internal/builtin"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/internal/diff"
+	"github.com/adamtait/reviewer/internal/fingerprint"
+	"github.com/adamtait/reviewer/internal/ghclient"
 	"github.com/adamtait/reviewer/internal/pluginhost"
 	"github.com/adamtait/reviewer/internal/reporters"
 	"github.com/adamtait/reviewer/internal/sequencer"
@@ -25,19 +28,19 @@ import (
 // not start, an analyzer that times out and a repository with no configuration
 // are all warnings on an otherwise successful run (ADR-0009, ADR-0013).
 func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv func(string) string) error {
-	cfg, _, err := config.Resolve(o.root, o.config, getenv)
+	cfg, secrets, err := config.Resolve(o.root, o.config, getenv)
 	if err != nil {
 		return err
 	}
 
-	rep, err := reporter(o.reporter, stdout, stderr)
+	rep, err := reporter(ctx, o, cfg, secrets, stdout, stderr)
 	if err != nil {
 		return err
 	}
 
 	run := reporters.Run{Root: cfg.Root, Base: o.base}
 
-	files, err := changedFiles(ctx, o, cfg.Root)
+	files, err := changedFiles(ctx, o, cfg, secrets)
 	if err != nil {
 		// Without a diff there is nothing to scope to, and reporting every
 		// whole-repository finding is the one thing this tool must not do
@@ -85,6 +88,13 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		},
 	})
 	run.Warnings = append(run.Warnings, result.Warnings...)
+	// A run is a faithful account only if every selected analyzer actually ran and
+	// none failed. Anything less reports fewer findings than exist, and nothing may
+	// be removed from the pull request on that basis.
+	run.Trustworthy = result.Selected > 0 && result.Selected == len(result.Timings) && !anyFailed(result.Timings)
+	if result.Gate.Blocked {
+		run.GateReason = result.Gate.Reason
+	}
 	run.Skipped = append(run.Skipped, result.Skipped...)
 	run.Timings = timings(result.Timings)
 
@@ -93,6 +103,9 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 			fmt.Sprintf("%d finding(s) outside the diff", result.Dropped))
 	}
 	all := result.Findings
+	// Identity is assigned by the core, not by analyzers: a plugin has no reason
+	// to know how dedupe works, and one that guessed would break it (ADR-0015).
+	fingerprint.ComputeAll(cfg.Root, all)
 	finding.Sort(all)
 
 	run.Findings = all
@@ -111,18 +124,71 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	return rep.Report(ctx, run)
 }
 
-func changedFiles(ctx context.Context, o options, root string) ([]diff.File, error) {
+// changedFiles works out what the review is about.
+//
+// For a pull request the base commit is preferred from the local checkout, which
+// gives the same answer as a developer running the tool by hand. When that commit
+// is absent — a shallow clone, or a branch the poller has never fetched — the
+// API's per-file patches are parsed instead, so a missing `fetch-depth: 0` costs
+// accuracy of context rather than the whole review.
+func changedFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, error) {
 	switch {
 	case o.staged:
-		return diff.Staged(ctx, root)
+		return diff.Staged(ctx, cfg.Root)
 	case o.pr != 0:
-		// Reviewing a pull request by number needs the GitHub client, which
-		// arrives in PR-17. Until then, say so rather than reviewing the wrong
-		// thing silently.
-		return nil, errors.New("--pr is not wired up yet; use --base or --staged")
+		return pullRequestFiles(ctx, o, cfg, secrets)
 	default:
-		return diff.Changed(ctx, root, o.base)
+		return diff.Changed(ctx, cfg.Root, o.base)
 	}
+}
+
+func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, error) {
+	client, repo, err := githubClient(cfg, secrets)
+	if err != nil {
+		return nil, err
+	}
+	pr, err := client.GetPullRequest(ctx, repo, o.pr)
+	if err != nil {
+		return nil, fmt.Errorf("reading pull request %d: %w", o.pr, err)
+	}
+
+	// An explicit --base wins: someone reviewing against a different branch than
+	// GitHub thinks has a reason.
+	base := o.base
+	if base == "" || base == defaultBase {
+		base = pr.Base.SHA
+	}
+	if diff.HasCommit(ctx, cfg.Root, base) {
+		return diff.Changed(ctx, cfg.Root, base)
+	}
+
+	files, err := client.ListFiles(ctx, repo, o.pr)
+	if err != nil {
+		return nil, fmt.Errorf("listing the files of pull request %d: %w", o.pr, err)
+	}
+	patched := make([]diff.PatchedFile, 0, len(files))
+	for _, f := range files {
+		patched = append(patched, diff.PatchedFile{Path: f.Filename, Status: f.Status, Patch: f.Patch})
+	}
+	return diff.FromPatches(patched)
+}
+
+// githubClient builds the client and repository from configuration. Shared by the
+// reporter and the pull-request diff path so they cannot disagree about which
+// repository is being reviewed.
+func githubClient(cfg config.Config, secrets config.Secrets) (*ghclient.REST, ghclient.Repo, error) {
+	client, err := ghclient.New(cfg.GitHub.APIBaseURL, secrets.GitHubToken, "reviewer/"+version)
+	if err != nil {
+		return nil, ghclient.Repo{}, errUsage{err}
+	}
+	if cfg.GitHub.GraphQLURL != "" {
+		client.GraphQLURL = cfg.GitHub.GraphQLURL
+	}
+	repo, err := parseRepo(cfg.GitHub.Repo)
+	if err != nil {
+		return nil, ghclient.Repo{}, errUsage{err}
+	}
+	return client, repo, nil
 }
 
 func unavailable(host *pluginhost.Manager) []string {
@@ -137,16 +203,56 @@ func unavailable(host *pluginhost.Manager) []string {
 	return out
 }
 
-func reporter(name string, out, log io.Writer) (reporters.Reporter, error) {
-	for _, r := range []reporters.Reporter{
-		reporters.Text{Out: out},
-		reporters.RDJSON{Out: out, Log: log},
-	} {
-		if r.Name() == name {
-			return r, nil
-		}
+func reporter(ctx context.Context, o options, cfg config.Config, secrets config.Secrets,
+	out, log io.Writer) (reporters.Reporter, error) {
+
+	switch o.reporter {
+	case "text":
+		return reporters.Text{Out: out}, nil
+	case "rdjson":
+		return reporters.RDJSON{Out: out, Log: log}, nil
+	case "github":
+		return githubReporter(ctx, o, cfg, secrets, out, log)
+	default:
+		return nil, errUsage{fmt.Errorf("unknown reporter %q; want text, rdjson or github", o.reporter)}
 	}
-	return nil, errUsage{fmt.Errorf("unknown reporter %q; want text or rdjson", name)}
+}
+
+// githubReporter assembles the reporter that writes to a pull request. Every
+// failure here is a usage error rather than a run failure: being asked to comment
+// on a pull request and silently not doing it is worse than saying why.
+func githubReporter(ctx context.Context, o options, cfg config.Config, secrets config.Secrets,
+	out, log io.Writer) (reporters.Reporter, error) {
+
+	if o.pr == 0 {
+		return nil, errUsage{errors.New("--reporter github needs --pr to say which pull request to comment on")}
+	}
+	client, repo, err := githubClient(cfg, secrets)
+	if err != nil {
+		return nil, err
+	}
+	pr, err := client.GetPullRequest(ctx, repo, o.pr)
+	if err != nil {
+		// Deliberately not a usage error. A transient API failure must not exit 2
+		// and red the check on a tool that promises never to fail a build
+		// (ADR-0009); the run reports the failure and exits 0.
+		return nil, fmt.Errorf("reading pull request %d: %w", o.pr, err)
+	}
+	return reporters.GitHub{
+		Client: client, Writer: client, Repo: repo, Number: o.pr,
+		HeadSHA: pr.Head.SHA, DryRun: o.dryRun,
+		ResolveStale: cfg.GitHub.ResolveStaleThreads,
+		SelfLogin:    cfg.GitHub.SelfLogin,
+		Out:          out, Log: log,
+	}, nil
+}
+
+func parseRepo(spec string) (ghclient.Repo, error) {
+	owner, name, ok := strings.Cut(strings.TrimSpace(spec), "/")
+	if !ok || owner == "" || name == "" {
+		return ghclient.Repo{}, fmt.Errorf("github.repo is %q, want owner/name", spec)
+	}
+	return ghclient.Repo{Owner: owner, Name: name}, nil
 }
 
 // timings formats the per-analyzer timings for the report. Latency is the risk
@@ -163,4 +269,14 @@ func timings(in []sequencer.Timing) []reporters.Timing {
 		})
 	}
 	return out
+}
+
+// anyFailed reports whether an analyzer failed during the run.
+func anyFailed(timings []sequencer.Timing) bool {
+	for _, t := range timings {
+		if t.Failed {
+			return true
+		}
+	}
+	return false
 }

@@ -185,6 +185,10 @@ func TestRootIsNotSettableFromTheFile(t *testing.T) {
 
 // TestNoEndpointsInTheSource is the seam guard (ADR-0004). Nothing in the core may
 // name a host: every endpoint arrives through config or the environment.
+//
+// It walks Go source only. This repository's own .review/config.yaml does name
+// api.github.com, and correctly: it is configuration for this repository as a
+// repository under review, which is exactly the channel the seam requires.
 func TestNoEndpointsInTheSource(t *testing.T) {
 	url := regexp.MustCompile(`https?://[a-zA-Z0-9]`)
 	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {

@@ -29,6 +29,11 @@ precede any code land in PR-00.
 | [0012](0012-abort-llm-lane-on-secret-detection.md) | Abort the model lane on any secret detection, and when the scan could not run | Accepted | PR-11 |
 | [0013](0013-fixed-analyzer-order-fail-open.md) | Run analyzers cheap-first in a fixed order, and fail open | Accepted | PR-12 |
 | [0014](0014-one-warm-plugin-one-ts-program.md) | Host every TypeScript analyzer in one warm plugin sharing one program | Accepted | PR-13a |
+| [0015](0015-fingerprint-by-normalized-snippet.md) | Identify a finding by its normalised snippet, never by line number | Accepted | PR-16 |
+| [0016](0016-github-comments-as-the-store.md) | Use GitHub's own comments as the only persistent store | Accepted | PR-18 |
+| [0017](0017-presentation-gated-on-confidence.md) | Gate presentation on confidence, not severity | Accepted | PR-18 |
+| [0018](0018-pull-request-trigger-not-target.md) | Trigger on `pull_request`, never `pull_request_target` | Accepted | PR-21 |
+| [0019](0019-ship-action-and-local-poller.md) | Ship both a GitHub Action and a local poller | Accepted | PR-22 |
 | [0025](0025-ndjson-over-stdio.md) | Speak newline-delimited JSON over stdio | Accepted | PR-04 |
 | [0026](0026-two-release-artifacts.md) | Release two artifacts from one tag | Accepted | PR-01 |
 | [0027](0027-builtin-plugins-over-in-memory-pipes.md) | Serve built-in analyzers over in-memory pipes | Accepted | PR-10 |

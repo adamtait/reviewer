@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs `reviewer watch` every ten minutes. Install with:
+
+      cp com.adamtait.reviewer.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.adamtait.reviewer.plist
+
+  This exists because the GitHub Action is the better trigger and might not be
+  available: an organisation can disable Actions or withhold pull-requests:write.
+  Same binary, same code path, worse liveness (ADR-0019).
+
+  The token is read from a file rather than embedded here: a plist is
+  world-readable and gets copied around.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.adamtait.reviewer</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-lc</string>
+    <string>GITHUB_TOKEN="$(cat {{ .TokenFile }})" {{ .BinaryPath }} watch --root {{ .Root }}</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>WorkingDirectory</key>
+  <string>{{ .Root }}</string>
+
+  <!-- A poll that finds nothing should leave no trace; failures go to the log. -->
+  <key>StandardErrorPath</key>
+  <string>{{ .Root }}/.review/watch.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MIT
+#
+# This repository reviewing itself. The Go core gets the native analyzers;
+# plugins/typescript, being TypeScript, gets the TypeScript ones — which is the
+# only dogfooding available for them given a Go core (ADR-0002).
+name: self-review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/typescript/package-lock.json
+
+      - name: Install the scanners the analyzers spawn
+        run: |
+          set -euo pipefail
+          go install github.com/zricethezav/gitleaks/v8@v8.28.0
+
+      - name: Build this revision of reviewer and its plugin
+        run: |
+          set -euo pipefail
+          go build -o "${RUNNER_TEMP}/reviewer" ./cmd/reviewer
+          npm --prefix plugins/typescript ci
+          npm --prefix plugins/typescript run build
+
+      # Deliberately the freshly built binary rather than a released one: a
+      # regression should be caught on the pull request that introduces it.
+      - name: Review
+        run: |
+          "${RUNNER_TEMP}/reviewer" \
+            --base "origin/${{ github.base_ref }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --reporter github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

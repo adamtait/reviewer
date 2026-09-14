@@ -96,6 +96,22 @@ type Gate struct {
 
 // GitHub holds the behaviour of the GitHub reporter.
 type GitHub struct {
+	// APIBaseURL is where the API lives. No default is compiled in (ADR-0004);
+	// the installer writes github.com's, and GitHub Enterprise works by changing
+	// this line rather than the code.
+	APIBaseURL string `yaml:"apiBaseUrl"`
+	// Repo is "owner/name". Detected from the remote when unset.
+	Repo string `yaml:"repo"`
+	// GraphQLURL overrides the endpoint derived from APIBaseURL. Needed only for a
+	// deployment whose REST and GraphQL paths are not github.com's or GitHub
+	// Enterprise's shapes.
+	GraphQLURL string `yaml:"graphqlUrl"`
+	// SelfLogin is the account this tool's token posts as. Used to tell our own
+	// threads from a human's when resolving stale ones. GitHub's /user endpoint
+	// answers this for a personal token but returns 403 for the installation token
+	// an Action runs with, so it can be stated instead.
+	SelfLogin string `yaml:"selfLogin"`
+
 	// ResolveStaleThreads is opt-in: resolving a thread is the only action this
 	// tool takes on a human's conversation.
 	ResolveStaleThreads bool `yaml:"resolveStaleThreads"`
@@ -195,6 +211,7 @@ func validProvider(name string) bool {
 // Environment variables read by the overlay. Names only — no values, no defaults,
 // and in particular no endpoint ever appears in this repository.
 const (
+	EnvGitHubToken  = "GITHUB_TOKEN"
 	EnvLaneB        = "REVIEW_LLM"
 	EnvModelBaseURL = "REVIEW_MODEL_BASE_URL"
 	EnvModelAPIKey  = "REVIEW_MODEL_API_KEY"
@@ -206,6 +223,7 @@ const (
 type Secrets struct {
 	ModelBaseURL string
 	ModelAPIKey  string
+	GitHubToken  string
 }
 
 // String hides the key, because the most common way to leak a credential is to
@@ -219,7 +237,11 @@ func (s Secrets) String() string {
 	if s.ModelBaseURL != "" {
 		base = "set"
 	}
-	return fmt.Sprintf("Secrets{ModelBaseURL:%s ModelAPIKey:%s}", base, key)
+	token := "unset"
+	if s.GitHubToken != "" {
+		token = "set"
+	}
+	return fmt.Sprintf("Secrets{ModelBaseURL:%s ModelAPIKey:%s GitHubToken:%s}", base, key, token)
 }
 
 // applyEnv overlays environment settings onto a parsed config. Only three things
@@ -245,6 +267,7 @@ func applyEnv(c *Config, s *Secrets, getenv func(string) string) error {
 	}
 	s.ModelBaseURL = getenv(EnvModelBaseURL)
 	s.ModelAPIKey = getenv(EnvModelAPIKey)
+	s.GitHubToken = getenv(EnvGitHubToken)
 	return nil
 }
 

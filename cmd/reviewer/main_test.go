@@ -202,17 +202,30 @@ func TestUnknownReporterIsAUsageError(t *testing.T) {
 	}
 }
 
-// --pr is parsed but not yet wired to the GitHub client. It must say so rather
-// than silently reviewing the working tree instead.
-func TestPRFlagSaysItIsNotWiredUpYet(t *testing.T) {
+// --pr needs GitHub configured. Without it the run must say which piece is
+// missing rather than silently reviewing the working tree instead.
+func TestPRFlagNeedsGitHubConfigured(t *testing.T) {
 	repo := testfixture.Build(t, "tiny-ts-repo")
 	var stdout, stderr bytes.Buffer
 	if err := run(context.Background(),
 		[]string{"--root", repo.Root, "--pr", "7"}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "not wired up yet") {
-		t.Fatalf("want an explicit not-yet message, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), "GitHub API base URL") {
+		t.Fatalf("want the missing configuration named, got %q", stdout.String())
+	}
+}
+
+// watch sets --pr per pull request, so --staged alongside it would post the local
+// index's findings onto every open pull request.
+func TestWatchRefusesStaged(t *testing.T) {
+	_, err := parse([]string{"watch", "--staged"}, new(bytes.Buffer))
+	var usage errUsage
+	if !errors.As(err, &usage) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "index") {
+		t.Fatalf("want the conflict explained, got %v", err)
 	}
 }
 
@@ -405,6 +418,70 @@ func commit(t *testing.T, root, message string) {
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+func TestGitHubReporterRequiresAPullRequestNumber(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "github"},
+		&stdout, &stderr, noEnv)
+
+	var usage errUsage
+	if !errors.As(err, &usage) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+	// Being asked to comment on a pull request and silently not doing it is worse
+	// than saying why.
+	if !strings.Contains(err.Error(), "--pr") {
+		t.Fatalf("want the missing flag named, got %v", err)
+	}
+}
+
+func TestGitHubReporterRequiresAToken(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	writeConfig(t, repo.Root, "github:\n  apiBaseUrl: http://127.0.0.1:1\n  repo: o/r\n")
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base, "--reporter", "github", "--pr", "1"},
+		&stdout, &stderr, noEnv)
+	if err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("want a clear message about the missing token, got %v", err)
+	}
+}
+
+func TestParseRepo(t *testing.T) {
+	if _, err := parseRepo("owner/name"); err != nil {
+		t.Fatalf("owner/name must parse, got %v", err)
+	}
+	for _, bad := range []string{"", "owner", "/name", "owner/", "  "} {
+		if _, err := parseRepo(bad); err == nil {
+			t.Fatalf("%q must not parse as a repository", bad)
+		}
+	}
+}
+
+// Go's flag package stops at the first positional argument, so a subcommand has to
+// be recognised before parsing or every flag after it is reported as a stray
+// argument. `reviewer watch --dry-run` is the case that caught this.
+func TestSubcommandsAcceptFlagsAfterThem(t *testing.T) {
+	o, err := parse([]string{"watch", "--dry-run", "--root", "/tmp"}, new(bytes.Buffer))
+	if err != nil {
+		t.Fatalf("flags after a subcommand must parse, got %v", err)
+	}
+	if o.subcommand != "watch" || !o.dryRun || o.root != "/tmp" {
+		t.Fatalf("unexpected options: %+v", o)
+	}
+}
+
+func TestVersionSubcommandAndFlagAgree(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		o, err := parse(args, new(bytes.Buffer))
+		if err != nil || !o.version {
+			t.Fatalf("%v should request the version, got %+v %v", args, o, err)
 		}
 	}
 }

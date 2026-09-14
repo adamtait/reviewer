@@ -7,6 +7,13 @@ SHELL := /bin/sh
 # Fail on the first failing stage even when make's output is piped.
 .SHELLFLAGS := -eu -c
 
+# Every Go package in this module, excluding anything npm vendored. This is not
+# hypothetical: eslint depends on `flatted`, which ships a Go package, so
+# `go build ./...` compiles third-party Go inside node_modules and `go test ./...`
+# runs it. Defining the list once is the only durable fix — Go's own tooling does
+# not skip node_modules.
+PKGS = $(shell go list ./... | grep -v '/node_modules/')
+
 # Files that carry no SPDX header: prose, configuration, data, and the example
 # config a user copies into their own repository.
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
@@ -18,7 +25,7 @@ LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
 check: build plugin vet fmt-check test staticcheck license-check adrs licenses
 
 build:
-	go build ./...
+	go build $(PKGS)
 
 # The cross-language conformance test drives the real plugin, so the gate builds
 # it. A skipped conformance test would hide a drift between the two sides of the
@@ -35,21 +42,21 @@ plugin-test:
 	npm --prefix plugins/typescript test
 
 vet:
-	go vet ./...
+	go vet $(PKGS)
 
 # Driven by `go list` rather than by the filesystem: npm packages vendor Go
 # sources (eslint pulls in flatted, which ships a Go package), and `gofmt -l .`
 # would format-check third-party code. Clean today, one dependency bump from
 # breaking CI.
 fmt-check:
-	@unformatted="$$(gofmt -l $$(go list -f '{{.Dir}}' ./...))"; \
+	@unformatted="$$(gofmt -l $$(go list -f '{{.Dir}}' $(PKGS)))"; \
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 
 test:
-	go test ./...
+	go test $(PKGS)
 
 staticcheck:
-	staticcheck ./...
+	staticcheck $(PKGS)
 
 license-check:
 	addlicense -check -l mit -c "Adam Tait" $(LICENSE_IGNORE) .

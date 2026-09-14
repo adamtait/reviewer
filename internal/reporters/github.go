@@ -225,7 +225,7 @@ func Body(f finding.Finding) string {
 		fmt.Fprintf(&b, " · %s confidence", f.Confidence)
 	}
 	b.WriteString("</sub>\n")
-	b.WriteString(fingerprint.Marker(f.Fingerprint))
+	b.WriteString(fingerprint.Marker(f.Fingerprint, f.RuleID))
 	return b.String()
 }
 

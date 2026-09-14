@@ -106,6 +106,8 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 		{".review/rules/.gitkeep", "where this repository's own rule packs go"},
 		{".review/.gitignore", "keeps local state and your .env out of version control"},
 		{".github/workflows/review.yml", "runs the review on every pull request"},
+		{".agent/skills/code-review/SKILL.md", "tells an agent when to review and how to read the result"},
+		{".agent/skills/code-review/scripts/review.sh", "the one command the skill runs"},
 		{".review/.env.example", "names the variables the model lane needs, never their values"},
 	} {
 		p.addProblem(unsafePath(d.Root, f.path))

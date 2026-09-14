@@ -189,3 +189,41 @@ func TestSchemaMatchesTheStruct(t *testing.T) {
 		t.Fatalf("schema `required` and the struct's non-omitempty fields disagree:\n  struct: %v\n  schema: %v", requiredFields, schemaRequired)
 	}
 }
+
+// A rule id that cannot survive the comment marker is refused here, at the only
+// point where every finding passes through. The alternative is a comment reposted
+// on every push whose thread is never resolved, discovered weeks later.
+func TestARuleIDThatCannotSurviveTheMarkerIsRejected(t *testing.T) {
+	for _, ruleID := range []string{
+		"conventions/no console",
+		"arch/no-domain->infra",
+		"has\ttab",
+		"has\nnewline",
+	} {
+		f := Finding{
+			RuleID: ruleID, Lane: LaneDeterministic,
+			Confidence: ConfidenceHigh, Severity: SeverityError,
+			File: "a.ts", Line: 1, Message: "m",
+		}
+		err := f.Validate()
+		if err == nil {
+			t.Errorf("ruleId %q was accepted", ruleID)
+			continue
+		}
+		if !strings.Contains(err.Error(), "comment marker") {
+			t.Errorf("ruleId %q: want the reason stated, got %v", ruleID, err)
+		}
+	}
+
+	// And the ordinary ones are still fine.
+	for _, ruleID := range []string{"conventions/no-console", "types/TS2322", "deps/npm"} {
+		f := Finding{
+			RuleID: ruleID, Lane: LaneDeterministic,
+			Confidence: ConfidenceHigh, Severity: SeverityError,
+			File: "a.ts", Line: 1, Message: "m",
+		}
+		if err := f.Validate(); err != nil {
+			t.Errorf("ruleId %q was rejected: %v", ruleID, err)
+		}
+	}
+}

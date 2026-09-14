@@ -21,19 +21,19 @@ func TestInstallWritesTheFileSetAndIsIdempotent(t *testing.T) {
 	git := testfixture.Git(t, root)
 
 	first := install(t, root)
-	if len(first.Created) != 5 || len(first.Overwritten) != 0 || len(first.Unchanged) != 0 {
-		t.Fatalf("want five files created, got %+v", first)
+	if len(first.Created) != 7 || len(first.Overwritten) != 0 || len(first.Unchanged) != 0 {
+		t.Fatalf("want seven files created, got %+v", first)
 	}
-	// git collapses new directories, so the five files show as two untracked
-	// entries: .github/ and .review/. Anything else is a path the plan did not
-	// name, which is the guarantee --dry-run rests on.
-	if status := strings.Fields(git("status", "--porcelain")); len(status) != 4 {
-		t.Errorf("want exactly .github/ and .review/ untracked, got:\n%s",
+	// git collapses new directories, so the seven files show as three untracked
+	// entries: .agent/, .github/ and .review/. Anything else is a path the plan did
+	// not name, which is the guarantee --dry-run rests on.
+	if status := strings.Fields(git("status", "--porcelain")); len(status) != 6 {
+		t.Errorf("want exactly .agent/, .github/ and .review/ untracked, got:\n%s",
 			git("status", "--porcelain"))
 	}
 
 	second := install(t, root)
-	if len(second.Created) != 0 || len(second.Unchanged) != 5 {
+	if len(second.Created) != 0 || len(second.Unchanged) != 7 {
 		t.Errorf("a second install must change nothing, got %+v", second)
 	}
 	if len(second.Manual) == 0 {
@@ -81,7 +81,7 @@ func TestTheGeneratedConfigForARepositoryWithoutTypeScript(t *testing.T) {
 	testfixture.Git(t, root)("init", "-q", "-b", "main")
 
 	report := install(t, root)
-	if len(report.Created) != 5 {
+	if len(report.Created) != 7 {
 		t.Fatalf("want the full file set regardless, got %+v", report)
 	}
 	cfg, _, err := config.Resolve(root, "", func(string) string { return "" })

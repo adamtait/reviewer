@@ -104,11 +104,27 @@ func lineRef(f finding.Finding) string {
 
 // message appends the confidence only when it is not high, so the common case
 // stays quiet and a hedged finding announces itself.
+// message adds what the reader needs to decide how much weight to give a finding.
+//
+// The lane is shown as well as the confidence, because they answer different
+// questions and only one of them was visible. Confidence says how loudly a finding
+// is presented; the lane says whether it came from something that can be wrong
+// about what the code says. A `correctness/bug` at high confidence from the model
+// lane is allowed (ADR-0022) and, printed without the marker, was indistinguishable
+// from a compiler error — which is how a reader ends up rewriting correct code on a
+// model's say-so.
 func message(f finding.Finding) string {
-	if f.Confidence == finding.ConfidenceHigh {
+	var notes []string
+	if f.Lane == finding.LaneLLM {
+		notes = append(notes, "model")
+	}
+	if f.Confidence != finding.ConfidenceHigh {
+		notes = append(notes, string(f.Confidence)+" confidence")
+	}
+	if len(notes) == 0 {
 		return f.Message
 	}
-	return fmt.Sprintf("%s (%s confidence)", f.Message, f.Confidence)
+	return fmt.Sprintf("%s (%s)", f.Message, strings.Join(notes, ", "))
 }
 
 // detailIndent lines evidence and suggestions up under the message column.

@@ -8,6 +8,7 @@ package finding
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -93,6 +94,16 @@ func (f Finding) Validate() error {
 
 	if f.RuleID == "" {
 		problems = append(problems, errNoRuleID)
+	} else if unsafeRuleID.MatchString(f.RuleID) {
+		// The rule id travels inside an HTML comment marker, which is how a posted
+		// finding is recognised again on the next run (ADR-0015) and how acceptance
+		// is measured per rule (ADR-0024). Whitespace or a `>` in it makes that
+		// marker unparseable, so the comment is reposted on every push and its
+		// thread is never resolved — a silent, compounding failure a long way from
+		// its cause.
+		problems = append(problems, fmt.Errorf(
+			"ruleId %q contains whitespace or `>`, which cannot survive the comment marker",
+			f.RuleID))
 	}
 	if f.File == "" {
 		problems = append(problems, errNoFile)
@@ -154,3 +165,6 @@ func Sort(fs []Finding) {
 		return a.RuleID < b.RuleID
 	})
 }
+
+// unsafeRuleID is anything that cannot round-trip through the comment marker.
+var unsafeRuleID = regexp.MustCompile(`[\s>]`)

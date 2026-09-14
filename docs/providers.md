@@ -104,6 +104,24 @@ is not on `PATH`.
 - No model name, into this repository's source. Model names go stale faster than releases;
   `REVIEW_MODEL_NAME` carries yours, so changing it is not a commit.
 
+## The agent skill
+
+`reviewer init` also writes `.agent/skills/code-review/`, so an agent working in the
+destination repository reviews a change before pushing it rather than after somebody else has read it.
+
+The skill's value is in what it says about *when* to run and how to read the result, not in the
+command. It draws the one distinction that decides what to do with a finding: a finding marked `model` is a
+**suggestion** from a model reading the diff, and everything else is a **fact** from a compiler or a
+pattern match. A suggestion you disagree with is not a finding you have to argue against.
+
+The marker is the lane, not the confidence. A model finding is allowed to be high confidence —
+`correctness/bug` and `security/risk` both are — and a high-confidence model finding is still a
+judgement about your code rather than a fact about it. The text report shows both, so the two are
+distinguishable at a glance.
+
+It also names the three failure modes worth naming: suppressing a finding instead of fixing it, acting
+on a finding about code the change did not touch, and reading an empty result as approval.
+
 ## Forks
 
 A fork's pull request gets no secrets (ADR-0018). The model lane is therefore skipped on fork

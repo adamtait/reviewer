@@ -27,11 +27,30 @@ const Length = 6
 
 // Marker is the HTML comment embedded in a posted comment so a later run can
 // recognise its own work. Invisible in rendered markdown.
-func Marker(fp string) string {
-	return "<!-- rv:" + fp + " -->"
+func Marker(fp, ruleID string) string {
+	// A rule id that cannot round-trip is omitted rather than written. An
+	// unparseable marker is worse than a marker with less in it: the finding stops
+	// being recognised at all, so it is reposted on every push and its thread is
+	// never resolved. finding.Validate rejects such an id upstream; this is the
+	// belt to that pair of braces, because the failure is silent and compounding.
+	if ruleID == "" || unsafeInMarker.MatchString(ruleID) {
+		return "<!-- rv:" + fp + " -->"
+	}
+	return "<!-- rv:" + fp + " " + ruleID + " -->"
 }
 
-var markerRe = regexp.MustCompile(`<!--\s*rv:([0-9a-f]{4,64})\s*-->`)
+// unsafeInMarker is anything the marker pattern cannot read back.
+var unsafeInMarker = regexp.MustCompile(`[\s>]`)
+
+// The rule id is in the marker as well as in the comment's visible text, because
+// acceptance is measured per rule id (ADR-0024) and the visible text is markdown
+// a human may edit. A machine-readable field costs nothing and is the difference
+// between a measurement and a scrape.
+//
+// The id is optional in the pattern so that a comment written before it was added
+// still parses as one of ours: its fingerprint still dedupes, and it simply does
+// not contribute to the measurement.
+var markerRe = regexp.MustCompile(`<!--\s*rv:([0-9a-f]{4,64})(?:\s+([^\s>]+))?\s*-->`)
 
 // ParseMarker extracts the fingerprint from a comment body, or "" when there is
 // none — which is how a human's comment is told apart from this tool's.
@@ -41,6 +60,22 @@ func ParseMarker(body string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// Mark is one marker's contents: the finding's identity and, when the comment was
+// written by a version that records it, the rule it came from.
+type Mark struct {
+	Fingerprint string
+	RuleID      string
+}
+
+// ParseMarks extracts every marker in a body, with its rule id.
+func ParseMarks(body string) []Mark {
+	var out []Mark
+	for _, m := range markerRe.FindAllStringSubmatch(body, -1) {
+		out = append(out, Mark{Fingerprint: m[1], RuleID: m[2]})
+	}
+	return out
 }
 
 // ParseAllMarkers extracts every fingerprint in a body. The collapsed summary

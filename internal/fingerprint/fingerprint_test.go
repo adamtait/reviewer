@@ -124,7 +124,7 @@ func TestMultiLineSpans(t *testing.T) {
 
 func TestMarkerRoundTrip(t *testing.T) {
 	fp := "a3f9c2"
-	body := "Some review text.\n" + Marker(fp) + "\n"
+	body := "Some review text.\n" + Marker(fp, "") + "\n"
 	if got := ParseMarker(body); got != fp {
 		t.Fatalf("want %q, got %q", fp, got)
 	}
@@ -132,7 +132,7 @@ func TestMarkerRoundTrip(t *testing.T) {
 	if got := ParseMarker("Looks good to me!"); got != "" {
 		t.Fatalf("want no fingerprint from a human comment, got %q", got)
 	}
-	if !strings.Contains(Marker(fp), "<!--") {
+	if !strings.Contains(Marker(fp, ""), "<!--") {
 		t.Fatal("the marker must be invisible in rendered markdown")
 	}
 }
@@ -141,5 +141,41 @@ func TestFingerprintLength(t *testing.T) {
 	root := repo(t, map[string]string{"a.ts": "const a = 1;\n"})
 	if got := Compute(root, at("a.ts", 1, 0)); len(got) != Length {
 		t.Fatalf("want %d characters, got %q", Length, got)
+	}
+}
+
+// The marker is the dedupe key and the metrics key. An unparseable one means the
+// comment is reposted on every push and its thread is never resolved — silent, and
+// a long way from its cause.
+func TestEveryRuleIDRoundTripsThroughTheMarker(t *testing.T) {
+	for _, tc := range []struct {
+		ruleID   string
+		wantRule string
+	}{
+		{ruleID: "conventions/no-console", wantRule: "conventions/no-console"},
+		{ruleID: "arch/no-domain-to-infra", wantRule: "arch/no-domain-to-infra"},
+		{ruleID: "types/TS2322", wantRule: "types/TS2322"},
+		{ruleID: "deps/npm", wantRule: "deps/npm"},
+		{ruleID: "a.b.c/d-e_f", wantRule: "a.b.c/d-e_f"},
+		{ruleID: "", wantRule: ""},
+		// These cannot survive the pattern, so the id is dropped rather than
+		// written — a marker carrying less still dedupes; an unparseable one does
+		// not exist at all.
+		{ruleID: "conventions/no console", wantRule: ""},
+		{ruleID: "arch/no-domain->infra", wantRule: ""},
+		{ruleID: "a\tb", wantRule: ""},
+	} {
+		body := "a finding\n" + Marker("a3f9c2", tc.ruleID)
+
+		if got := ParseMarker(body); got != "a3f9c2" {
+			t.Errorf("ruleID %q: the fingerprint did not survive: %q from %q", tc.ruleID, got, body)
+		}
+		marks := ParseMarks(body)
+		if len(marks) != 1 {
+			t.Fatalf("ruleID %q: want one mark, got %v from %q", tc.ruleID, marks, body)
+		}
+		if marks[0].RuleID != tc.wantRule {
+			t.Errorf("ruleID %q round-tripped as %q, want %q", tc.ruleID, marks[0].RuleID, tc.wantRule)
+		}
 	}
 }

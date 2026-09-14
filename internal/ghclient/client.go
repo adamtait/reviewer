@@ -181,6 +181,21 @@ func (c *REST) ListPullRequests(ctx context.Context, repo Repo, state string) ([
 		repo, url.QueryEscape(state)))
 }
 
+// ListPullRequestsUpdatedSince returns the pull requests touched in a window,
+// stopping as soon as the pages run past it.
+//
+// The list is sorted by update time descending, so the first pull request older
+// than the cutoff means every one after it is too. Without the early stop the cost
+// of a measurement scales with the size of the repository rather than with the
+// size of the window — fifty round trips on a five-thousand-pull-request
+// repository to look at seven, which is the wrong axis and makes a secondary rate
+// limit far more likely.
+func (c *REST) ListPullRequestsUpdatedSince(ctx context.Context, repo Repo, since time.Time) ([]PullRequest, error) {
+	return paginateUntil[PullRequest](ctx, c,
+		fmt.Sprintf("/repos/%s/pulls?state=all&sort=updated&direction=desc", repo),
+		func(pr PullRequest) bool { return pr.UpdatedAt.Before(since) })
+}
+
 func (c *REST) ListFiles(ctx context.Context, repo Repo, number int) ([]ChangedFile, error) {
 	return paginate[ChangedFile](ctx, c, fmt.Sprintf("/repos/%s/pulls/%d/files", repo, number))
 }
@@ -210,6 +225,30 @@ func paginate[T any](ctx context.Context, c *REST, path string) ([]T, error) {
 			return nil, err
 		}
 		all = append(all, page...)
+		next = nextLink(link)
+	}
+	return all, nil
+}
+
+// paginateUntil is paginate with a stopping condition, for an endpoint whose order
+// makes the rest of the pages irrelevant.
+func paginateUntil[T any](ctx context.Context, c *REST, path string, stop func(T) bool) ([]T, error) {
+	const perPage = 100
+	next := addQuery(path, "per_page", strconv.Itoa(perPage))
+
+	var all []T
+	for next != "" {
+		var page []T
+		link, err := c.do(ctx, http.MethodGet, next, nil, &page)
+		if err != nil {
+			return all, err
+		}
+		for _, item := range page {
+			if stop(item) {
+				return all, nil
+			}
+			all = append(all, item)
+		}
 		next = nextLink(link)
 	}
 	return all, nil

@@ -53,6 +53,10 @@ type Detected struct {
 
 	// Remote is the GitHub repository, as owner/name, from the origin remote.
 	Remote string
+	// DefaultBranch is the branch this repository treats as trunk, from git's own
+	// idea of it. Detected rather than assumed: handing a repository whose trunk is
+	// `master` a command that says `main` produces a command that fails.
+	DefaultBranch string
 
 	// HasPackageJSON is false for a repository that is not a Node project at all,
 	// which is not an error: the deterministic analyzers that spawn binaries still
@@ -118,6 +122,7 @@ func Detect(root string) (Detected, error) {
 	}
 	d.Workspaces = expandWorkspaces(abs, d.WorkspaceGlobs)
 	d.Remote = detectRemote(abs)
+	d.DefaultBranch = detectDefaultBranch(abs)
 
 	return d, nil
 }
@@ -296,6 +301,38 @@ func detectRemote(root string) string {
 		return ""
 	}
 	return parseRemote(strings.TrimSpace(string(out)))
+}
+
+// detectDefaultBranch asks git, preferring what the remote says over what is
+// checked out: a developer on a feature branch is not on trunk.
+func detectDefaultBranch(root string) string {
+	// origin/HEAD, when the clone recorded it.
+	if out, err := run(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if _, branch, ok := strings.Cut(strings.TrimSpace(out), "/"); ok && branch != "" {
+			return branch
+		}
+	}
+	// Otherwise whatever is checked out, which for a repository nobody has branched
+	// in is trunk.
+	//
+	// `init.defaultBranch` is deliberately not consulted. It is a *global* user
+	// preference about repositories that do not exist yet, so on a machine with
+	// `init.defaultBranch = main` it would answer "main" for a master-trunk
+	// repository — which is the exact failure this detection exists to prevent, and
+	// it would do it on the most common setup rather than a rare one.
+	if out, err := run(root, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		if branch := strings.TrimSpace(out); branch != "" && branch != "HEAD" {
+			return branch
+		}
+	}
+	return ""
+}
+
+func run(root string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	return string(out), err
 }
 
 // parseRemote handles the three forms a GitHub remote takes.

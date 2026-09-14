@@ -40,7 +40,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 
 	run := reporters.Run{Root: cfg.Root, Base: o.base}
 
-	files, err := changedFiles(ctx, o, cfg, secrets)
+	files, base, err := changedFiles(ctx, o, cfg, secrets)
 	if err != nil {
 		// Without a diff there is nothing to scope to, and reporting every
 		// whole-repository finding is the one thing this tool must not do
@@ -76,6 +76,11 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		// workspace should not make a plugin build the other eleven.
 		Projects:     diff.Affected(files, cfg.Projects),
 		ContextLines: cfg.Analyzers.ContextLines,
+		// The ref the diff was actually taken against — the pull request's own
+		// base, not the --base default. An analyzer that reads previous file
+		// contents from a different ref than the diff came from answers a
+		// different question than the one being reviewed.
+		Base: base,
 	}
 
 	result := sequencer.Run(ctx, host, req, sequencer.Options{
@@ -153,32 +158,42 @@ func nothingRanReason(cfg config.Config, offered, unavailable int) string {
 	}
 }
 
-// changedFiles works out what the review is about.
+// changedFiles works out what the review is about, and returns the ref it was
+// taken against.
+//
+// The ref is returned rather than re-derived by the caller, because they can
+// differ: on a pull request the base is the pull request's own, which is not what
+// --base defaults to. An analyzer that reads previous file contents from one ref
+// while the diff came from another is answering a different question — and it
+// does so silently, because both refs usually exist.
 //
 // For a pull request the base commit is preferred from the local checkout, which
 // gives the same answer as a developer running the tool by hand. When that commit
 // is absent — a shallow clone, or a branch the poller has never fetched — the
 // API's per-file patches are parsed instead, so a missing `fetch-depth: 0` costs
 // accuracy of context rather than the whole review.
-func changedFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, error) {
+func changedFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, string, error) {
 	switch {
 	case o.staged:
-		return diff.Staged(ctx, cfg.Root)
+		// The index against HEAD, so HEAD is what the files looked like before.
+		files, err := diff.Staged(ctx, cfg.Root)
+		return files, "", err
 	case o.pr != 0:
 		return pullRequestFiles(ctx, o, cfg, secrets)
 	default:
-		return diff.Changed(ctx, cfg.Root, o.base)
+		files, err := diff.Changed(ctx, cfg.Root, o.base)
+		return files, o.base, err
 	}
 }
 
-func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, error) {
+func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, string, error) {
 	client, repo, err := githubClient(cfg, secrets)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	pr, err := client.GetPullRequest(ctx, repo, o.pr)
 	if err != nil {
-		return nil, fmt.Errorf("reading pull request %d: %w", o.pr, err)
+		return nil, "", fmt.Errorf("reading pull request %d: %w", o.pr, err)
 	}
 
 	// An explicit --base wins: someone reviewing against a different branch than
@@ -188,18 +203,23 @@ func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets
 		base = pr.Base.SHA
 	}
 	if diff.HasCommit(ctx, cfg.Root, base) {
-		return diff.Changed(ctx, cfg.Root, base)
+		files, err := diff.Changed(ctx, cfg.Root, base)
+		return files, base, err
 	}
 
 	files, err := client.ListFiles(ctx, repo, o.pr)
 	if err != nil {
-		return nil, fmt.Errorf("listing the files of pull request %d: %w", o.pr, err)
+		return nil, "", fmt.Errorf("listing the files of pull request %d: %w", o.pr, err)
 	}
 	patched := make([]diff.PatchedFile, 0, len(files))
 	for _, f := range files {
 		patched = append(patched, diff.PatchedFile{Path: f.Filename, Status: f.Status, Patch: f.Patch})
 	}
-	return diff.FromPatches(patched)
+	// The API's patches carry no base commit this checkout can read, so no ref is
+	// returned: an analyzer that needs previous contents must say it cannot rather
+	// than read them from a ref that is not the one the diff came from.
+	parsed, err := diff.FromPatches(patched)
+	return parsed, "", err
 }
 
 // githubClient builds the client and repository from configuration. Shared by the

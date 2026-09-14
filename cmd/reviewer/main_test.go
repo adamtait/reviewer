@@ -251,22 +251,44 @@ func TestConfigSkipIsApplied(t *testing.T) {
 	}
 	script := filepath.Join(root, "..", "..", "examples", "plugins", "shell-hello", "plugin.sh")
 	writeConfig(t, repo.Root,
-		"plugins:\n  - id: shell-hello\n    command: "+script+"\nanalyzers:\n  skip: [shell-hello, gitleaks]\n")
+		"plugins:\n  - id: shell-hello\n    command: "+script+"\nanalyzers:\n  skip: [shell-hello]\n")
 
 	var stdout, stderr bytes.Buffer
 	if err := run(context.Background(),
 		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
 		t.Fatal(err)
 	}
-	out := stdout.String()
-	// Both analyzers skipped, so nothing ran and the report names the skip as the
-	// reason. "No analyzers are configured" would be the wrong explanation here:
-	// one is, and it was filtered out.
-	if !strings.Contains(out, "removed by only/skip") {
-		t.Fatalf("want the configured skip to take effect, got:\n%s", out)
+	// Asserted against the timing table, which lists exactly what ran. Asserting on
+	// "nothing ran at all" would mean listing every built-in analyzer in the skip,
+	// and the test would then break every time one is added — for a reason that has
+	// nothing to do with whether skip works.
+	if out := stdout.String(); strings.Contains(out, "shell-hello") {
+		t.Fatalf("the skipped analyzer ran:\n%s", out)
 	}
-	if strings.Contains(out, "outside the diff") || strings.Contains(out, "secrets/") {
-		t.Fatalf("a skipped analyzer still produced findings:\n%s", out)
+}
+
+// The three reasons a run can end with no analyzers need three different answers,
+// because each sends the reader somewhere different.
+func TestNothingRanReason(t *testing.T) {
+	configured := config.Config{Plugins: []config.Plugin{{ID: "p", Command: "x"}}}
+
+	for _, tc := range []struct {
+		name        string
+		cfg         config.Config
+		offered     int
+		unavailable int
+		want        string
+	}{
+		{name: "filtered out", cfg: configured, offered: 3, want: "removed by only/skip"},
+		{name: "all declined", cfg: configured, unavailable: 2, want: "all 2 declined"},
+		{name: "plugin offered none", cfg: configured, want: "offered none; check they are installed"},
+		{name: "nothing configured", cfg: config.Config{}, want: "no analyzers are configured"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nothingRanReason(tc.cfg, tc.offered, tc.unavailable); !strings.Contains(got, tc.want) {
+				t.Errorf("nothingRanReason() = %q, want it to mention %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -708,4 +730,231 @@ func TestInitRefusalsExitNonZero(t *testing.T) {
 			t.Errorf("want the reason printed, got:\n%s", stdout.String())
 		}
 	})
+}
+
+// `rules test` is a check with a right answer, not a review: it has to be usable in
+// a script, so its exit status has to distinguish a ready pack from one that is not.
+func TestRulesTest(t *testing.T) {
+	writeRuleFile := func(t *testing.T, dir, name, body string) {
+		t.Helper()
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("a pack with a missing negative case fails", func(t *testing.T) {
+		root := t.TempDir()
+		rules := filepath.Join(root, "rules")
+		writeRuleFile(t, rules, "one.yaml", "rules:\n  - id: one\n    message: m\n")
+		writeRuleFile(t, rules, "one.ts", "// ruleid: one\nconst a = 1;\n")
+
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
+		var checkErr errCheckFailed
+		if !errors.As(err, &checkErr) {
+			t.Fatalf("want a failed check, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "no `ok:` case") {
+			t.Errorf("want the missing half named, got:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("an absent engine is reported, never passed over", func(t *testing.T) {
+		root := t.TempDir()
+		rules := filepath.Join(root, "rules")
+		writeRuleFile(t, rules, "one.yaml", "rules:\n  - id: one\n    message: m\n")
+		writeRuleFile(t, rules, "one.ts", "// ruleid: one\nconst a = 1;\n// ok: one\nconst b = 2;\n")
+
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
+
+		if _, lookErr := exec.LookPath("opengrep"); lookErr != nil {
+			// Reporting success while never executing a pattern is the one outcome
+			// that would make this command worse than not having it.
+			var checkErr errCheckFailed
+			if !errors.As(err, &checkErr) {
+				t.Fatalf("want the absent engine to fail the check, got %v", err)
+			}
+			if !strings.Contains(stdout.String(), "the patterns were not executed") {
+				t.Errorf("want the skip stated plainly, got:\n%s", stdout.String())
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("with opengrep installed this pack should pass: %v", err)
+		}
+	})
+
+	t.Run("an empty directory is misuse, not a failed check", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "rules"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(),
+			[]string{"rules", "test", "--root", root, "--rules", "rules"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+	})
+
+	t.Run("the verb is required", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(), []string{"rules"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) || !strings.Contains(err.Error(), "needs a verb") {
+			t.Fatalf("want a usage error naming the verb, got %v", err)
+		}
+		err = run(context.Background(), []string{"rules", "lint"}, &stdout, &stderr, noEnv)
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want an unknown verb rejected, got %v", err)
+		}
+	})
+
+	t.Run("--rules belongs to this subcommand only", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		err := run(context.Background(), []string{"--rules", "x"}, &stdout, &stderr, noEnv)
+		var usageErr errUsage
+		if !errors.As(err, &usageErr) {
+			t.Fatalf("want a usage error, got %v", err)
+		}
+	})
+}
+
+func TestBaselineNeedsWrite(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"baseline"}, &stdout, &stderr, noEnv)
+	var usageErr errUsage
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+}
+
+// The analyzer that owns the measurement lives in the TypeScript plugin, so a
+// repository without it gets a failed check naming what is missing, not a crash
+// and not a silent success.
+func TestBaselineWithoutTheAnalyzer(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(),
+		[]string{"baseline", "--write", "--root", repo.Root}, &stdout, &stderr, noEnv)
+	var checkErr errCheckFailed
+	if !errors.As(err, &checkErr) {
+		t.Fatalf("want a failed check, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "type-coverage") {
+		t.Errorf("want the missing analyzer named, got %v", err)
+	}
+}
+
+func TestWriteBelongsToBaselineOnly(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"--write"}, &stdout, &stderr, noEnv)
+	var usageErr errUsage
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("a review never writes to the repository; want a usage error, got %v", err)
+	}
+}
+
+// `rules test` must read the repository's own configuration, not the compiled-in
+// default: otherwise the command whose job is to check a pack reports "no rule
+// files" for a pack the analyzer beside it finds without difficulty.
+func TestRulesTestReadsTheConfiguredDirectory(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"conventions/one.yaml": "rules:\n  - id: one\n    message: m\n",
+		"conventions/one.ts":   "// ruleid: one\nconst a = 1;\n// ok: one\nconst b = 2;\n",
+		".review/config.yaml":  "rules:\n  dir: conventions\ngate:\n  secretsAnalyzers: [gitleaks]\n",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"rules", "test", "--root", root}, &stdout, &stderr, noEnv)
+
+	// Opengrep is not installed here, so the check fails on the engine — but it
+	// must have found the pack first.
+	if !strings.Contains(stdout.String(), "1 rule,") {
+		t.Fatalf("want the configured directory read, got:\n%s%v", stdout.String(), err)
+	}
+	var usageErr errUsage
+	if errors.As(err, &usageErr) {
+		t.Fatalf("a configured pack that exists is not misuse: %v", err)
+	}
+}
+
+// The ref an analyzer reads previous file contents from has to be the ref the diff
+// was taken against. On a pull request those differ: the diff uses the pull
+// request's own base and --base keeps its default, so an analyzer answering "did
+// this change introduce X" would answer about a different branch entirely.
+func TestTheAnalyzeRequestCarriesTheRefTheDiffUsed(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "frames.log")
+	_ = root
+
+	recorder := filepath.Join(t.TempDir(), "recorder.sh")
+	body := `#!/bin/sh
+while IFS= read -r frame; do
+  case "$frame" in
+    *'"type":"hello"'*)    printf '{"type":"hello","protocol":1,"plugin":"rec","version":"1.0.0"}\n' ;;
+    *'"type":"describe"'*) printf '{"type":"describe","analyzers":[{"id":"rec","lane":"deterministic","order":10,"available":true}]}\n' ;;
+    *'"type":"analyze"'*)  echo "$frame" >> "` + log + `"
+                           printf '{"type":"findings","analyzer":"rec","findings":[]}\n' ;;
+    *'"type":"bye"'*)      exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(recorder, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, repo.Root, "plugins:\n  - id: rec\n    command: "+recorder+"\nanalyzers:\n  skip: [gitleaks, opengrep, osv]\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(),
+		[]string{"--root", repo.Root, "--base", repo.Base}, &stdout, &stderr, noEnv); err != nil {
+		t.Fatal(err)
+	}
+
+	frames, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("the plugin was never asked to analyze anything: %v", err)
+	}
+	if !strings.Contains(string(frames), `"base":"`+repo.Base+`"`) {
+		t.Errorf("want the diff's own base in the analyze frame, got:\n%s", frames)
+	}
+}
+
+// A staged review compares the index against HEAD, and an empty base is how the
+// protocol says so. Sending "main" there would make an analyzer read the wrong
+// previous contents on every pre-commit run.
+func TestAStagedReviewCarriesNoBase(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+
+	o := options{staged: true, base: defaultBase, root: repo.Root}
+	files, base, err := changedFiles(context.Background(), o, config.Config{Root: repo.Root}, config.Secrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = files
+	if base != "" {
+		t.Errorf("want no base for a staged review, got %q", base)
+	}
 }

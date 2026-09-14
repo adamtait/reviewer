@@ -14,6 +14,8 @@ import (
 	"fmt"
 
 	"github.com/adamtait/reviewer/internal/analyzers/gitleaks"
+	"github.com/adamtait/reviewer/internal/analyzers/opengrep"
+	"github.com/adamtait/reviewer/internal/analyzers/osv"
 	"github.com/adamtait/reviewer/internal/config"
 	"github.com/adamtait/reviewer/pkg/finding"
 	"github.com/adamtait/reviewer/pkg/plugin"
@@ -46,6 +48,8 @@ func (h *Handler) Version() string { return h.version }
 func (h *Handler) Describe() []plugin.Descriptor {
 	return []plugin.Descriptor{
 		h.descriptor(gitleaks.ID, gitleaks.Order, finding.LaneDeterministic),
+		h.descriptor(opengrep.ID, opengrep.Order, finding.LaneDeterministic),
+		h.descriptor(osv.ID, osv.Order, finding.LaneDeterministic),
 	}
 }
 
@@ -64,6 +68,26 @@ func (h *Handler) probe(id string) string {
 	switch id {
 	case gitleaks.ID:
 		if _, _, err := gitleaks.Probe(h.binary(id)); err != nil {
+			return err.Error()
+		}
+	case opengrep.ID:
+		// Rules first: a repository with no rule files has nothing for this
+		// analyzer to do, and saying "opengrep is not installed" at someone who
+		// has not written a rule yet sends them to install a tool they do not
+		// need.
+		rules, err := opengrep.RuleFiles(h.cfg.Root, h.cfg.Rules.Dir)
+		if err != nil {
+			return err.Error()
+		}
+		if len(rules) == 0 {
+			return fmt.Sprintf("no rule files in %s; write one to enable convention checks",
+				h.cfg.Rules.Dir)
+		}
+		if _, _, err := opengrep.Probe(h.binary(id)); err != nil {
+			return err.Error()
+		}
+	case osv.ID:
+		if _, _, err := osv.Probe(h.binary(id)); err != nil {
 			return err.Error()
 		}
 	}
@@ -89,6 +113,10 @@ func (h *Handler) Analyze(ctx context.Context, id string, req plugin.AnalyzeRequ
 	switch id {
 	case gitleaks.ID:
 		return gitleaks.Analyze(ctx, req, h.binary(id))
+	case opengrep.ID:
+		return opengrep.Analyze(ctx, req, h.binary(id), h.cfg.Rules.Dir)
+	case osv.ID:
+		return osv.Analyze(ctx, req, h.binary(id))
 	default:
 		return nil, nil, fmt.Errorf("no built-in analyzer named %q", id)
 	}

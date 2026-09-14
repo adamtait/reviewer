@@ -1,0 +1,26 @@
+# An example rule. Generic on purpose.
+#
+# The convention: a default export has no name at the point of import, so every
+# consumer picks its own. That makes the symbol unsearchable across the codebase and
+# makes a rename invisible to the compiler — which is exactly what a public API
+# surface cannot afford.
+rules:
+  - id: no-default-export-in-api
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      Public API modules must use named exports. A default export is renamed freely
+      by every consumer, so the symbol cannot be found by searching and a rename
+      cannot be checked by the compiler.
+    metadata:
+      reviewer-rule-id: conventions/no-default-export-in-api
+      category: conventions
+    paths:
+      include:
+        - "**/api/**"
+    pattern-either:
+      - pattern: export default $X;
+      - pattern: |
+          export default function $F(...) { ... }
+      - pattern: |
+          export default class $C { ... }

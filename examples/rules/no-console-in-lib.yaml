@@ -1,0 +1,25 @@
+# An example rule. Generic on purpose.
+#
+# The convention: library code does not choose how its caller reports things.
+# console.log in a library is a decision taken away from whoever imported it, and it
+# is invisible in any environment that does not have a console.
+rules:
+  - id: no-console-in-lib
+    languages: [typescript]
+    severity: WARNING
+    message: >
+      Library code should not write to the console. Return the information, throw,
+      or take a logger, and let the caller decide what to do with it.
+    metadata:
+      reviewer-rule-id: conventions/no-console-in-lib
+      category: conventions
+    paths:
+      include:
+        - "**/lib/**"
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+    pattern-either:
+      - pattern: console.log(...)
+      - pattern: console.info(...)
+      - pattern: console.debug(...)

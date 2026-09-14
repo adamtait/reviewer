@@ -61,6 +61,8 @@ export interface AnalyzeRequest {
   changed: ChangedFile[];
   /** Monorepo workspaces in scope. Empty means all. */
   projects?: string[];
+  /** The ref the diff was taken against; absent for a staged diff. */
+  base?: string;
   contextLines?: number;
   /** This analyzer's config block, passed through untouched. */
   settings?: unknown;

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -29,6 +30,8 @@ type options struct {
 	dryRun     bool
 	force      bool
 	provider   string
+	rulesDir   string
+	write      bool
 	yes        bool
 	version    bool
 }
@@ -48,6 +51,8 @@ flags:
   --dry-run         with --reporter github, print what would be posted and post nothing;
                     with init, print the plan and write nothing
   --force           with init, replace files that already exist
+  --rules DIR       with rules test, the rule directory (default: .review/rules)
+  --write           with baseline, record the measurement
   --provider NAME   with init, configure this model access path. One of
                     openai-compatible, openai, gemini, anthropic, claude-code, codex
   --yes             with init, do not prompt; leave the model lane unconfigured
@@ -57,6 +62,13 @@ flags:
   --version         print the version and exit
 
 subcommands:
+  baseline --write  record the type-coverage ratchet's mark, which future runs
+                    compare against
+
+  rules test        check this repository's rule pack: that it loads, that no two
+                    rules share an id, that every rule has a matching and a
+                    non-matching case, and that the patterns agree with them
+
   init              inspect this repository and print what installing the
                     reviewer into it would change
 
@@ -73,7 +85,15 @@ A usage error exits 2.
 // subcommands are recognised before flag parsing, because Go's flag package stops
 // at the first positional argument — so `reviewer watch --dry-run` would leave
 // --dry-run unparsed and report it as a stray argument.
-var subcommands = map[string]bool{"init": true, "watch": true, "version": true}
+var subcommands = map[string]bool{
+	"init": true, "watch": true, "version": true, "rules": true, "baseline": true,
+}
+
+// twoWordSubcommands take a second bare word. Recognised before flag parsing for
+// the same reason as the first: Go's flag package stops at the first positional
+// argument, so `reviewer rules test --rules x` would otherwise leave both the word
+// and the flag unparsed.
+var twoWordSubcommands = map[string]map[string]bool{"rules": {"test": true}}
 
 func parse(args []string, stderr io.Writer) (options, error) {
 	var o options
@@ -82,6 +102,18 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	if len(args) > 0 && subcommands[args[0]] {
 		o.subcommand = args[0]
 		args = args[1:]
+		if verbs, ok := twoWordSubcommands[o.subcommand]; ok {
+			if len(args) == 0 {
+				fmt.Fprint(stderr, usage)
+				return options{}, errUsage{fmt.Errorf("%s needs a verb: %s", o.subcommand, verbList(verbs))}
+			}
+			if !verbs[args[0]] {
+				fmt.Fprint(stderr, usage)
+				return options{}, errUsage{fmt.Errorf("%s %q is not a thing; try %s", o.subcommand, args[0], verbList(verbs))}
+			}
+			o.subcommand += " " + args[0]
+			args = args[1:]
+		}
 	}
 
 	fs := flag.NewFlagSet("reviewer", flag.ContinueOnError)
@@ -100,6 +132,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.force, "force", false, "")
 	fs.StringVar(&o.provider, "provider", "", "")
+	fs.StringVar(&o.rulesDir, "rules", "", "")
+	fs.BoolVar(&o.write, "write", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
@@ -133,6 +167,10 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("--force applies to init, which decides what to overwrite")}
 	case o.provider != "" && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--provider applies to init; a review reads the provider from config")}
+	case o.rulesDir != "" && o.subcommand != "rules test":
+		return options{}, errUsage{fmt.Errorf("--rules applies to `rules test`; a review reads the rule directory from config")}
+	case o.write && o.subcommand != "baseline":
+		return options{}, errUsage{fmt.Errorf("--write applies to baseline; a review never writes to the repository")}
 	case o.yes && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--yes applies to init, which is the only subcommand that asks anything")}
 	}
@@ -153,7 +191,27 @@ func splitList(s string) []string {
 	return out
 }
 
-// errUsage marks the one error class that exits non-zero.
+func verbList(verbs map[string]bool) string {
+	var names []string
+	for verb := range verbs {
+		names = append(names, verb)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// errUsage marks misuse of the command line. Exits 2.
 type errUsage struct{ error }
 
 func (e errUsage) Unwrap() error { return e.error }
+
+// errCheckFailed marks a check command whose subject failed the check — a rule pack
+// that is not ready, not a tool that is broken.
+//
+// A review exits 0 whatever it finds (ADR-0009), and that is about not blocking a
+// pull request on an opinion. `rules test` is not a review: it is a check with a
+// right answer, run by someone who wants to know, and it has to be usable in a
+// script. So it exits 1, which is neither of the other two things.
+type errCheckFailed struct{ error }
+
+func (e errCheckFailed) Unwrap() error { return e.error }

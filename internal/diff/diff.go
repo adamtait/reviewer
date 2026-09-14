@@ -72,6 +72,37 @@ func Changed(ctx context.Context, root, base string) ([]File, error) {
 	return parse(out)
 }
 
+// Unified returns the diff itself, with context, for the model lane.
+//
+// The line-range parser works from `--unified=0` because zero context is what
+// makes "which lines changed" unambiguous. A model needs the opposite: without
+// surrounding lines it cannot tell what the change is part of. So this is a second
+// invocation rather than a reinterpretation of the first — two questions, two
+// answers, neither derived from the other.
+// Unified returns the diff. staged selects the index against HEAD; otherwise base
+// must name a ref this checkout has.
+//
+// An empty base with staged false is refused rather than quietly falling back to
+// the index. That fallback existed, and it meant a pull request reviewed on a
+// shallow clone sent the developer's local staged changes to a model provider —
+// content the secrets gate had never scanned, because the gate saw the pull
+// request's files and the prompt carried something else entirely.
+func Unified(ctx context.Context, root, base string, staged bool, contextLines int) (string, error) {
+	if contextLines < 0 {
+		contextLines = 0
+	}
+	args := []string{"diff", "--no-color", "--find-renames", fmt.Sprintf("--unified=%d", contextLines)}
+	switch {
+	case staged:
+		args = append(args, "--cached")
+	case base != "":
+		args = append(args, "--merge-base", base, "HEAD")
+	default:
+		return "", fmt.Errorf("no base ref: this checkout cannot produce the diff for this review")
+	}
+	return git(ctx, root, args...)
+}
+
 // Staged returns the files staged in the index, for the pre-commit and agent
 // surfaces where there is no base branch to compare against.
 func Staged(ctx context.Context, root string) ([]File, error) {
@@ -111,7 +142,7 @@ func ToPluginFiles(files []File) []plugin.ChangedFile {
 		if f.Status == StatusDeleted || f.Binary || len(f.Ranges) == 0 {
 			continue
 		}
-		out = append(out, plugin.ChangedFile{Path: f.Path, Ranges: f.Ranges})
+		out = append(out, plugin.ChangedFile{Path: f.Path, Status: string(f.Status), Ranges: f.Ranges})
 	}
 	return out
 }

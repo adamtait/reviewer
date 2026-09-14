@@ -958,3 +958,23 @@ func TestAStagedReviewCarriesNoBase(t *testing.T) {
 		t.Errorf("want no base for a staged review, got %q", base)
 	}
 }
+
+// The flag has to reach the configuration, not merely parse. The previous version
+// of this test asserted only that `o.noInvalidate` was set, which stayed green with
+// the override deleted from the review path.
+func TestNoInvalidateReachesTheConfiguration(t *testing.T) {
+	o, err := parse([]string{"--no-invalidate"}, &bytes.Buffer{})
+	if err != nil || !o.noInvalidate {
+		t.Fatalf("got %+v %v", o, err)
+	}
+
+	cfg := config.Defaults()
+	cfg.LaneB.Invalidate = true
+	if applyFlags(o, cfg).LaneB.Invalidate {
+		t.Error("--no-invalidate did not switch invalidation off")
+	}
+	// And it does not switch anything off that was not asked for.
+	if !applyFlags(options{}, cfg).LaneB.Invalidate {
+		t.Error("invalidation was switched off without the flag")
+	}
+}

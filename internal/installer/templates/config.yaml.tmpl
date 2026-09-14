@@ -51,6 +51,21 @@ laneB:
   enabled: false
 {{- if .Provider }}
   provider: {{ .Provider | yaml }}
+{{- if .ProviderHasEndpoint }}
+  # Where the provider lives. Nothing is compiled into the binary (ADR-0004), so a
+  # gateway or a self-hosted server is reached by changing this line.
+  # REVIEW_MODEL_BASE_URL overrides it for one machine without editing this file.
+{{- if eq .Provider "anthropic" }}
+  baseUrl: "https://api.anthropic.com/v1"
+{{- else if eq .Provider "openai" }}
+  baseUrl: "https://api.openai.com/v1"
+{{- else if eq .Provider "gemini" }}
+  baseUrl: "https://generativelanguage.googleapis.com/v1beta"
+{{- end }}
+{{- else }}
+  # This path needs an endpoint and this repository never names one. Set
+  # REVIEW_MODEL_BASE_URL, or put it here as baseUrl.
+{{- end }}
   # The model itself is named by REVIEW_MODEL_NAME in the environment, so that
   # changing it is not a commit. See .review/.env.example.
 {{- else }}

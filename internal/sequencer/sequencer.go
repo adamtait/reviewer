@@ -104,7 +104,12 @@ func Run(ctx context.Context, host Host, req plugin.AnalyzeRequest, opts Options
 	case res.Gate.Blocked:
 		// Nothing in the model lane to block; reporting it would be noise.
 	default:
-		found, _ := run(ctx, host, llm, req, &res, opts.SecretsAnalyzers)
+		// The second pass sees the first pass's findings. They are scoped already,
+		// so a model-lane analyzer is told what a reviewer will actually see rather
+		// than everything the deterministic lane produced.
+		llmReq := req
+		llmReq.Prior = append([]finding.Finding(nil), res.Findings...)
+		found, _ := run(ctx, host, llm, llmReq, &res, opts.SecretsAnalyzers)
 		if opts.Scope != nil {
 			var dropped int
 			found, dropped = opts.Scope(found)

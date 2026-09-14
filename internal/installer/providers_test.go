@@ -215,3 +215,45 @@ func TestInstallWithNoProviderSaysSo(t *testing.T) {
 		t.Errorf("a config with no provider must still be valid: %v", err)
 	}
 }
+
+// The endpoint a path uses lives in the config template, not in Go source
+// (ADR-0004), and a test in internal/config enforces that. This asserts the other
+// half: that every path which needs an endpoint actually gets one written.
+func TestEveryEndpointPathGetsOneWritten(t *testing.T) {
+	for _, p := range providers() {
+		root := testfixture.Destination(t, "tiny-monorepo")
+		plan := BuildPlan(mustDetect(t, root), releaseV, Options{Provider: p})
+		if _, err := Install(plan, releaseV); err != nil {
+			t.Fatal(err)
+		}
+		body := read(t, root, ".review/config.yaml")
+
+		switch {
+		case p.HasEndpoint:
+			if !strings.Contains(body, "baseUrl:") {
+				t.Errorf("%s declares an endpoint and none was written:\n%s", p.ID, body)
+			}
+		case p.NeedsAPIKey():
+			// openai-compatible: the endpoint is the thing the user supplies.
+			if strings.Contains(body, "baseUrl:") {
+				t.Errorf("%s must not get an endpoint this repository chose:\n%s", p.ID, body)
+			}
+			if !strings.Contains(body, "REVIEW_MODEL_BASE_URL") {
+				t.Errorf("%s: want the variable named so the gap is fillable:\n%s", p.ID, body)
+			}
+		default:
+			// The subscription paths spawn a binary and have nowhere to point.
+			if strings.Contains(body, "baseUrl:") {
+				t.Errorf("%s spawns a CLI and needs no endpoint:\n%s", p.ID, body)
+			}
+		}
+
+		cfg, _, err := config.Resolve(root, "", func(string) string { return "" })
+		if err != nil {
+			t.Fatalf("%s: the generated config does not load: %v", p.ID, err)
+		}
+		if p.HasEndpoint && cfg.LaneB.BaseURL == "" {
+			t.Errorf("%s: the endpoint did not survive the loader", p.ID)
+		}
+	}
+}

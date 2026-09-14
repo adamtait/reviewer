@@ -32,6 +32,21 @@ reviewer init --yes                    # no prompt, no provider: deterministic l
 An install with no provider is complete. The deterministic lane is the one that pays for itself;
 the model lane is the one that needs a budget and a decision.
 
+## Where the endpoint comes from
+
+No endpoint is compiled into the binary (ADR-0004). `reviewer init` writes the chosen path's endpoint
+into the destination's `.review/config.yaml` as `laneB.baseUrl`, exactly as it writes
+`github.apiBaseUrl`, and `REVIEW_MODEL_BASE_URL` overrides it for one machine without editing a
+tracked file.
+
+So a gateway, a proxy or a self-hosted server is reached by changing one line of config, on any of the
+four API paths — not just on `openai-compatible`. What makes that path different is that it has no
+endpoint to write at install, because the endpoint is the thing you are supplying.
+
+With no `laneB.baseUrl` and no `REVIEW_MODEL_BASE_URL`, the model lane reports itself unavailable and
+makes no call at all. A provider that silently posted to a compiled-in default would put your diff
+somewhere you never named.
+
 ## Why `openai-compatible` exists separately
 
 It is the only path that takes a base URL. Everything else about it is the OpenAI request shape,
@@ -60,6 +75,26 @@ the key alone would give the model lane a credential and nothing to call.
 
 Turning the lane on in CI is therefore: set the secret, set the variables, flip
 `laneB.enabled: true`. The workflow itself needs no edit.
+
+## The subscription paths, in detail
+
+`claude-code` and `codex` spawn the CLI you already have, non-interactively, and read its JSON output.
+There is no key and no endpoint to configure — that is the whole point of offering them.
+
+Two properties of that boundary are worth knowing, because they are the things that would otherwise
+go wrong quietly:
+
+**The prompt goes on stdin, never on the command line.** An argument list is world-readable: `ps`
+shows it to every other user on the machine, and it reaches process accounting, audit logs and crash
+reports. The prompt contains your diff. A test asserts that neither the system prompt nor the diff
+appears in the spawned process's argv.
+
+**A hung CLI is killed, and so is everything it started.** These tools can sit waiting for input if
+they decide the session needs re-authenticating, so each invocation is bounded and runs in its own
+process group — a timeout kills the group rather than leaving orphans behind holding your terminal.
+
+Pin the executable with `tools.claude-code.path` or `tools.codex.path` in `.review/config.yaml` if it
+is not on `PATH`.
 
 ## What is never written
 

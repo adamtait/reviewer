@@ -27,6 +27,16 @@ type Provider struct {
 	Summary string
 	// Env are the variables this path needs, in the order a person fills them.
 	Env []string
+	// HasEndpoint says whether this path has a well-known endpoint to write into
+	// the destination's config at install time.
+	//
+	// The endpoint itself is in the config template, not here. ADR-0004 keeps hosts
+	// out of this repository's Go source, and a test enforces it — so what lives in
+	// code is the fact that an endpoint exists, and the value lives where the rest
+	// of the generated config's text does. False for the two subscription paths,
+	// which spawn a binary, and for openai-compatible, whose whole purpose is an
+	// endpoint this repository must never name.
+	HasEndpoint bool
 	// Binary is the CLI this path drives, for the two subscription paths. Empty
 	// for the API paths.
 	Binary string
@@ -53,22 +63,25 @@ func (p Provider) NeedsAPIKey() bool {
 func providers() []Provider {
 	return []Provider{
 		{
-			ID:        "anthropic",
-			Summary:   "Claude API, billed per token",
-			Env:       []string{config.EnvModelAPIKey, config.EnvModelName},
-			WorksInCI: true,
+			ID:          "anthropic",
+			Summary:     "Claude API, billed per token",
+			HasEndpoint: true,
+			Env:         []string{config.EnvModelAPIKey, config.EnvModelName},
+			WorksInCI:   true,
 		},
 		{
-			ID:        "openai",
-			Summary:   "OpenAI API, billed per token",
-			Env:       []string{config.EnvModelAPIKey, config.EnvModelName},
-			WorksInCI: true,
+			ID:          "openai",
+			Summary:     "OpenAI API, billed per token",
+			HasEndpoint: true,
+			Env:         []string{config.EnvModelAPIKey, config.EnvModelName},
+			WorksInCI:   true,
 		},
 		{
-			ID:        "gemini",
-			Summary:   "Gemini API, billed per token",
-			Env:       []string{config.EnvModelAPIKey, config.EnvModelName},
-			WorksInCI: true,
+			ID:          "gemini",
+			Summary:     "Gemini API, billed per token",
+			HasEndpoint: true,
+			Env:         []string{config.EnvModelAPIKey, config.EnvModelName},
+			WorksInCI:   true,
 		},
 		{
 			ID:      "openai-compatible",

@@ -295,6 +295,9 @@ type data struct {
 	// ProviderWorksInCI is false for the subscription paths, and the generated
 	// workflow says so where someone would otherwise wonder why the lane is quiet.
 	ProviderWorksInCI bool
+	// ProviderHasEndpoint says whether the template should write one. The value is
+	// in the template, because ADR-0004 keeps hosts out of this repository's Go.
+	ProviderHasEndpoint bool
 	// ProviderVars are the provider's non-secret variables. They go into the
 	// workflow as Actions variables: the model name and base URL are configuration,
 	// not credentials, and both are read only from the environment — so without
@@ -329,12 +332,13 @@ func templateData(p Plan, pluginVersion string) data {
 		ReviewerVersion:  workflowVersion(pluginVersion),
 		ReviewerChecksum: checksumPlaceholder,
 
-		Provider:          p.Options.Provider.ID,
-		NeedsModelSecret:  p.Options.Provider.NeedsAPIKey(),
-		ProviderWorksInCI: p.Options.Provider.ID == "" || p.Options.Provider.WorksInCI,
-		ProviderEnv:       p.Options.Provider.Env,
-		ProviderVars:      nonSecret(p.Options.Provider.Env),
-		Projects:          p.Projects,
+		Provider:            p.Options.Provider.ID,
+		ProviderHasEndpoint: p.Options.Provider.HasEndpoint,
+		NeedsModelSecret:    p.Options.Provider.NeedsAPIKey(),
+		ProviderWorksInCI:   p.Options.Provider.ID == "" || p.Options.Provider.WorksInCI,
+		ProviderEnv:         p.Options.Provider.Env,
+		ProviderVars:        nonSecret(p.Options.Provider.Env),
+		Projects:            p.Projects,
 	}
 	out.InstallCommand = ciInstallCommand(out.PackageManager)
 	out.CacheKey = setupNodeCache(out.PackageManager)

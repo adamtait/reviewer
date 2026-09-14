@@ -33,6 +33,8 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		return err
 	}
 
+	cfg = applyFlags(o, cfg)
+
 	rep, err := reporter(ctx, o, cfg, secrets, stdout, stderr)
 	if err != nil {
 		return err
@@ -52,7 +54,7 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 	host := pluginhost.New("reviewer/"+version, stderr)
 	// The built-in analyzers are a plugin like any other, reached over the
 	// protocol through in-memory pipes rather than a subprocess (ADR-0027).
-	if err := host.AddLocal(ctx, builtin.New(cfg, version), cfg.Analyzers.Timeout); err != nil {
+	if err := host.AddLocal(ctx, builtin.New(cfg, secrets, version), cfg.Analyzers.Timeout); err != nil {
 		run.Warnings = append(run.Warnings, err.Error())
 	}
 	// Closed explicitly below so that shutdown warnings reach the report; the
@@ -80,7 +82,8 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		// base, not the --base default. An analyzer that reads previous file
 		// contents from a different ref than the diff came from answers a
 		// different question than the one being reviewed.
-		Base: base,
+		Base:   base,
+		Staged: o.staged,
 	}
 
 	result := sequencer.Run(ctx, host, req, sequencer.Options{
@@ -131,6 +134,18 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 		run.Warnings = append(run.Warnings, nothingRanReason(cfg, offered, unavailable))
 	}
 	return rep.Report(ctx, run)
+}
+
+// applyFlags lets the command line override the file, as everywhere else.
+//
+// A named function rather than four lines inside review, so there is something to
+// test. The version inlined there was covered only by a test asserting the flag had
+// parsed — which stayed green with the override deleted.
+func applyFlags(o options, cfg config.Config) config.Config {
+	if o.noInvalidate {
+		cfg.LaneB.Invalidate = false
+	}
+	return cfg
 }
 
 // nothingRanReason explains a run with no analyzers. The causes need different

@@ -17,6 +17,7 @@ import (
 	"github.com/adamtait/reviewer/internal/analyzers/opengrep"
 	"github.com/adamtait/reviewer/internal/analyzers/osv"
 	"github.com/adamtait/reviewer/internal/config"
+	"github.com/adamtait/reviewer/internal/model"
 	"github.com/adamtait/reviewer/pkg/finding"
 	"github.com/adamtait/reviewer/pkg/plugin"
 )
@@ -27,7 +28,11 @@ const Name = "builtin"
 
 // Handler serves the built-in analyzers.
 type Handler struct {
-	cfg     config.Config
+	cfg config.Config
+	// secrets carries the model lane's credential. Held rather than read from the
+	// environment here, so that every credential in the program arrives through
+	// one path (ADR-0004).
+	secrets config.Secrets
 	version string
 	// Unavailable records why an analyzer cannot run, filled in by Describe so
 	// the reason is reported once rather than per analyzer invocation.
@@ -35,8 +40,8 @@ type Handler struct {
 }
 
 // New returns the built-in plugin for one run.
-func New(cfg config.Config, version string) *Handler {
-	return &Handler{cfg: cfg, version: version, unavailable: map[string]string{}}
+func New(cfg config.Config, secrets config.Secrets, version string) *Handler {
+	return &Handler{cfg: cfg, secrets: secrets, version: version, unavailable: map[string]string{}}
 }
 
 func (h *Handler) Name() string    { return Name }
@@ -50,6 +55,10 @@ func (h *Handler) Describe() []plugin.Descriptor {
 		h.descriptor(gitleaks.ID, gitleaks.Order, finding.LaneDeterministic),
 		h.descriptor(opengrep.ID, opengrep.Order, finding.LaneDeterministic),
 		h.descriptor(osv.ID, osv.Order, finding.LaneDeterministic),
+		// The model lane. Declaring it here rather than anywhere else is what puts
+		// it behind the secrets gate: the sequencer runs lanes in order and the
+		// gate sits between them (ADR-0012).
+		h.descriptor(ModelLaneID, ModelLaneOrder, finding.LaneLLM),
 	}
 }
 
@@ -90,6 +99,10 @@ func (h *Handler) probe(id string) string {
 		if _, _, err := osv.Probe(h.binary(id)); err != nil {
 			return err.Error()
 		}
+	case ModelLaneID:
+		if _, err := model.New(h.cfg, h.secrets); err != nil {
+			return err.Error()
+		}
 	}
 	return ""
 }
@@ -117,6 +130,8 @@ func (h *Handler) Analyze(ctx context.Context, id string, req plugin.AnalyzeRequ
 		return opengrep.Analyze(ctx, req, h.binary(id), h.cfg.Rules.Dir)
 	case osv.ID:
 		return osv.Analyze(ctx, req, h.binary(id))
+	case ModelLaneID:
+		return h.modelLane(ctx, req)
 	default:
 		return nil, nil, fmt.Errorf("no built-in analyzer named %q", id)
 	}

@@ -192,3 +192,19 @@ test("an unused dependency uses Knip's own line, not the first name match", { sk
   assert.equal(unused.length, 1, JSON.stringify(findings));
   assert.equal(unused[0]?.line, 9, "the declaration, not the overrides entry above it");
 });
+
+test("handles non-JSON banner output before valid JSON report", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "knip-preamble-"));
+  write(root, "package.json", '{"name":"x","version":"1.0.0"}');
+  write(root, "knip.json", "{}");
+  write(root, "node_modules/knip/package.json", '{"name":"knip","version":"0.0.0","bin":{"knip":"bin.js"}}');
+  write(
+    root,
+    "node_modules/knip/bin.js",
+    'process.stdout.write("◇ injected env (22) from .env\\n" + JSON.stringify({ issues: [] }));\n',
+  );
+
+  const { findings, warnings } = await knipAnalyzer.run(request(root, []));
+  assert.deepEqual(findings, []);
+  assert.deepEqual(warnings, []);
+});

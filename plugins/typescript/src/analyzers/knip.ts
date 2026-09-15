@@ -193,12 +193,15 @@ async function runKnip(
 
   let report: KnipReport;
   try {
-    const parsed: unknown = JSON.parse(stdout);
+    // Strip any banner or diagnostic output written to stdout before the JSON payload
+    const start = stdout.search(/[{\[]/);
+    const jsonStr = start >= 0 ? stdout.slice(start) : stdout;
+    const parsed: unknown = JSON.parse(jsonStr);
     // Knip has emitted both shapes across versions: an object with `issues`, and
     // a bare array of the same per-file objects.
     report = Array.isArray(parsed) ? { issues: parsed as KnipFileIssues[] } : (parsed as KnipReport);
   } catch {
-    return { error: `knip exited ${code} without a report: ${firstLine(stderr) || "no output"}` };
+    return { error: `knip exited ${code} without a report: ${firstLine(stderr) || firstLine(stdout) || "no output"}` };
   }
 
   const warnings: string[] = [];
@@ -215,7 +218,15 @@ function execute(
   return new Promise((resolve) => {
     // Spawned through this process's own Node rather than relying on the shebang,
     // so it runs on the same runtime the plugin was started with.
-    const child = spawn(process.execPath, [bin, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [bin, ...args], {
+      cwd,
+      env: {
+        ...process.env,
+        DOTENV_CONFIG_QUIET: "true",
+        DOTENV_QUIET: "true",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));

@@ -19,9 +19,16 @@ import (
 type geminiShape struct{}
 
 func (geminiShape) path(model string) string {
+	m := model
+	switch m {
+	case "gemini-3.1-pro", "gemini-3-pro":
+		m = "gemini-3.1-pro-preview"
+	case "gemini-3.1-flash", "gemini-3-flash":
+		m = "gemini-3-flash-preview"
+	}
 	// The model is part of the URL. Escaped, because it comes from configuration
 	// and a value with a slash in it would otherwise reach a different endpoint.
-	return "/models/" + strings.ReplaceAll(model, "/", "%2F") + ":generateContent"
+	return "/models/" + strings.ReplaceAll(m, "/", "%2F") + ":generateContent"
 }
 
 func (geminiShape) header(h http.Header, apiKey string) {

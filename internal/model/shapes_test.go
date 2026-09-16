@@ -198,6 +198,15 @@ func TestGeminiEscapesTheModelInThePath(t *testing.T) {
 	}
 }
 
+func TestGeminiNormalizesPreviewModelNames(t *testing.T) {
+	if got := (geminiShape{}).path("gemini-3.1-pro"); got != "/models/gemini-3.1-pro-preview:generateContent" {
+		t.Errorf("path = %q, want /models/gemini-3.1-pro-preview:generateContent", got)
+	}
+	if got := (geminiShape{}).path("gemini-3-flash"); got != "/models/gemini-3-flash-preview:generateContent" {
+		t.Errorf("path = %q, want /models/gemini-3-flash-preview:generateContent", got)
+	}
+}
+
 // This API rejects a request with only a system prompt, and requires max_tokens.
 // A caller that set neither must still get a valid request rather than a 400.
 func TestAnthropicFillsInWhatItsAPIRequires(t *testing.T) {

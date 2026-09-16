@@ -243,9 +243,14 @@ function relocate(req: AnalyzeRequest, testFile: string): { file: string; line: 
     return range === undefined ? undefined : { file: toSlash(c.path), line: range[0] };
   };
 
-  const sources = req.changed.filter((c) => SOURCE.test(c.path));
+  const sources = req.changed.filter((c) => SOURCE.test(c.path) && !isExcludedFromRelocation(c.path));
   const named = sources.find((c) => path.basename(c.path).replace(/\.[cm]?[jt]sx?$/i, "") === stem);
   return at(named ?? sources[0] ?? req.changed[0] ?? ({} as never));
+}
+
+function isExcludedFromRelocation(p: string): boolean {
+  const norm = toSlash(p);
+  return norm.startsWith(".review/") || /\.(test|spec)\.[cm]?[jt]sx?$/i.test(norm);
 }
 
 /** What counts as source rather than configuration or a manifest. */

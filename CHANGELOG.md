@@ -29,7 +29,7 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 
 ## [Unreleased]
 
-Everything so far. The first tagged release is `v0.1.0` (PR-46).
+## [0.1.0] - 2026-09-16
 
 ### Added
 

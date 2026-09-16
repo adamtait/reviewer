@@ -83,6 +83,10 @@ jobs:
           mkdir -p ~/.local/reviewer-tools
           .github/scripts/install-tools.sh ~/.local/reviewer-tools
           echo "$HOME/.local/reviewer-tools" >> "$GITHUB_PATH"
+      - name: Install linter binaries
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          go install github.com/google/addlicense@v1.1.1
       - run: npm ci && npm run build
         working-directory: plugins/typescript
       - run: make check

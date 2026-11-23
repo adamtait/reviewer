@@ -15,8 +15,10 @@ The trials as written need one of the team's repositories, a fine-grained token 
 | [`e3.py`](e3.py) | E3 | Makes the GitHub calls the service would make with one token, and measures fetch, unpack, memory and search. |
 | [`scan_pass.py`](scan_pass.py) | E3 | Runs the pinned secrets scanner over one commit the way the design's gateway would, and counts the files it would withhold. |
 | [`gemini_live.py`](gemini_live.py) | The model gateway | Runs one streamed, two-tool conversation against the Gemini API and reports what the provider requires. |
+| [`gemini_responses.md`](gemini_responses.md) | The model gateway | The response bodies observed in those runs, for the adapter's tests. |
+| [`compiler_truth.cjs`](compiler_truth.cjs), [`compare_with_compiler.py`](compare_with_compiler.py) | E2 | Ask the TypeScript compiler where a sample of identifiers is defined, and score the lookup rules against its answers. |
 
-The four tools need Python 3 and nothing else. `scan_pass.py` also needs the pinned scanner, which `make tools` installs.
+The tools need Python 3 and nothing else, except `compiler_truth.cjs`, which runs under Node in a project that has TypeScript installed. `scan_pass.py` also needs the pinned scanner, which `make tools` installs.
 
 ## E1. Credential approval
 

@@ -43,7 +43,7 @@ The first version is also a test. The team wants feedback on navigation and AI h
 
 Each goal names how it will be checked. Where a threshold depends on a measurement that has not been taken, the threshold is listed under Open Questions.
 
-*   **Open any pull request in the workspace.** A user opens a pull request or branch by link from GitHub or from a list of open pull requests, and sees the diff by default or only the new code. Checked by: every open pull request in a connected repository appears in the list within a stated delay of being opened or pushed.
+*   **Open any pull request in the workspace.** A user opens a pull request by link from GitHub or from a list of open pull requests, and sees the diff by default or only the new code. Draft pull requests count. Checked by: every open pull request in a connected repository appears in the list within a stated delay of being opened or pushed.
 *   **Navigate TypeScript code without wrong answers.** Go-to-definition and find-references work on changed and unchanged code at the commit on screen. A result is shown as a definition only when the compiler resolved it. Otherwise the result is labelled as text search, or says none was found. Checked by: zero confirmed wrong definitions, from a "this was wrong" report on every jump; and the share of lookups resolved by the compiler, reported per repository.
 *   **Search the repository at the pull request's commit.** Checked by: text search returns results from unchanged files as well as changed ones, and works while the navigation index is still being built.
 *   **Ask the AI about code.** A user selects code and asks about it, or asks about any code in the repository at that commit. The user can ask for a diagram or for alternatives to an approach. Answers cite files and lines. Checked by: every answer links to the code it relied on.
@@ -71,6 +71,7 @@ Each goal names how it will be checked. Where a threshold depends on a measureme
 *   Comments written in the workspace and posted to GitHub, and a "send to agent" action on a batch of comments.
 *   Pull requests that merge with no human having read them.
 *   Planning, deployment and landed impact.
+*   A view for a branch that has no pull request. In this version a branch appears once a pull request, draft or not, is opened for it.
 
 **Not planned**
 
@@ -608,6 +609,26 @@ Each entry says who set the option aside. "Rejected by author" means the author 
 *   **Pros**: Managed retries and rate limits.
 *   **Cons**: One more product to configure, and a backlog that cannot be shown beside each pull request without copying its state.
 *   **Reason for Rejection**: Set aside during drafting and approved with the Technical Plan. A job table in Postgres is visible on the status page and runs the same way on a developer's machine.
+
+### Settled when the draft was checked against the concepts brief
+
+#### Alternative AA: Poll GitHub on a timer with a designated token
+
+*   **Pros**: Missed events are caught without waiting for a viewer. The concepts brief proposed it.
+*   **Cons**: A standing credential that reads every connected repository. It fails without notice if that token expires or is revoked.
+*   **Reason for Rejection**: Rejected by author: the service learns of changes from CI uploads and the events workflow, and reads the live state from GitHub with the viewer's credential when a view is opened.
+
+#### Alternative AB: Upload every pushed branch
+
+*   **Pros**: A branch with no pull request gets a diff and text search, as the concepts brief proposed.
+*   **Cons**: A CI run for every push to every branch, and more stored commits.
+*   **Reason for Rejection**: Rejected by author: the first version shows pull requests only. A branch appears once a pull request is opened for it.
+
+#### Alternative AC: Trial the existing model lane with wider inputs before building
+
+*   **Pros**: Tests at almost no cost whether more context improves the AI reviewer's findings, which is the premise of the change brief and the AI review.
+*   **Cons**: A short delay, and a model key in one repository's CI for the trial.
+*   **Reason for Rejection**: Rejected by author: the check is left out, and the premise is first tested when the brief and AI review ship in PR-57.
 
 ### Not evaluated
 

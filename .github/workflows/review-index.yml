@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds a navigation index for this repository's TypeScript plugin and saves it
+# as a workflow artifact. This is the index workflow from
+# docs/designs/review-workspace.md, run on this repository as a trial: it shows
+# the workflow works on GitHub's runners, and gives the workspace a real index
+# to be developed against.
+#
+# It is limited to branches under claude/ while the design is on trial. It reads
+# the repository and nothing else, and uses no secret.
+
+name: review-index
+
+on:
+  push:
+    branches: ["claude/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/typescript
+    steps:
+      # On a push, the default checkout is the pushed commit.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/typescript/package-lock.json
+
+      - run: npm ci
+
+      - run: npx --yes @sourcegraph/scip-typescript@0.6.2 index
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-index
+          path: plugins/typescript/index.scip
+          if-no-files-found: error

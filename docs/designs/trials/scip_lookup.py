@@ -152,6 +152,20 @@ DESCRIPTOR = re.compile(
 )
 
 
+def descriptor_names(symbol):
+    """Every name in a non-local symbol's descriptor chain, in order."""
+    parts = symbol.split(" ", 4)
+    if symbol.startswith("local ") or len(parts) < 5:
+        return []
+    names = []
+    for m in DESCRIPTOR.finditer(parts[4]):
+        name = m.group("n1") or m.group("n2") or m.group("n3") or ""
+        if name.startswith("`"):
+            name = name[1:-1].replace("``", "`")
+        names.append(name)
+    return names
+
+
 def split_symbol(symbol):
     """Return (is_local, package name, package version, last descriptor name)."""
     if symbol.startswith("local "):
@@ -260,6 +274,66 @@ class Index:
         if not local and package not in ("", "."):
             return "external", [], [], f"{package} {version}"
         return "text_search", [], [], "no definition in the index"
+
+
+def resolve_position(index, path, line0, col16, own, revised):
+    """Answer one lookup. Returns (label, [(path, line, character)], detail).
+
+    revised=False applies the rules as the design first stated them: one
+    occurrence, the name check, and "external" whenever the identifier names a
+    package. revised=True applies the rules the rehearsal led to: every symbol
+    tied at the smallest range is used; a quoted import path may point at a
+    whole file; `new Foo()` may point at Foo's constructor; and a symbol is
+    external only when its package is not one of the repository's own.
+    """
+    covering = [
+        o
+        for o in index.by_path.get(path, [])
+        if o.range[0] == line0 == o.range[2] and o.range[1] <= col16 < o.range[3]
+    ]
+    if not covering:
+        return "text_search", [], "no occurrence at this position"
+    smallest = min(o.range[3] - o.range[1] for o in covering)
+    tied = [o for o in covering if o.range[3] - o.range[1] == smallest]
+    if any(o.roles & DEFINITION for o in tied):
+        return "definition", [(o.path, o.range[0], o.range[1]) for o in tied if o.roles & DEFINITION], ""
+    if not revised:
+        label, passing, _, detail = index.resolve(tied[0])
+        return label, [(t.path, t.range[0], t.range[1]) for t, _ in passing], detail
+    asked = index.sources.text(path, tied[0].range)
+    passing, had_targets, external = [], False, ""
+    for occ in tied:
+        local, package, version, last = split_symbol(occ.symbol)
+        targets = index.definitions.get(index.key(occ), [])
+        had_targets = had_targets or bool(targets)
+        for t in targets:
+            found = index.sources.text(t.path, t.range)
+            # An import path such as '../types' points at a whole file, which the
+            # index records as an empty range. Only a quoted path may use it.
+            whole_file = (
+                t.range[0] == t.range[2]
+                and t.range[1] == t.range[3]
+                and (asked or "")[:1] in ("'", '"', "`")
+            )
+            # `new Foo()` points at Foo's constructor, whose text is "constructor".
+            constructor = (
+                last == "<constructor>"
+                and found == "constructor"
+                and asked in descriptor_names(occ.symbol)[-2:-1]
+            )
+            if whole_file or constructor or (found is not None and (found == asked or (not local and found == last))):
+                spot = (t.path, t.range[0], t.range[1])
+                if spot not in passing:
+                    passing.append(spot)
+        if not targets and not local and package not in ("", ".") and package not in own:
+            external = external or f"{package} {version}"
+    if passing:
+        return "index", passing, ""
+    if had_targets:
+        return "text_search", [], "name check discarded every target"
+    if external:
+        return "external", [], external
+    return "text_search", [], "not in the index"
 
 
 def own_packages(root):

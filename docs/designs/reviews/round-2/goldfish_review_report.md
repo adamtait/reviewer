@@ -1,6 +1,6 @@
 # Goldfish Annotated Review Report, round 2
 
-**Status:** proposed. Nothing in `docs/designs/review-workspace.md` has been changed yet.
+**Status:** resolved on 2026-11-23. The design owner chose "auto accept", and all 19 proposed edits were applied to `docs/designs/review-workspace.md`. Three were applied differently from the wording below, and "How the edits were applied" at the end says how.
 
 **Target:** `docs/designs/review-workspace.md` (full file)
 
@@ -77,4 +77,27 @@ No action item is contested. One recommendation is not taken as written: the rev
 * DECLINE: none.
 * CONTEST: none.
 
-A third review round would follow these edits, because they change the architecture again.
+A third review round follows these edits, because they change the architecture again.
+
+## How the edits were applied
+
+All 19 action items were applied: the 14 marked PROPOSE FIX, and the 5 marked ESCALATE, which the design owner accepted. None was declined or contested. Three were applied differently from the table above, each because of something found while applying it.
+
+| Action | Proposed | Applied | Why |
+| --- | --- | --- | --- |
+| ACT-10 | Pin the `pgx` Postgres driver at v5.8.0 and list every module it adds | Use `lib/pq` v1.12.3 through `database/sql` | Resolving both in a scratch module showed that `pgx` v5.8.0 adds 14 modules and that `go mod tidy` then fails under Go 1.24, because a test dependency's latest release needs Go 1.25. `lib/pq` adds one module, is MIT-licensed and declares Go 1.21. `pgx` is recorded as a rejected alternative. |
+| ACT-09 | Take the history baseline with the existing `reviewer metrics` command | A one-off query against GitHub's API, run by the operator | `reviewer metrics` reports how often each rule's findings were acted on. It does not report review times. The design now says so. |
+| ACT-04 | One archive per commit | The same, stated for both commits a diff needs: the head and the merge base | The browser draws the diff from the two versions of each file, so both archives are read on first open. |
+
+Facts checked while applying the edits, and now stated in the design:
+
+*   **The index format.** The published schema at release v0.10.0 was read for the field numbers the decoder needs. Positions can arrive in three forms, and the decoder reads all three.
+*   **The secrets scanner.** The pinned version, 8.28.0, was run against a planted credential with the proposed flags and file layout. Each of four ways to switch it off was confirmed, and each measure was confirmed to stop it. An ignore file at the scan root still suppressed findings when the ignore path was pointed elsewhere, so the layout, in which no content is written at the scan root, is the control that matters.
+*   **Web packages.** The planned packages resolve to 26 distributed packages, none under a licence the check refuses. The build tool brings one development-only package under MPL-2.0, which ADR-0028 leaves out of the inventory.
+*   **Provider prices and spend caps.** Read from one provider's published pages on 2026-11-23 for the cost estimate and the quota outcomes.
+
+Other changes of note: the round-2 reports moved from the repository root to this directory; the first version is eight pull requests in all, one for the CLI's installer and seven for the service; and the document is longer than before, because the plan now gives full table columns and every request and response shape.
+
+## What remains open
+
+The list in the design's Open Questions section is the complete one: entry conditions E1 to E3, the thresholds, conversation retention, branch views, touch navigation, existing installs, refreshing the agent skill, and the provider account's spend cap.

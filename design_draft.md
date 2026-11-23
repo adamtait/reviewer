@@ -439,6 +439,184 @@ ADRs in this repository are append-only, so each change below is a new ADR that 
 
 ADR-0004 still applies to the service: no address, organisation name or model name appears in Go source. They come from configuration and the environment. ADR-0010 still applies to this repository: deployment values for the Google Cloud project stay out of it.
 
+## Alternatives Considered
+
+Each entry says who set the option aside. "Rejected by author" means the author chose against it, either during the concept review or at one of the five numbered decisions in the Technical Plan. The author did not always state a reason at those decisions, so the drawback recorded when the choice was made is given.
+
+### Scope and product shape
+
+#### Alternative A: Replicate GitHub's pull request page as the first version
+
+*   **Pros**: One place for all review work. No switching between two tools.
+*   **Cons**: The bar is all-or-nothing: reviewers keep opening GitHub until commenting, approval, thread resolution, CI status and merge all exist. None of the stated problems is about those functions, and they would be built before navigation or AI help.
+*   **Reason for Rejection**: Rejected by author: the first version should add what GitHub cannot do, so the new features can be tested and get feedback quickly. Users keep using GitHub for its existing functions.
+
+#### Alternative B: Extend the existing CLI as it stands
+
+*   **Pros**: No service to host. The CLI already runs in CI, and could post a change brief as a pull request comment.
+*   **Cons**: A comment cannot offer navigation or a conversation. The CLI keeps no state between runs and reads only the diff.
+*   **Reason for Rejection**: Rejected by author: the author wants a new system that reuses parts of the CLI where they help.
+
+#### Alternative C: Local-first storage as a requirement
+
+*   **Pros**: Data stays on the reviewer's machine. Nothing to host.
+*   **Cons**: A phone cannot hold checkouts or run language tools, and nothing is shared between reviewers.
+*   **Reason for Rejection**: Rejected by author: a phone cannot hold checkouts or run language servers, so local storage is optional for capable devices.
+
+#### Alternative D: A new repository for the new system
+
+*   **Pros**: A clean start with no existing decisions to supersede, and no public-history rule to respect.
+*   **Cons**: The service reuses the CLI's packages, and the CI side is the CLI itself. Two repositories would need releases kept in step.
+*   **Reason for Rejection**: Rejected by author: the new system lives in this repository.
+
+#### Alternative E: A trained risk classifier that lets pull requests merge unread from the first version
+
+*   **Pros**: The largest saving in review time.
+*   **Cons**: No labelled history exists. Showing a miss rate under 5% needs about 60 known high-risk pull requests per repository, and a miss is never seen because nobody reads the pull request.
+*   **Reason for Rejection**: Rejected by author: the author accepted the finding that recall cannot be validated at this volume. A written list and shadow mode come first, in a later stage.
+
+#### Alternative F: Export whole agent transcripts as the source of intent
+
+*   **Pros**: The complete record of how a change was made.
+*   **Cons**: A transcript holds whatever the agent saw, including content from other repositories and pasted credentials. Nothing links a session to a pull request, and the formats belong to the agent vendors.
+*   **Reason for Rejection**: Rejected by author: the agent writes an intent record into the pull request. That record inherits GitHub's access rules and needs no separate link.
+
+#### Alternative G: The server resumes the original agent session to make fixes
+
+*   **Pros**: The agent that wrote the code, with its full context, makes the fix.
+*   **Cons**: The session lives on the author's machine, which a hosted service cannot reach. The server would need push rights and an agent runtime.
+*   **Reason for Rejection**: Rejected by author: a hosted server cannot reach a session on a laptop. The author's side pulls the work on an explicit human action.
+
+#### Alternative H: A learning store kept only in remote storage
+
+*   **Pros**: Fast to write, with no pull request per learning.
+*   **Cons**: Coding agents cannot read it without a new client, and its contents are not visible in the repository.
+*   **Reason for Rejection**: Rejected by author: accepted learnings are files in the repository, because those are visible, correctable and readable by coding agents. This belongs to a later stage.
+
+### Where pull request code runs
+
+#### Alternative I: Sandboxed workers on the server install and index pull request code
+
+*   **Pros**: Does not depend on GitHub Actions. The service controls when an index is built.
+*   **Cons**: The service must operate a sandbox with no credentials and no network, and installs must run with scripts disabled, which leaves generated types missing.
+*   **Reason for Rejection**: Set aside under the author's delegated judgement, and confirmed when the author approved the Technical Plan. Building the index in each repository's own CI job keeps pull request code off the server entirely, and the normal install there produces generated types.
+
+### Identity (decision 1)
+
+#### Alternative J: OAuth App sign-in
+
+*   **Pros**: A familiar "sign in with GitHub" button. Users handle no token.
+*   **Cons**: An OAuth App cannot ask for narrow permissions. The only scope that reads private repositories also grants write access to every repository the user can reach, and approval covers the whole organisation.
+*   **Reason for Rejection**: Rejected by author at decision 1, in favour of offering personal tokens and a GitHub App.
+
+#### Alternative K: Google sign-in with one read-only service token
+
+*   **Pros**: Users handle no GitHub credential. One stored token in place of one per user.
+*   **Cons**: That one token reads every connected repository. A hand-kept table maps Google accounts to GitHub logins, and a wrong row grants the wrong access. It gives no way to act as the user in a later stage.
+*   **Reason for Rejection**: Rejected by author at decision 1, in favour of offering personal tokens and a GitHub App.
+
+### Hand-off from CI (decision 2)
+
+#### Alternative L: The service pulls from GitHub
+
+*   **Pros**: No address for CI to upload to. Git fetches only what changed.
+*   **Cons**: Polling delay and rate limits. The service needs a standing credential that can read code and workflow artifacts, which the token route does not provide.
+*   **Reason for Rejection**: Rejected by author at decision 2, in favour of CI pushing to the service.
+
+#### Alternative M: CI writes to a cloud storage bucket
+
+*   **Pros**: No upload address on the service. Google verifies the workflow's token.
+*   **Cons**: Cloud permission setup for every repository, a bucket name in each repository's config, and pull request events still need another route.
+*   **Reason for Rejection**: Rejected by author at decision 2, in favour of CI pushing to the service.
+
+#### Alternative N: Accept a tarball or a ready-made diff from CI
+
+*   **Pros**: Simpler to produce and to parse than a git pack.
+*   **Cons**: Neither can be checked against the commit it claims to be. A pull request that edits its workflow could upload different code under a real commit's name.
+*   **Reason for Rejection**: Set aside during drafting and approved with the Technical Plan. A git pack is verified by recomputing its hashes, and the service computes the diff from two verified snapshots.
+
+### Navigation index (decision 3)
+
+#### Alternative O: The existing plugin exports its own index in its own format
+
+*   **Pros**: No new tool in CI. The plugin already builds a compiler program each run, so there is one build and not two.
+*   **Cons**: The most code to write and own, a format nothing else reads, and a separate exporter for each later language. An edge case in the exporter would produce a wrong definition.
+*   **Reason for Rejection**: Rejected by author at decision 3, in favour of `scip-typescript`.
+
+#### Alternative P: The existing plugin exports SCIP
+
+*   **Pros**: One compiler build, no new tool in CI, and a published format that later languages already have indexers for.
+*   **Cons**: The exporter is still this project's to own and test, and it must reproduce SCIP's symbol naming rules.
+*   **Reason for Rejection**: Rejected by author at decision 3, in favour of `scip-typescript`.
+
+#### Alternative Q: The LSIF format
+
+*   **Pros**: An older published format with existing readers.
+*   **Cons**: The documentation for its TypeScript indexer recommends moving to `scip-typescript`.
+*   **Reason for Rejection**: Left out during drafting, before decision 3 was put to the author, for the reason above.
+
+### Hosting and storage (decision 4)
+
+#### Alternative R: One virtual machine with SQLite and a disk
+
+*   **Pros**: Fewest parts and lowest cost. The hosted form and the local form are identical.
+*   **Cons**: One machine to patch, a restart on every upgrade, and a data migration before any shared service. Data is lost if the disk fails between snapshots.
+*   **Reason for Rejection**: Rejected by author at decision 4, in favour of Cloud Run, managed Postgres and a bucket.
+
+#### Alternative S: Cloud Run with Firestore and a bucket
+
+*   **Pros**: No always-on database charge and no schema migrations.
+*   **Cons**: Telemetry needs aggregate queries that a document database handles poorly, and the data model is tied to one Google product.
+*   **Reason for Rejection**: Rejected by author at decision 4, in favour of Cloud Run, managed Postgres and a bucket.
+
+#### Alternative T: A second database engine for a developer's machine
+
+*   **Pros**: No container needed to run the service locally.
+*   **Cons**: Text search and the job queue use Postgres features. A second engine would need its own version of both.
+*   **Reason for Rejection**: Set aside during drafting and approved with the Technical Plan. Postgres runs in a container locally, and only the bucket has a local-directory form.
+
+### AI assistant (decision 5)
+
+#### Alternative U: Embedding retrieval
+
+*   **Pros**: One model call per question, with predictable cost.
+*   **Cons**: An embedding call for every changed piece of code on every push, a vector store, and more content sent to the provider. Nearest-text retrieval misses questions such as "what calls this", which the index already answers.
+*   **Reason for Rejection**: Rejected by author at decision 5, in favour of the model calling tools.
+
+#### Alternative V: Context assembled by fixed rules
+
+*   **Pros**: One model call, and an exact record of what was sent.
+*   **Cons**: It cannot follow a chain beyond what the rules fetch, so open-ended questions about distant code get poor answers.
+*   **Reason for Rejection**: Rejected by author at decision 5, in favour of the model calling tools.
+
+#### Alternative W: Switch to a second provider when quota runs out
+
+*   **Pros**: AI features keep working through a quota outage.
+*   **Cons**: A repository's code goes to a second vendor, and answers change with the model.
+*   **Reason for Rejection**: Rejected by author: only the provider configured for a repository may receive its code. AI features show a quota message.
+
+### Where the brief, the review and the scan are produced
+
+#### Alternative X: Produce the change brief, the AI review and the secrets scan in CI
+
+*   **Pros**: The CLI already has a model lane and a secrets scanner in CI. The service would only store and display results. The concepts brief proposed this for the change brief.
+*   **Cons**: A pull request can change its own workflow, so it could alter its own brief or report a clean scan. Model keys would live in every repository as well as in the service, with two budgets.
+*   **Reason for Rejection**: Set aside during drafting and approved with the Technical Plan. The service generates all three from verified source, behind one outbound door.
+
+#### Alternative Y: A separate queue product for background work
+
+*   **Pros**: Managed retries and rate limits.
+*   **Cons**: One more product to configure, and a backlog that cannot be shown beside each pull request without copying its state.
+*   **Reason for Rejection**: Set aside during drafting and approved with the Technical Plan. A job table in Postgres is visible on the status page and runs the same way on a developer's machine.
+
+### Not evaluated
+
+#### Alternative Z: A browser-hosted VS Code with the GitHub Pull Requests extension
+
+*   **Pros**: As described by one reviewer from memory: compiler-backed navigation, the pull request diff, comments posted under the reviewer's own name, hotkeys, and GitHub's own access control, with no viewer to build.
+*   **Cons**: As described by the same reviewer: weak on a phone. It offers no change brief, no intent context and no assistant tied to the pull request. It also needs a checkout with dependencies per pull request, which is the server-side execution this design avoids.
+*   **Reason for Rejection**: Not rejected, and not evaluated. Nobody has tested the claims above. The author chose to build the workspace, which requires phone use and AI help tied to the change. This entry records that the comparison was not made.
+
 --------------------------------------------------------------------------------
 
 ## Non-Functional Requirements

@@ -424,18 +424,18 @@ Notices have two forms. A banner and a status page inside the application show t
 
 ### Changes to recorded decisions
 
-ADRs in this repository are append-only, so each change below is a new ADR that supersedes or extends an old one.
+ADRs in this repository are append-only, so each change below is a new ADR that supersedes or extends an old one. The checking tool allows only whole-record supersession, so a superseding ADR restates the part of the old decision that still holds.
 
 | New ADR | Decision | Relation to existing ADRs |
 | --- | --- | --- |
-| 0029 | Add a hosted workspace service beside the CLI | Supersedes ADR-0008 for the workspace. The CLI stays a stateless binary. |
-| 0030 | The service keeps its own store; GitHub stays the record for comments and approvals | Supersedes ADR-0016 for data GitHub cannot hold |
+| 0029 | Add a hosted workspace service beside the CLI | Supersedes ADR-0008, and restates that the CLI stays a stateless binary |
+| 0030 | The service keeps its own store; GitHub stays the record for comments and approvals | Supersedes ADR-0016, and restates that GitHub comments stay the CLI's store |
 | 0031 | Treat CI uploads as untrusted and verify source by content hash | Extends ADR-0018 |
 | 0032 | One outbound door for model calls, with a scan result required for every file sent | Extends ADR-0012 |
 | 0033 | Two identity routes behind one interface | New |
 | 0034 | A second provider interface for conversations, tools and usage | Extends ADR-0021 |
 | 0035 | SCIP as the navigation index format, built in CI by `scip-typescript` | New |
-| 0036 | Release a container image as a third artifact | Extends ADR-0026 |
+| 0036 | Release a container image as a third artifact | Supersedes ADR-0026, and restates its two artifacts |
 
 ADR-0004 still applies to the service: no address, organisation name or model name appears in Go source. They come from configuration and the environment. ADR-0010 still applies to this repository: deployment values for the Google Cloud project stay out of it.
 
@@ -645,3 +645,556 @@ Each entry says who set the option aside. "Rejected by author" means the author 
 *   **Rollback** is removing the two new steps and the events workflow from a repository. Nothing else in the repository depends on them.
 *   **The service can be switched off** without affecting GitHub: it writes nothing there in this version.
 *   **Database changes** are versioned migrations applied at deploy time. A backup and restore is tested before the first repository is connected.
+
+--------------------------------------------------------------------------------
+
+### Additional Resources
+
+*   [`concepts_brief.md`](./concepts_brief.md): the concept, the seven-lens review and the author's decisions.
+*   [`docs/architecture.md`](./docs/architecture.md) and [`docs/adr/`](./docs/adr/): the existing CLI and its recorded decisions.
+*   [`docs/providers.md`](./docs/providers.md): the model access paths the CLI supports today.
+*   GitHub documentation consulted for the identity and hand-off decisions: personal access token policy, OAuth App restrictions, the collaborators API, the Actions OpenID Connect reference and workflow artifacts.
+*   `scip-typescript` and the SCIP format, published by Sourcegraph.
+
+### Future Improvements
+
+*   **Learnings and risk labels**: the second stage. Candidates in an inbox, accepted learnings as repository files, a written risk list and labels in shadow mode.
+*   **Commenting from the workspace**: the third stage. Comments as a pending batch posted to GitHub, and a "send to agent" action.
+*   **Unread merges, planning, deployment and landed impact**: the fourth stage.
+*   **Navigation for more languages**: SCIP indexers exist for other languages. Each needs a workflow step and no change to the service's reader.
+*   **Posting the workspace's AI review to GitHub**: once the review is trusted, it can replace the CLI's model lane in each repository.
+
+--------------------------------------------------------------------------------
+
+## Detailed Implementation Plan
+
+The work is fifteen pull requests, numbered on from the existing plan's PR-46. Each leaves `make check` passing. The fourth column says what a reviewer can do once it has merged.
+
+| PR | Adds | ADRs it lands | Usable after |
+| --- | --- | --- | --- |
+| PR-47 | Service skeleton: binary, config, database migrations, logging, health address, container image, CI job | 0029, 0030 | Nothing yet |
+| PR-48 | Verified ingest: token check, pack verification, file store | 0031 | Nothing yet |
+| PR-49 | `reviewer publish`, the `workspace` config block, workflow and action changes | None | Commits arrive at the service |
+| PR-50 | Identity (token route), sessions, access check | 0033 | Sign-in |
+| PR-51 | Source API: pull request list and view, files, changed files, diff, text search | None | Nothing visible yet |
+| PR-52 | Web application: sign-in, pull request list, diff and new-code views, code view, GitHub links, hotkeys, touch sheet | None | **A read-only viewer beside GitHub** |
+| PR-53 | Navigation: index step in CI, SCIP load and lookup, definition and references in the web application | 0035 | **Code navigation** |
+| PR-54 | Secrets scan at ingest | None | Nothing visible yet |
+| PR-55 | Model gateway: conversation interface, two provider adapters, checks, budgets, usage ledger | 0032, 0034 | Nothing visible yet |
+| PR-56 | Assistant: tool loop, streaming API, assistant panel, Markdown and diagram rendering | None | **AI questions about code** |
+| PR-57 | Jobs, change brief, AI review, pull request events | None | **Brief and AI review** |
+| PR-58 | Agent skill: intent record and "address review comments" | None | Intent in briefs |
+| PR-59 | Telemetry, baseline, status page and notices | None | Measures and notices |
+| PR-60 | Identity (App route) and its event receiver | None | Sign-in through the App |
+| PR-61 | Release of the container image, retention job, documentation | 0036 | First version complete |
+
+PR-52, PR-53 and PR-56 are the three points at which the team can try a new feature and give feedback.
+
+### Shared definitions
+
+These are fixed here so that no pull request has to decide them.
+
+#### Service configuration
+
+A YAML file named by `--config`, plus environment variables for every secret. No address, organisation or model name is compiled in (ADR-0004).
+
+```yaml
+listen: ":8080"
+publicUrl: ""             # the address users and CI reach; also the audience CI tokens must carry
+github:
+  apiBaseUrl: ""
+  webBaseUrl: ""          # used to build links to GitHub
+actions:
+  issuer: ""              # the issuer of GitHub Actions identity tokens
+identity:
+  routes: [token]         # token, app, or both
+  app: { id: "", clientId: "", slug: "" }
+blobs: { bucket: "" }     # or { dir: "" } on a developer's machine
+keys: { kms: "" }         # or { file: "" } on a developer's machine
+scheduler: { issuer: "", audience: "", serviceAccount: "" }
+limits: { packBytes: 0, fileBytes: 0, indexBytes: 0, toolRounds: 0, questionTokens: 0 }
+retention: { closedPullRequestDays: 0, conversationDays: 0, telemetryDays: 0 }
+repositories:
+  - owner: ""
+    name: ""
+    provider: ""          # anthropic or gemini
+    model: ""
+    baseUrl: ""
+    apiKeyEnv: ""         # the NAME of the environment variable holding the key
+    monthlyTokenBudget: 0
+```
+
+Environment variables: `WORKSPACE_DATABASE_URL`, one variable per repository's `apiKeyEnv`, and for the App route `WORKSPACE_APP_PRIVATE_KEY`, `WORKSPACE_APP_CLIENT_SECRET` and `WORKSPACE_APP_WEBHOOK_SECRET`. A limit or retention value of zero is a configuration error, so no default is chosen on the operator's behalf.
+
+#### Addition to `.review/config.yaml`
+
+```yaml
+workspace:
+  url: ""                 # empty means publish does nothing
+  index:
+    typescript:
+      command: []         # written by `reviewer init`; runs scip-typescript at a pinned version
+      output: index.scip
+```
+
+#### Upload format
+
+`POST /ingest/v1/commits` is a multipart request with three parts: `meta` (JSON), `pack` (a git pack) and `index` (a SCIP file, optional).
+
+```json
+{
+  "schemaVersion": 1,
+  "repository": "owner/name",
+  "commit": "<40 hex>",
+  "kind": "pull_request | default_branch | merge_base",
+  "pullRequest": { "number": 0, "title": "", "body": "", "author": "", "state": "open",
+                   "baseCommit": "", "headCommit": "" },
+  "index": { "tool": "scip-typescript", "toolVersion": "", "language": "typescript" }
+}
+```
+
+#### How `reviewer publish` builds the pack
+
+```text
+haves   = POST /ingest/v1/have with the merge base and the default-branch head
+wanted  = objects listed by `git ls-tree -r -t <commit>` plus the root tree and the commit object
+known   = union of `git ls-tree -r -t <have>` for each commit the service holds
+pack    = `git pack-objects --stdout` fed (wanted minus known)
+token   = GET $ACTIONS_ID_TOKEN_REQUEST_URL with audience = workspace.url
+upload  = POST /ingest/v1/commits with meta, pack and index, bearer token
+```
+
+Entries for submodules are sent as entries with no content. Symbolic links are sent as their link text and are never followed.
+
+#### HTTP API
+
+| Caller | Method and path | Purpose |
+| --- | --- | --- |
+| CI | `POST /ingest/v1/have` | Which of these commits does the service hold |
+| CI | `POST /ingest/v1/commits` | Upload one commit |
+| CI | `POST /ingest/v1/events` | Pull request closed, reopened or edited |
+| Scheduler | `POST /internal/jobs/run` | Run due jobs |
+| GitHub | `POST /hooks/github` | Events from the App, where installed |
+| Browser | `POST /auth/token`, `GET /auth/app/start`, `GET /auth/app/callback`, `POST /auth/signout` | Sign in and out |
+| Browser | `GET /api/v1/me` | The signed-in user and the routes on offer |
+| Browser | `GET /api/v1/repos` | Repositories the user can read |
+| Browser | `GET /api/v1/repos/{owner}/{repo}/pulls` | Open pull requests |
+| Browser | `GET /api/v1/repos/{owner}/{repo}/pulls/{number}` | Head and base commit, and the stage list |
+| Browser | `GET .../commits/{sha}/tree` | Paths at a commit |
+| Browser | `GET .../commits/{sha}/files?path=` | One file's content |
+| Browser | `GET .../compare?base=&head=` | Changed files and their hunks |
+| Browser | `GET .../commits/{sha}/search?q=&path=` | Text search |
+| Browser | `GET .../commits/{sha}/definition?path=&line=&col=` | Definition, with how it was obtained |
+| Browser | `GET .../commits/{sha}/references?path=&line=&col=` | References |
+| Browser | `POST .../navigation/reports` | "This was wrong" |
+| Browser | `GET .../pulls/{number}/brief?commit=` and `.../review?commit=` | Stored brief and AI review |
+| Browser | `POST .../conversations` | Start a conversation |
+| Browser | `POST .../conversations/{id}/messages` | Ask; the answer is a server-sent event stream |
+| Browser | `POST /api/v1/events` | Report usage events |
+| Browser | `GET .../measures?from=&to=` and `.../measures/export?format=` | Telemetry and its export |
+| Browser | `GET /api/v1/status` | Health of each dependency, and current notices |
+| Anyone | `GET /healthz` | Liveness |
+
+Every `/api/v1/repos/...` request passes the access check before any data is read.
+
+#### Database tables
+
+| Table | Columns |
+| --- | --- |
+| `repository` | `id`, `org`, `name`, `provider`, `model`, `base_url`, `api_key_env`, `monthly_token_budget`, `accepting_uploads` |
+| `commit` | `repository_id`, `sha`, `tree_sha`, `received_at`, `verified_at` |
+| `commit_stage` | `repository_id`, `sha`, `stage`, `state`, `reason`, `started_at`, `finished_at` |
+| `path_entry` | `repository_id`, `sha`, `path`, `mode`, `file_hash` |
+| `file` | `repository_id`, `hash`, `size`, `is_text`, `content` (trigram index) |
+| `file_scan` | `repository_id`, `file_hash`, `scanner_version`, `state`, `rule_ids`, `scanned_at` |
+| `index_entry` | `repository_id`, `sha`, `path`, `document_hash`, `tool`, `tool_version` |
+| `occurrence` | `repository_id`, `document_hash`, `symbol`, `start_line`, `start_col`, `end_line`, `end_col`, `role` |
+| `pull_request` | `repository_id`, `number`, `head_sha`, `base_sha`, `title`, `body`, `author_login`, `state`, `source`, `updated_at` |
+| `brief` | `repository_id`, `sha`, `pull_number`, `body`, `model`, `inputs`, `state`, `created_at` |
+| `ai_review` | `repository_id`, `sha`, `pull_number`, `findings`, `model`, `state`, `created_at` |
+| `conversation` | `id`, `repository_id`, `sha`, `pull_number`, `user_id`, `created_at` |
+| `message` | `id`, `conversation_id`, `role`, `content`, `tool_calls`, `created_at` |
+| `model_call` | `id`, `repository_id`, `user_id`, `feature`, `sha`, `provider`, `model`, `sent`, `scan_decision`, `input_tokens`, `output_tokens`, `outcome`, `reset_at`, `started_at`, `duration_ms` |
+| `app_user` | `id`, `github_id`, `login` |
+| `credential` | `user_id`, `route`, `ciphertext`, `refresh_ciphertext`, `expires_at` |
+| `session` | `id_hash`, `user_id`, `created_at`, `expires_at` |
+| `usage_event` | `id`, `repository_id`, `user_id`, `pull_number`, `sha`, `kind`, `detail`, `at` |
+| `navigation_report` | `id`, `repository_id`, `sha`, `path`, `line`, `col`, `symbol`, `user_id`, `at` |
+| `job` | `id`, `kind`, `repository_id`, `target`, `state`, `attempts`, `run_after`, `last_error`, `created_at`, `finished_at` |
+| `baseline` | `repository_id`, `measured_at`, `measures` |
+
+Files are keyed by repository and hash, not by hash alone. Two repositories that hold the same file each store it, so no record is shared across an access boundary.
+
+#### Gateway interface
+
+```text
+Part     = Instruction(text) | UserText(text) | Excerpt{fileHash, path, startLine, endLine, text}
+Request  = { repository, user, feature, commit, parts, tools, maxTokens }
+Event    = TextDelta(text) | ToolCall{id, name, arguments} | Done{inputTokens, outputTokens}
+
+Converse(ctx, Request) -> stream of Event      # assistant
+Complete(ctx, Request) -> text, usage          # brief and review jobs
+
+Outcome  = ok | quota_exhausted{resetAt} | rate_limited{retryAfter} | budget_blocked{budget}
+         | secret_blocked{paths} | unscanned{paths} | refused | timed_out | malformed
+```
+
+Both calls run the same steps in the same order: check each excerpt's scan result, check typed text, check the budget, call the provider, record the `model_call` row. No other package imports a provider adapter.
+
+#### New dependencies
+
+| Dependency | Used for | Licence |
+| --- | --- | --- |
+| `github.com/jackc/pgx/v5` | Postgres | MIT |
+| `github.com/go-git/go-git/v5` | Reading and verifying a git pack; producing unified diffs | Apache-2.0 |
+| SCIP Go bindings and `google.golang.org/protobuf` | Reading a SCIP file. The import path is to be confirmed; the schema names `github.com/scip-code/scip/bindings/go/scip` | Apache-2.0, BSD-3-Clause |
+| `github.com/coreos/go-oidc/v3` | Verifying signed tokens from GitHub Actions and Cloud Scheduler | Apache-2.0 |
+| `cloud.google.com/go/storage`, `cloud.google.com/go/kms` | Bucket and key access | Apache-2.0 |
+| `react`, `react-dom`, `react-router-dom` | Web application | MIT |
+| `@codemirror/state`, `view`, `merge`, `language`, `lang-javascript`, `lang-python`, `lang-rust` | Code and diff display | MIT |
+| `markdown-it`, `dompurify`, `mermaid` | Rendering briefs, answers and diagrams | MIT, Apache-2.0, MIT |
+| `vite`, `vitest`, `@playwright/test`, `typescript` | Build and test only | MIT, Apache-2.0 |
+
+Provider keys reach the service as environment variables, which Cloud Run fills from Secret Manager. No Secret Manager client is linked. The HTTP server, routing, logging and migrations use the Go standard library.
+
+Every new `.go`, `.ts`, `.tsx`, `.css`, `.sql` and `.html` file carries the SPDX header that `make license-check` enforces.
+
+### Target Files to Create/Modify
+
+#### 1. PR-47: service skeleton
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `cmd/workspace/main.go` | Create | Entry point with subcommands `serve`, `migrate` and `version`. A separate binary keeps the CLI free of database and web code. |
+| `cmd/workspace/serve.go` | Create | Builds the config, stores and handlers and starts the HTTP server with graceful shutdown. |
+| `cmd/workspace/main_test.go` | Create | Usage errors, `version`, and `serve` starting against a test database. |
+| `internal/workspace/wsconfig/config.go` | Create | The configuration above, a `Secrets` type that never prints its values, and validation that reports every problem at once. |
+| `internal/workspace/wsconfig/config_test.go` | Create | Zero limits rejected; unknown provider rejected; secrets absent from printed output. |
+| `internal/workspace/store/store.go` | Create | Connection pool and a transaction helper. |
+| `internal/workspace/store/migrate.go` | Create | Applies embedded, numbered SQL files in order and records each in a version table. |
+| `internal/workspace/store/migrate_test.go` | Create | Applies all migrations to an empty database twice; the second run changes nothing. |
+| `internal/workspace/store/migrations/0001_core.sql` | Create | `repository`, `commit`, `commit_stage`, `job`. Enables the trigram extension. |
+| `internal/workspace/store/repos.go` | Create | Syncs the configured repositories into `repository` at start. |
+| `internal/workspace/store/repos_test.go` | Create | Added, changed and removed repositories. |
+| `internal/workspace/obs/log.go` | Create | Structured logger carrying request, user, repository, pull request and commit. Passes every message through `model.Redact`. |
+| `internal/workspace/obs/log_test.go` | Create | A credential-shaped string in a message is redacted. |
+| `internal/workspace/api/router.go` | Create | Route table using the standard library's pattern routing. Starts with `/healthz`. |
+| `internal/workspace/api/middleware.go` | Create | Request identifier, logging and panic recovery. |
+| `internal/workspace/api/api_test.go` | Create | `/healthz` answers; an unknown path returns 404. |
+| `internal/workspace/testdb/testdb.go` | Create | Test helper that connects to the database named by `WORKSPACE_TEST_DATABASE_URL`. Skips when unset, and fails when `REVIEWER_REQUIRE_TOOLS` is set, matching the existing rule for missing tools. |
+| `Dockerfile` | Create | Builds the binary and the web files, and installs the pinned `gitleaks` with `.github/scripts/install-tools.sh`. |
+| `.dockerignore` | Create | Keeps `node_modules`, `dist` and `.git` out of the build context. |
+| `examples/workspace.config.yaml` | Create | An example configuration with placeholder values. |
+| `go.mod`, `go.sum` | Modify | Add `pgx`. |
+| `Makefile` | Modify | Add `workspace` to the build and a `workspace-test` target. Extend the licence ignore list for `web/dist`. |
+| `.gitignore` | Modify | Ignore the `workspace` binary and `web/dist`. |
+| `.github/workflows/ci.yml` | Modify | Add a `workspace` job with a Postgres service container, and add it to the `required` job's list. |
+| `docs/adr/0029-add-a-hosted-workspace-service.md` | Create | Supersedes ADR-0008. Restates that the CLI stays a stateless binary and adds the hosted service beside it. |
+| `docs/adr/0030-service-store-beside-github.md` | Create | Supersedes ADR-0016. Restates that GitHub comments stay the CLI's store and the record for comments and approvals, and adds the service's own store for what GitHub cannot hold. |
+| `docs/adr/0008-cli-not-service.md` | Modify | Metadata only: status `Superseded`, superseded by ADR-0029. The body is untouched, as `tools/checkadrs` requires. |
+| `docs/adr/0016-github-comments-as-the-store.md` | Modify | Metadata only: status `Superseded`, superseded by ADR-0030. |
+| `docs/adr/README.md` | Modify | Index rows for the new ADRs and the changed statuses. Repeated in each later pull request that adds an ADR. |
+| `THIRD_PARTY_LICENSES.md` | Modify | Inventory the new dependency. Repeated in each later pull request that adds one. |
+| `docs/implementation-plan.md` | Modify | Append a section listing PR-47 to PR-61 with a link to this design. |
+
+#### 2. PR-48: verified ingest
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/oidc/verify.go` | Create | Verifies a signed token against a configured issuer and audience, and returns its claims. Used for GitHub Actions tokens here and for the scheduler later. |
+| `internal/workspace/oidc/verify_test.go` | Create | Wrong issuer, wrong audience, expired, bad signature, and a repository not in the configured list are each rejected. |
+| `internal/workspace/gitpack/pack.go` | Create | Reads a pack, recomputes each object's hash, checks the commit object matches the claimed commit, and walks the tree to confirm every entry is in the pack or already stored. Enforces the size limits. |
+| `internal/workspace/gitpack/pack_test.go` | Create | A valid pack is accepted. A pack with one altered file, a pack for a different commit, an oversized pack and a path that escapes the tree are each rejected. Packs are built in the test with `git`. |
+| `internal/workspace/blob/blob.go` | Create | `Store` interface: put, get, delete. |
+| `internal/workspace/blob/local.go` | Create | Directory implementation for a developer's machine and for tests. |
+| `internal/workspace/blob/gcs.go` | Create | Bucket implementation. |
+| `internal/workspace/blob/blob_test.go` | Create | The same test set run against the local implementation, and against the bucket when credentials are present. |
+| `internal/workspace/store/migrations/0002_source.sql` | Create | `path_entry`, `file`, `pull_request`. |
+| `internal/workspace/store/commits.go` | Create | Insert a commit and its path entries in one transaction; record stage states. |
+| `internal/workspace/store/files.go` | Create | Insert new files; look up which hashes a repository already holds. |
+| `internal/workspace/store/pulls.go` | Create | Upsert a pull request row, keeping the `source` of each field. |
+| `internal/workspace/store/source_test.go` | Create | Tests for the three files above against a real database. |
+| `internal/workspace/ingest/ingest.go` | Create | The pipeline for one upload: verify, store raw upload, store files and entries, set stages. |
+| `internal/workspace/ingest/handler.go` | Create | `POST /ingest/v1/have` and `POST /ingest/v1/commits`. |
+| `internal/workspace/ingest/ingest_test.go` | Create | A full upload end to end; an upload whose token names another repository is refused; a repeated upload changes nothing. |
+| `schema/workspace-upload.schema.json` | Create | The upload metadata format. Both the CLI's and the service's tests validate against it. |
+| `internal/workspace/api/router.go` | Modify | Mount the ingest routes. |
+| `go.mod`, `go.sum` | Modify | Add `go-git`, `go-oidc` and the storage client. |
+| `docs/adr/0031-treat-ci-uploads-as-untrusted.md` | Create | Records the trust rule and the verification by content hash. |
+
+#### 3. PR-49: `reviewer publish` and the workflow
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/publish/pack.go` | Create | Lists the objects to send and runs `git pack-objects`, following the steps under Shared definitions. |
+| `internal/publish/token.go` | Create | Requests the job's identity token from the address and credential GitHub Actions provides in the environment. |
+| `internal/publish/upload.go` | Create | The `have` call and the multipart upload, with a bounded retry. |
+| `internal/publish/publish.go` | Create | Orchestrates one publish. Any failure is a warning and the command exits 0 (ADR-0009). |
+| `internal/publish/publish_test.go` | Create | Against a fake service: first upload sends the whole tree, the second sends only changed objects, and a rejected token produces a warning and exit 0. |
+| `cmd/reviewer/publish.go` | Create | The `publish` subcommand and its `--event` form. |
+| `cmd/reviewer/publish_test.go` | Create | Flag handling, and "does nothing" when `workspace.url` is empty. |
+| `cmd/reviewer/flags.go` | Modify | Register `publish`, `--event` and `--workspace-url`, and reject them on other subcommands as the existing flags are. |
+| `cmd/reviewer/main.go` | Modify | Dispatch `publish`. |
+| `cmd/reviewer/main_test.go` | Modify | Cover the new dispatch. |
+| `internal/config/config.go` | Modify | Add the `Workspace` block and validate it. |
+| `internal/config/config_test.go` | Modify | Tests for the new block. |
+| `action.yml` | Modify | New inputs `review` (default true) and `publish` (default false). The history check and the review step run only when `review` is true, so a default-branch push can install the binary and publish without a base ref. |
+| `internal/installer/templates/review.yml.tmpl` | Modify | Add `id-token: write`, a `push` trigger for the default branch, and the publish step. Written only when a workspace address is given. |
+| `internal/installer/templates/config.yaml.tmpl` | Modify | Write the `workspace` block. |
+| `internal/installer/write.go` | Modify | Template data for the workspace address and default branch. |
+| `internal/installer/write_test.go` | Modify | Golden files with and without a workspace address. |
+| `internal/installer/plan.go` | Modify | Note in the plan output that the workflow gains a permission, and why. |
+| `internal/installer/plan_test.go` | Modify | Cover the note. |
+| `cmd/reviewer/init.go` | Modify | Accept `--workspace-url` and pass it to the installer. |
+| `cmd/reviewer/init_test.go` | Modify | Cover the flag. |
+| `testdata/` golden files for the installer | Modify | Regenerated with the `-update` flag. |
+
+#### 4. PR-50: identity (token route), sessions and access
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/keys/keys.go` | Create | `Cipher` interface: encrypt, decrypt. |
+| `internal/workspace/keys/kms.go` | Create | Cloud KMS implementation. |
+| `internal/workspace/keys/local.go` | Create | A key-file implementation for a developer's machine. Refuses to start when the config also names a bucket, so it cannot be used in the hosted form by mistake. |
+| `internal/workspace/keys/keys_test.go` | Create | Round trip; a tampered ciphertext is rejected. |
+| `internal/workspace/identity/identity.go` | Create | The `Route` interface: sign in, client for a user, optional service client. |
+| `internal/workspace/identity/token.go` | Create | Token route: validate a pasted token with GitHub, reject one that carries write permissions it does not need, store it encrypted. |
+| `internal/workspace/identity/session.go` | Create | Session cookie issue, lookup and sign-out. Only a hash of the session identifier is stored. |
+| `internal/workspace/identity/identity_test.go` | Create | Against a fake GitHub: valid token, revoked token, expired session. |
+| `internal/workspace/access/access.go` | Create | `CanRead(user, repository)`: asks GitHub with the user's credential, caches the answer for a few minutes, and never caches across users. |
+| `internal/workspace/access/middleware.go` | Create | Runs the check for every `/api/v1/repos/...` route, and returns the same response for "no access" and "does not exist". |
+| `internal/workspace/access/access_test.go` | Create | Allowed, denied, cache expiry, and access removed on GitHub taking effect after the cache period. |
+| `internal/workspace/store/migrations/0003_identity.sql` | Create | `app_user`, `credential`, `session`. |
+| `internal/workspace/store/identity.go` | Create | Queries for the three tables. |
+| `internal/workspace/store/identity_test.go` | Create | Tests against a real database. |
+| `internal/workspace/api/auth.go` | Create | `POST /auth/token`, `POST /auth/signout`, `GET /api/v1/me`. |
+| `internal/workspace/api/middleware.go` | Modify | Session lookup, and a same-site and header check on requests that change state. |
+| `internal/ghclient/client.go` | Modify | Add `GetRepo`, which reports whether the token can read a repository, and the head-commit field needed by the view. |
+| `internal/ghclient/client_test.go` | Modify | Cover `GetRepo`. |
+| `go.mod`, `go.sum` | Modify | Add the KMS client. |
+| `docs/adr/0033-two-identity-routes-one-interface.md` | Create | Records the interface and both routes. |
+
+#### 5. PR-51: source API
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/catalog/pulls.go` | Create | Lists and views pull requests. Reads the live list, head commit, title and state from GitHub as the viewer, and joins the stage list from the store. |
+| `internal/workspace/catalog/catalog_test.go` | Create | A pull request GitHub knows and the service has not received shows as "waiting for CI". The head commit comes from GitHub, not from the upload. |
+| `internal/workspace/source/files.go` | Create | Tree listing and file content at a commit. |
+| `internal/workspace/source/diff.go` | Create | Changed files from two path lists, and unified hunks per file. |
+| `internal/workspace/source/search.go` | Create | Text search at a commit over the trigram index, with a path filter and a result limit. |
+| `internal/workspace/source/source_test.go` | Create | Added, removed, renamed and binary files; search finds a match in an unchanged file. |
+| `internal/workspace/api/pulls.go` | Create | Handlers for repositories, pull request list and pull request view. |
+| `internal/workspace/api/source.go` | Create | Handlers for tree, file, compare and search. |
+| `internal/workspace/api/api_test.go` | Modify | The access test: every route above returns the "not found" response for a user without access. Each later pull request adds its routes to this test. |
+
+#### 6. PR-52: web application
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `web/package.json`, `web/package-lock.json` | Create | Dependencies and scripts: `build`, `test`, `e2e`, `lint`. |
+| `web/tsconfig.json`, `web/vite.config.ts`, `web/eslint.config.js`, `web/playwright.config.ts` | Create | Build, lint and test configuration. |
+| `web/index.html` | Create | The single page. |
+| `web/src/main.tsx`, `web/src/App.tsx`, `web/src/routes.tsx` | Create | Start-up and the route table: sign-in, pull request list, pull request view, code view, telemetry, status. |
+| `web/src/api/client.ts`, `web/src/api/types.ts` | Create | Typed calls to the API above, with one place that handles "signed out" and "no access". |
+| `web/src/views/SignIn.tsx` | Create | Offers the routes the service reports. For the token route, explains which permissions to grant. |
+| `web/src/views/PullList.tsx` | Create | Open pull requests per repository, with their stage state. |
+| `web/src/views/PullView.tsx` | Create | The pull request view: header with the commit on screen, file list, diff. |
+| `web/src/views/CodeView.tsx` | Create | A file outside the diff, marked as outside the change, with "Back to diff". |
+| `web/src/components/CodePane.tsx` | Create | CodeMirror wrapper: read-only, syntax highlighting, in-file search, line and token tap targets. |
+| `web/src/components/DiffView.tsx` | Create | Side-by-side on wide screens and single-column on narrow ones. Toggle between diff and new code. Knows which side a position belongs to. |
+| `web/src/components/StageList.tsx` | Create | Shows each stage for the commit, with the reason when one failed. |
+| `web/src/components/ActionSheet.tsx` | Create | The one sheet opened by tapping a symbol or line number. |
+| `web/src/components/CommandPalette.tsx`, `web/src/components/ShortcutHelp.tsx` | Create | Reach every action by name, and list the shortcuts. |
+| `web/src/keys/keymap.ts`, `web/src/keys/useHotkeys.ts` | Create | The shortcut table from the Technical Plan, with chords and the rule that single keys are off in text fields. |
+| `web/src/github/links.ts` | Create | Builds the address of a file and line on GitHub's pull request page, from the configured web address. |
+| `web/src/styles/app.css` | Create | Layout for wide and narrow screens. |
+| `web/src/keys/keymap.test.ts`, `web/src/github/links.test.ts`, `web/src/components/DiffView.test.tsx` | Create | No shortcut uses a browser-reserved key; single keys do not fire in a text field; links carry the right file and line; side selection for removed and added lines. |
+| `web/e2e/journeys.spec.ts` | Create | Journeys 2, 4, 8, 9 and 10 against a fake API, at a desktop and a phone screen size. |
+| `web/e2e/fake-api.ts` | Create | A small fixed-response server for the journeys. |
+| `internal/workspace/web/embed.go` | Create | Embeds `web/dist` in the binary and serves it, falling back to `index.html` for application routes. |
+| `internal/workspace/web/embed_test.go` | Create | A known asset is served; an API path is not shadowed. |
+| `internal/workspace/api/router.go` | Modify | Mount the web files. |
+| `Makefile` | Modify | `web` and `web-test` targets; `check` builds the web files before the Go build. |
+| `.github/workflows/ci.yml` | Modify | A `web` job: install, lint, unit tests, journeys. Added to `required`. |
+| `tools/checklicenses/main.go` | Modify | Inventory the web application's shipped dependencies in full, as it does the plugin's (ADR-0028). |
+| `tools/checklicenses/main_test.go` | Modify | Cover the second package tree. |
+
+#### 7. PR-53: navigation
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/publish/index.go` | Create | Runs the configured index command and locates its output. A failure is a warning, and the upload continues without an index. |
+| `internal/publish/publish.go` | Modify | Attach the index and its tool version to the upload. |
+| `internal/publish/publish_test.go` | Modify | With and without an index; a failing index command. |
+| `internal/installer/templates/config.yaml.tmpl` | Modify | Write the index command with a pinned `scip-typescript` version when a `tsconfig` was detected. |
+| `internal/installer/write.go`, `internal/installer/write_test.go` | Modify | Template data and golden files for the index command. |
+| `internal/workspace/navigation/load.go` | Create | Parses a SCIP file within the size limit, drops documents whose path is not in the commit, checks every position against the file, and stores each document once by hash. |
+| `internal/workspace/navigation/query.go` | Create | Definition and references at a position. A definition is returned as compiler-resolved only if the name at the target matches. Otherwise falls back to text search and labels the result. |
+| `internal/workspace/navigation/navigation_test.go` | Create | A real index for a fixture project: a definition in an unchanged file, an interface with two implementations returned as a list, a local symbol, a position outside the file rejected, and a tampered index whose target name does not match returning text search. |
+| `testdata/workspace/tsproject/` | Create | The small TypeScript fixture project and its checked-in SCIP file. |
+| `internal/workspace/store/migrations/0004_index.sql` | Create | `index_entry`, `occurrence`, `navigation_report`. |
+| `internal/workspace/store/index.go`, `internal/workspace/store/index_test.go` | Create | Queries for the three tables. An unchanged document is not stored twice across commits. |
+| `internal/workspace/ingest/ingest.go` | Modify | Load the index during the upload and set the `indexed` stage. |
+| `internal/workspace/api/nav.go` | Create | Definition, references and "this was wrong". |
+| `web/src/nav/navigation.ts` | Create | Lookup calls, the base-or-head rule, and history entries so back and forward work. |
+| `web/src/components/References.tsx` | Create | The list for references, and for several candidate definitions, labelled by how each was obtained. |
+| `web/src/components/CodePane.tsx`, `web/src/components/ActionSheet.tsx`, `web/src/keys/keymap.ts` | Modify | Wire go-to-definition and find-references to keys and to the sheet. |
+| `web/src/nav/navigation.test.ts`, `web/e2e/journeys.spec.ts` | Create, Modify | The base-or-head rule; journeys 2 and 3 with real lookups. |
+| `go.mod`, `go.sum` | Modify | Add the SCIP bindings and protobuf. |
+| `docs/adr/0035-scip-index-built-in-ci.md` | Create | Records the format, the tool and where it runs. |
+
+#### 8. PR-54: secrets scan at ingest
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/analyzers/gitleaks/gitleaks.go` | Modify | Export `ScanDir`, a directory scan built on the existing `scan`, so the service reuses the same invocation and the same "no report means no scan" rule. |
+| `internal/analyzers/gitleaks/gitleaks_test.go` | Modify | Cover `ScanDir`. |
+| `internal/workspace/scan/scan.go` | Create | Writes a commit's new files to a temporary directory under their real paths, runs the scanner with the service's own rule file, records a result per file, and removes the directory. An error records "could not scan". |
+| `internal/workspace/scan/scan_test.go` | Create | A fixture credential is found; a missing binary records "could not scan"; a file already scanned by the same scanner version is skipped. |
+| `internal/workspace/store/migrations/0005_scan.sql` | Create | `file_scan`. |
+| `internal/workspace/store/scan.go`, `internal/workspace/store/scan_test.go` | Create | Queries for scan results by file hash and scanner version. |
+| `internal/workspace/ingest/ingest.go` | Modify | Run the scan during the upload and set the `scanned` stage. |
+
+#### 9. PR-55: model gateway
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/gateway/gateway.go` | Create | `Converse` and `Complete`, running the fixed steps under Shared definitions. |
+| `internal/workspace/gateway/provider.go` | Create | The conversation interface: turns, tool definitions, streamed events, usage. |
+| `internal/workspace/gateway/anthropic.go`, `internal/workspace/gateway/gemini.go` | Create | Adapters for the two providers' streaming and tool-call formats. Addresses come from configuration. |
+| `internal/workspace/gateway/outcome.go` | Create | The outcome type, including how each provider reports exhausted quota and a reset time. |
+| `internal/workspace/gateway/fake.go` | Create | A scripted provider for tests, in the manner of `internal/model/fake.go`. |
+| `internal/workspace/gateway/gateway_test.go` | Create | An excerpt with no scan result is refused. A secret in a changed file blocks the whole commit. A secret in an unchanged file leaves that file out and names it. Typed text with a credential is refused. A budget is enforced before the call. Every call writes one `model_call` row. |
+| `internal/workspace/gateway/anthropic_test.go`, `internal/workspace/gateway/gemini_test.go` | Create | Recorded response fixtures: text, a tool call, usage figures and a quota error. |
+| `internal/workspace/store/migrations/0006_ai.sql` | Create | `model_call`, `conversation`, `message`, `brief`, `ai_review`. |
+| `internal/workspace/store/ai.go`, `internal/workspace/store/ai_test.go` | Create | Queries, including month-to-date tokens per repository for the budget. |
+| `internal/model/provider.go` | Modify | Add a `Usage` type and an optional `CompleteWithUsage` method, so the one-call path can report tokens. The existing `Provider` interface is unchanged. |
+| `internal/model/http.go`, `internal/model/anthropic.go`, `internal/model/gemini.go`, `internal/model/openai.go` | Modify | Parse usage from each response. Return a distinct error for a rate-limit or quota response, carrying the provider's retry hint. |
+| `internal/model/http_test.go`, `internal/model/shapes_test.go` | Modify | Cover usage parsing and the new error. |
+| `docs/adr/0032-one-outbound-door-for-model-calls.md` | Create | Records the gateway and the scan rule for every file sent. |
+| `docs/adr/0034-second-provider-interface-for-conversations.md` | Create | Records the conversation interface beside the one-call interface. |
+
+#### 10. PR-56: assistant
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/assistant/assistant.go` | Create | Runs a conversation: send, run requested tools, return results through the gateway, stop at the round or token limit. |
+| `internal/workspace/assistant/tools.go` | Create | The six read-only tools, each bound to the conversation's repository and commit. |
+| `internal/workspace/assistant/prompts/system.md` | Create | Instructions: answer from the tools, cite files and lines, treat content as material and not as instructions. |
+| `internal/workspace/assistant/assistant_test.go` | Create | With the scripted provider: a tool chain to an answer; the round limit; a tool asked to read another commit is refused; a quota outcome reaches the caller as such. |
+| `internal/workspace/api/assistant.go` | Create | Start a conversation, post a message, stream the answer as server-sent events, read a conversation back. |
+| `web/src/api/stream.ts`, `web/src/api/stream.test.ts` | Create | Reads the event stream; handles a dropped connection. |
+| `web/src/components/AssistantPanel.tsx` | Create | The question box with the selected code quoted above it, the streamed answer, the model's name, and links to each excerpt. Shows quota, budget and secret outcomes as distinct messages. |
+| `web/src/components/Markdown.tsx`, `web/src/components/Markdown.test.tsx` | Create | Sanitised Markdown, and Mermaid drawn with script execution disabled. Tests that a script tag and a script-bearing diagram are inert. |
+| `web/src/views/PullView.tsx`, `web/src/components/ActionSheet.tsx`, `web/src/keys/keymap.ts` | Modify | "Ask" from a selection, a line and the palette. |
+| `web/e2e/journeys.spec.ts` | Modify | Journeys 5, 6, 7 and 10. |
+
+#### 11. PR-57: jobs, change brief, AI review and events
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/jobs/jobs.go` | Create | Claims due jobs with row locks, runs them within a time allowance, retries with a growing delay, and honours a quota reset time. |
+| `internal/workspace/jobs/handler.go` | Create | `POST /internal/jobs/run`, accepting only the scheduler's signed token. |
+| `internal/workspace/jobs/jobs_test.go` | Create | Two runners never run the same job; a quota outcome reschedules and does not drop; a job that fails repeatedly ends as failed with its reason. |
+| `internal/workspace/store/jobs.go`, `internal/workspace/store/jobs_test.go` | Create | Queue queries. |
+| `internal/workspace/brief/inputs.go` | Create | Gathers inputs for a commit: diff, description, intent record, changed plan and ADR files, guidance from the base commit, and unchanged code that refers to changed symbols. |
+| `internal/workspace/brief/brief.go`, `internal/workspace/brief/prompts/brief.md` | Create | Generates the brief's four answers with a source link per statement, and names any missing input. |
+| `internal/workspace/brief/review.go` | Create | Runs the CLI's review, its disprove pass and its caps through the gateway's one-call path. |
+| `internal/workspace/brief/brief_test.go`, `internal/workspace/brief/review_test.go` | Create | Guidance changed in the pull request is ignored in favour of the base commit's. A missing intent record is reported in the brief. A disproved finding is not shown. |
+| `internal/laneb/assemble.go` | Modify | Add optional `Description` and `Intent` fields to `Input` and write them into the prompt, fenced as material. The CLI leaves them empty, so its output is unchanged. |
+| `internal/laneb/assemble_test.go`, `internal/laneb/prompts/review.md` | Modify | Cover the new fields; describe them in the prompt. |
+| `internal/workspace/ingest/handler.go`, `internal/workspace/ingest/ingest.go` | Modify | `POST /ingest/v1/events`; queue brief and review jobs after an upload and after an edit. |
+| `internal/workspace/api/brief.go` | Create | Read the stored brief and review. |
+| `cmd/workspace/main.go` | Modify | A `jobs` subcommand that runs the runner on a timer, for a developer's machine. |
+| `internal/installer/templates/review-events.yml.tmpl` | Create | The events workflow: on closed, reopened and edited, run `reviewer publish --event`. |
+| `internal/installer/plan.go`, `internal/installer/write.go`, their tests and golden files | Modify | Write the events workflow when a workspace address is given. |
+| `web/src/components/Brief.tsx`, `web/src/components/AiReview.tsx` | Create | The brief at the top of the pull request view, and review findings beside the diff, each labelled with commit and model. |
+| `web/src/views/PullView.tsx`, `web/e2e/journeys.spec.ts` | Modify | Show both; journey 1. |
+
+#### 12. PR-58: agent skill
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/installer/templates/SKILL.md.tmpl` | Modify | Two new sections: write an intent record when opening a pull request, in a fixed fenced form; and, when the author asks, read open review threads, fix, push and reply. |
+| `internal/installer/skill_test.go` and its golden file | Modify | Cover the new sections. |
+| `internal/workspace/brief/inputs.go`, `internal/workspace/brief/brief_test.go` | Modify | Parse the fixed fenced form out of a description. |
+
+#### 13. PR-59: telemetry, baseline, status and notices
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/telemetry/events.go` | Create | Accepts batches of usage events and validates their kinds. |
+| `internal/workspace/telemetry/measures.go` | Create | Computes the measures: time in review, active time, navigation outcome rates, AI use, and wrong-answer reports. Exports them as CSV and JSON. |
+| `internal/workspace/telemetry/baseline.go` | Create | A job that reads a repository's pull request history from GitHub once and stores the baseline figures. |
+| `internal/workspace/telemetry/telemetry_test.go` | Create | Measures over a fixed event set; export format; a user sees no events from a repository they cannot read. |
+| `internal/workspace/status/status.go`, `internal/workspace/status/status_test.go` | Create | Health of GitHub, the provider, the database and the job backlog, and the time of the last successful upload per repository. |
+| `internal/workspace/store/migrations/0007_telemetry.sql` | Create | `usage_event`, `baseline`. |
+| `internal/workspace/store/telemetry.go`, `internal/workspace/store/telemetry_test.go` | Create | Queries. |
+| `internal/workspace/api/telemetry.go`, `internal/workspace/api/status.go` | Create | Handlers. |
+| `web/src/telemetry/report.ts` | Create | Collects events in the browser and sends them in batches. |
+| `web/src/views/Telemetry.tsx`, `web/src/views/Status.tsx`, `web/src/components/NoticeBanner.tsx` | Create | The measures view with export, the status page, and the banner. |
+
+#### 14. PR-60: identity (App route)
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `internal/workspace/identity/app.go` | Create | The App's web sign-in flow, token refresh, and installation tokens for background reads. |
+| `internal/workspace/identity/app_test.go` | Create | Against a fake GitHub: sign-in, refresh, a revoked installation. |
+| `internal/workspace/api/auth.go` | Modify | `GET /auth/app/start` and `GET /auth/app/callback`, with a state value checked on return. |
+| `internal/workspace/api/hooks.go`, `internal/workspace/api/hooks_test.go` | Create | `POST /hooks/github`: checks the signature, then updates the pull request row as the events workflow does. An unsigned or wrongly signed request is refused. |
+| `internal/workspace/catalog/pulls.go` | Modify | Where a service client exists, refresh pull request rows without waiting for a viewer. |
+
+#### 15. PR-61: release, retention and documentation
+
+| File | Action | What changes and why |
+| --- | --- | --- |
+| `.github/workflows/release.yml` | Modify | Build the container image from the tag and publish it to GitHub's container registry with the same version. |
+| `.goreleaser.yaml` | Modify | Build the `workspace` binary for the image. |
+| `internal/workspace/jobs/retention.go`, `internal/workspace/jobs/retention_test.go` | Create | Removes data for pull requests closed longer than the configured period, and conversations and events past theirs. Files still referenced by another commit are kept. |
+| `docs/adr/0036-release-three-artifacts.md` | Create | Supersedes ADR-0026, restating the two existing artifacts and adding the image. |
+| `docs/adr/0026-two-release-artifacts.md` | Modify | Metadata only: status `Superseded`, superseded by ADR-0036. |
+| `docs/workspace.md` | Create | Operating guide: configuration, the cloud resources needed, connecting a repository, running locally, backup and restore. It names no project-specific value. |
+| `docs/architecture.md` | Modify | Add the workspace: the two parts, the trust rule and the outbound door. |
+| `README.md` | Modify | A short section on the workspace and a link to its guide. |
+| `SECURITY.md` | Modify | The CLI's promise that no credential is stored still holds for the CLI. State what the service stores, how it is encrypted, and that the secrets rule now covers every file sent. |
+| `CONTRIBUTING.md` | Modify | How to run Postgres and the web application for development. |
+| `docs/providers.md` | Modify | Which access paths the service supports, and that the subscription paths do not apply to it. |
+| `CHANGELOG.md` | Modify | The release entry. |
+
+### Verification Plan
+
+*   **Compilation/Build**: `make build` for both binaries; `npm --prefix web run build`; `docker build .`.
+*   **Unit Tests**: `make test` with `WORKSPACE_TEST_DATABASE_URL` set; `npm --prefix web test`; the existing `make plugin-test`.
+*   **Static Analysis & Linting**: `make vet`, `make staticcheck`, `make fmt-check`, `make license-check`, `npm --prefix web run lint`, `go run ./tools/checkadrs`, `make licenses`.
+*   **Test Coverage Requirement**: every goal has a named test, listed below. No percentage target is set.
+*   **E2E/Integration**: `npm --prefix web run e2e` for the journeys; the ingest test uploads a real pack built with `git`.
+
+Tests that stand for a goal:
+
+| Goal | Test |
+| --- | --- |
+| Source cannot be forged by a pull request | `gitpack`: a pack with one altered file is rejected |
+| No wrong definitions | `navigation`: a tampered index whose target name does not match yields text search, never a definition |
+| Nothing answered from another commit | `navigation` and journey 4: a lookup at a commit with no index returns "preparing" |
+| Access mirrors GitHub | `api`: one test walks every repository route as a user without access |
+| Nothing unscanned reaches a model | `gateway`: an excerpt with no scan result is refused, and the count of `model_call` rows with no scan decision is zero |
+| Only the configured provider | `gateway`: a request for a repository reaches only that repository's adapter |
+| Works without a model | Journey 6 and an `api` test with no provider reachable: diff, navigation and search still answer |
+| Quota is reported as quota | `gateway` fixtures for both providers, and journey 6 |
+| Pull request code is never run | A test that fails if any package under `internal/workspace` imports `os/exec`, other than `scan` |
+| Existing installs keep working | Installer golden files with no workspace address are unchanged from today |
+| Hotkeys | `keymap.test.ts`: no browser-reserved key, and no single key fires in a text field |
+| Phone | Journey 10 at a phone screen size |
+
+Checks to run by hand before the first repository is connected:
+
+1.  Restore the database from a backup into an empty instance and open a pull request view.
+2.  Run the index step on one repository managed with `bun`, and record build time and file sizes.
+3.  Confirm an organisation owner has approved either a fine-grained token or the App.
+
+--------------------------------------------------------------------------------
+
+<!-- Provenance: Indicates initial structural drafting via EGM. -->
+
+*Drafted with EGM*

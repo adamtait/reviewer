@@ -751,15 +751,14 @@ A zero in `sessionDays`, `accessCacheSeconds` or `limits` is a configuration err
 
 #### Index workflow
 
-The template renders `.github/workflows/review-index.yml` from the same values the review workflow template already receives (`NeedsCorepack`, `NodeVersion`, `CacheKey`, `InstallCommand`). Its steps, in order:
+The template renders `.github/workflows/review-index.yml` from the same values the review workflow template already receives (`NeedsCorepack`, `NodeVersion`, `CacheKey`, `InstallCommand`). The indexer's version is a constant beside the installer's Node version. Its steps, in order:
 
 1.  `actions/checkout@v4`, with no options.
 2.  `corepack enable`, when `NeedsCorepack` is set.
-3.  `actions/setup-node@v4` with the repository's Node version and cache key.
+3.  `actions/setup-node@v4` with Node 22, the version the installer already pins for the review workflow and the one the indexer needs, and the package manager's cache key.
 4.  The install command.
-5.  `actions/setup-node@v4` with Node 22, only when the repository's Node version is below 22, because the indexer needs 22.
-6.  `npx --yes @sourcegraph/scip-typescript@0.6.2 index`.
-7.  `actions/upload-artifact@v4` with name `review-index`, path `index.scip`, and `if-no-files-found: error`.
+5.  `npx --yes @sourcegraph/scip-typescript@0.6.2 index`.
+6.  `actions/upload-artifact@v4` with name `review-index`, path `index.scip`, and `if-no-files-found: error`.
 
 It triggers on `push` to every branch and holds `permissions: contents: read`. [`trials/review-index.yml`](trials/review-index.yml) is this workflow for an `npm` repository, and this repository's own copy has run on GitHub's runners. The installer's manual-step note for `bun` names both workflow files.
 
@@ -990,7 +989,7 @@ Each table lists every file its pull request touches. A pull request that adds a
 
 | File | Action | What changes and why |
 | --- | --- | --- |
-| `internal/installer/templates/review-index.yml.tmpl` | Create | The index workflow, with the seven steps under "Index workflow". |
+| `internal/installer/templates/review-index.yml.tmpl` | Create | The index workflow, with the six steps under "Index workflow". |
 | `internal/installer/plan.go` | Modify | Add `.github/workflows/review-index.yml` to the plan when `HasPackageJSON` is true and `TSConfig` is set, the condition already used for the TypeScript plugin. |
 | `internal/installer/write.go` | Modify | Embed and render the new template with the values the review workflow template already receives. The manual step for `bun` names both workflow files. |
 | `internal/installer/plan_test.go`, `write_test.go` | Modify | The file counts rise by one where TypeScript is detected and are unchanged where it is not. Every other planned file is rendered byte for byte as before. The rendered workflow for an `npm` repository equals `examples/review-index.yml`. |

@@ -836,6 +836,13 @@ immediately before PR-46; PR-43–45 are deliberately independent of it.
 **Exit criterion:** audit clean across full history and running on every future PR.
 **Risk / rollback:** visibility is reversible; a published release is not — hence the audit gates the tag.
 
+### PR-47 to PR-54 — The review workspace
+
+These eight are planned in [`docs/designs/review-workspace.md`](designs/review-workspace.md), not
+here: a web application beside GitHub's pull request page, with code navigation and an AI assistant.
+PR-47 changes this tool's installer, and PR-48 to PR-54 add a second binary, `cmd/workspace`. That
+document's "Detailed Implementation Plan" lists every file each one touches.
+
 ## 8. Day-one unblock list
 
 | Question | Blocks | Who answers | Fallback if no |

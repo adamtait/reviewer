@@ -29,6 +29,16 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 
 ## [Unreleased]
 
+### Added
+
+- `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
+  into a repository with a root `tsconfig.json`. On every push it builds a
+  navigation index of the TypeScript code and saves it as a workflow artifact,
+  for the review workspace described in `docs/designs/review-workspace.md`
+  (ADR-0034). An existing install gains this one file on its next `init`; every
+  other file is left as it is. Deleting the workflow turns that navigation off
+  and changes nothing else.
+
 ## [0.1.0] - 2026-09-16
 
 ### Added

@@ -50,7 +50,7 @@ Every item was PROPOSE FIX or ESCALATE. None was contested or declined. The esca
 | ACT-16. Changes to existing packages | Major | A second GitHub client without a timeout, a redirect followed without the token, wrapped lists read as such. The patch parser is no longer used. The scanner function takes a working directory. The licence tool passes web packages to its copyleft check. |
 | ACT-17. Addresses, links and line conventions | Major | An address table, the two link forms, and one convention for every line field. |
 | ACT-18. E1's outcomes | Major | Two limits of the first version are stated in place of branches. |
-| ACT-19. PR-47's workflow and the gates | Major | The workflow's seven steps are listed, and a copy has run. Each feedback measure has a source and a threshold. Goal 13 says it has no check. Open Questions holds four items. |
+| ACT-19. PR-47's workflow and the gates | Major | The workflow's steps are listed, and a copy has run. Each feedback measure has a source and a threshold. Goal 13 says it has no check. Open Questions holds four items. |
 | ACT-20. Decisions, ADRs and alternatives | Major | Eight decisions, six ADRs, and alternatives grouped to match. Types are a hand-written mirror with shared example responses. New ADRs land as `Proposed` until the feedback weeks pass. |
 | ACT-21. Risks and what the operator can read | Major | Rows added. Links in answers are not clickable unless they point at the service or GitHub. Search text travels in the request body. |
 | ACT-22. Statements about the existing system | Major | Corrected: four HTTP adapters and two that drive a command-line program, the watermark file, seven CI jobs. |

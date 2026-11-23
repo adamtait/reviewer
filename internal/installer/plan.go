@@ -22,6 +22,12 @@ import (
 // alongside them (ADR-0014).
 const PluginPackage = "@adamtait/reviewer-plugin-typescript"
 
+// IndexWorkflowPath is where the navigation-index workflow is written. The
+// review workspace finds a commit's index by this workflow's file name, so the
+// name is part of the contract between an installed repository and the service
+// (ADR-0034).
+const IndexWorkflowPath = ".github/workflows/review-index.yml"
+
 // Action is what init would do to one file or dependency.
 type Action string
 
@@ -117,6 +123,16 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 	}
 
 	if d.HasPackageJSON && d.TSConfig != "" {
+		// The same condition as the plugin below, and for the same reason: the
+		// indexer builds the program tsconfig.json describes, and without one
+		// there is nothing to index. A new path, so an existing install gains
+		// this file and keeps every other one as it is.
+		p.addProblem(unsafePath(d.Root, IndexWorkflowPath))
+		action, problem := actionFor(d.Root, IndexWorkflowPath, force)
+		p.addProblem(problem)
+		p.Files = append(p.Files, File{Path: IndexWorkflowPath, Action: action,
+			Purpose: "builds a navigation index for the review workspace on every push"})
+
 		version, note := pluginVersionFor(pluginVersion)
 		p.DevDependencies = append(p.DevDependencies, Dependency{
 			Name:    PluginPackage,

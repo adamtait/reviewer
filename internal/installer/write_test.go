@@ -21,10 +21,10 @@ func TestInstallWritesTheFileSetAndIsIdempotent(t *testing.T) {
 	git := testfixture.Git(t, root)
 
 	first := install(t, root)
-	if len(first.Created) != 7 || len(first.Overwritten) != 0 || len(first.Unchanged) != 0 {
-		t.Fatalf("want seven files created, got %+v", first)
+	if len(first.Created) != 8 || len(first.Overwritten) != 0 || len(first.Unchanged) != 0 {
+		t.Fatalf("want eight files created, got %+v", first)
 	}
-	// git collapses new directories, so the seven files show as three untracked
+	// git collapses new directories, so the eight files show as three untracked
 	// entries: .agent/, .github/ and .review/. Anything else is a path the plan did
 	// not name, which is the guarantee --dry-run rests on.
 	if status := strings.Fields(git("status", "--porcelain")); len(status) != 6 {
@@ -33,7 +33,7 @@ func TestInstallWritesTheFileSetAndIsIdempotent(t *testing.T) {
 	}
 
 	second := install(t, root)
-	if len(second.Created) != 0 || len(second.Unchanged) != 7 {
+	if len(second.Created) != 0 || len(second.Unchanged) != 8 {
 		t.Errorf("a second install must change nothing, got %+v", second)
 	}
 	if len(second.Manual) == 0 {
@@ -434,4 +434,119 @@ func TestDurationString(t *testing.T) {
 			t.Errorf("durationString(%v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+// The index workflow is planned exactly where the TypeScript plugin is, and
+// nowhere else: without a tsconfig there is no program for the indexer to build
+// (ADR-0034).
+func TestIndexWorkflowFollowsTypeScript(t *testing.T) {
+	has := func(p Plan) bool {
+		for _, f := range p.Files {
+			if f.Path == IndexWorkflowPath {
+				return true
+			}
+		}
+		return false
+	}
+	ts := BuildPlan(mustDetect(t, testfixture.Destination(t, "tiny-monorepo")), "v0.1.0", Options{})
+	if !has(ts) {
+		t.Errorf("a TypeScript repository should get %s", IndexWorkflowPath)
+	}
+	plain := BuildPlan(mustDetect(t, t.TempDir()), "v0.1.0", Options{})
+	if has(plain) {
+		t.Errorf("a repository with no tsconfig should not get %s", IndexWorkflowPath)
+	}
+}
+
+// Adding the index workflow must not change a byte of any file an existing
+// install already has: `reviewer init` on such a repository adds one file and
+// leaves the rest alone.
+func TestIndexWorkflowLeavesTheOtherFilesAlone(t *testing.T) {
+	with := BuildPlan(mustDetect(t, testfixture.Destination(t, "tiny-monorepo")), "v0.1.0", Options{})
+	without := with
+	without.Files = nil
+	for _, f := range with.Files {
+		if f.Path != IndexWorkflowPath {
+			without.Files = append(without.Files, f)
+		}
+	}
+	a, err := Render(with, "v0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Render(without, "v0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := map[string]string{}
+	for _, r := range b {
+		before[r.Path] = string(r.Content)
+	}
+	if len(a) != len(b)+1 {
+		t.Fatalf("want exactly one more rendered file, got %d and %d", len(a), len(b))
+	}
+	for _, r := range a {
+		if r.Path == IndexWorkflowPath {
+			continue
+		}
+		if before[r.Path] != string(r.Content) {
+			t.Errorf("%s changed when the index workflow was added", r.Path)
+		}
+	}
+}
+
+// The example is what someone copies by hand before a release carries the
+// template, so it has to be the template's own output for an npm repository.
+func TestIndexWorkflowExampleMatchesTheTemplate(t *testing.T) {
+	p := BuildPlan(mustDetect(t, testfixture.Destination(t, "tiny-monorepo")), "v0.1.0", Options{})
+	rendered, err := Render(p, "v0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("..", "..", "examples", "review-index.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rendered {
+		if r.Path != IndexWorkflowPath {
+			continue
+		}
+		if string(r.Content) != string(want) {
+			t.Errorf("examples/review-index.yml is not what the template renders for an npm repository.\n--- rendered ---\n%s", r.Content)
+		}
+		for _, must := range []string{
+			"branches: [\"**\"]",
+			"contents: read",
+			"@sourcegraph/scip-typescript@" + indexerVersion + " index",
+			"name: review-index",
+			"path: index.scip",
+		} {
+			if !strings.Contains(string(r.Content), must) {
+				t.Errorf("the index workflow should contain %q", must)
+			}
+		}
+		if strings.Contains(string(r.Content), "secrets.") || strings.Contains(string(r.Content), "pull-requests") {
+			t.Error("the index workflow must hold no secret and no permission beyond reading contents")
+		}
+		return
+	}
+	t.Fatalf("%s was not rendered", IndexWorkflowPath)
+}
+
+// A bun repository has to add bun to every generated workflow that installs
+// dependencies. Naming only the review workflow leaves the index job failing on
+// every push with nothing to say why.
+func TestBunStepNamesBothWorkflows(t *testing.T) {
+	d := mustDetect(t, testfixture.Destination(t, "tiny-monorepo"))
+	d.PackageManager = "bun"
+	p := BuildPlan(d, "v0.1.0", Options{})
+	for _, step := range p.Manual {
+		if strings.Contains(step, "installing bun") {
+			if !strings.Contains(step, ".github/workflows/review.yml") || !strings.Contains(step, IndexWorkflowPath) {
+				t.Errorf("the bun step should name both workflows, got %q", step)
+			}
+			return
+		}
+	}
+	t.Fatalf("want a manual step about bun, got %v", p.Manual)
 }

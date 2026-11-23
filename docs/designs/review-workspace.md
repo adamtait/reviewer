@@ -1,7 +1,7 @@
 # Review workspace: code navigation and AI help beside GitHub pull requests
 
 *   **Author:** adamtait
-*   **Status:** Proposed (second revision after review)
+*   **Status:** Proposed. A third review round found faults that are not yet fixed here; see "Record of decisions". Do not build from this revision.
 *   **Date:** 2026-11-23
 
 --------------------------------------------------------------------------------
@@ -50,6 +50,14 @@ On 2026-11-23 the design owner accepted the second round's proposals. Six of the
 
 The Open Questions section below is the complete list of points that still need the design owner.
 
+**The third review round.** A third round, in [`reviews/round-3/`](reviews/round-3/), did not pass this revision. One of its findings is fixed here: cached source is now bound to its repository. The rest wait for the trials in [`trials/`](trials/README.md), so that the document is revised once, against measurements. Until then three things in this revision are known to be wrong and should not be built from:
+
+*   The conversation interface cannot carry the reasoning data both model providers expect back in a tool loop.
+*   "No model name is compiled in" is false of the existing Google adapter, which rewrites some configured model names.
+*   The rule for the "defined outside the repository" label, and the rule for the name at the end of a symbol's identifier, do not match what the indexer writes.
+
+[`reviews/round-3/goldfish_review_report.md`](reviews/round-3/goldfish_review_report.md) lists every open item and what it waits for.
+
 ## The Problem
 
 The design owner reviews each pull request line by line on GitHub's pull request page, and reports three gaps. Each is the design owner's account of daily use, set beside what GitHub documents.
@@ -96,7 +104,7 @@ Each goal names the check that tests it. The Verification Plan maps each check t
 3.  **Search the repository at the pull request's commit.** *Checked by:* a test in which a match in an unchanged file is returned when no index exists.
 4.  **Ask the AI about code at that commit.** A user selects code and asks about it, or asks about any code in the repository, and can ask for alternatives. A request for a diagram is answered with the diagram's source as text. *Checked by:* tests with a scripted model: a question about a selection reaches the model with that excerpt; the model reaches an answer through a chain of search, read and lookup tools; and the answer lists every excerpt the model was given.
 5.  **Show the pull request author's stated reason at the top of the view.** The title, the description and, when present, the intent record are read from GitHub on every open. No model is involved. *Checked by:* a view test with and without an intent record.
-6.  **Mirror GitHub access.** A user sees a connected repository's code and answers only if GitHub says that user can read it. The answer is cached for at most the configured period. *Checked by:* one test that walks every route carrying repository data as a user without access; one that access removed on GitHub is refused within the cache period; and one that a repository GitHub reports as public is refused for everyone.
+6.  **Mirror GitHub access.** A user sees a connected repository's code and answers only if GitHub says that user can read it. The answer is cached for at most the configured period. *Checked by:* one test that walks every route carrying repository data as a user without access; one that access removed on GitHub is refused within the cache period; one that a repository GitHub reports as public is refused for everyone; and one in which a user who can read only one of two connected repositories asks for the other's cached commit, index and conversation through both repositories' addresses and gets none of them.
 7.  **Never execute pull request code on the service.** The service starts one program, the secrets scanner, and only over text the service itself wrote to a scratch directory. It never checks out a working tree, installs dependencies, or runs a repository's tools or tests. *Checked by:* a test over the service's own source that fails if any of its packages imports the standard library's package for starting programs, or calls the CLI's `git` helpers; and a test that the scanner is started with no inherited environment. The container image holds no `git` and no shell.
 8.  **Scan everything the service sends to a model.** Every model call passes one gateway, which scans the outgoing content at the moment of sending and does not send what it cannot scan. Only the provider configured for a repository receives its content. The scanner recognises known credential formats; it does not recognise every secret. *Checked by:* every model call record carries a scan result, and a planted credential is caught for each kind of content and for each way content could try to switch the scanner off.
 9.  **Work without a model.** Diff, navigation and search need no model. When the provider's quota is exhausted, AI features say that quota is the cause. *Checked by:* a test with no provider reachable, and a test for each form of quota response.
@@ -344,7 +352,7 @@ One Go binary, `cmd/workspace`, serves the API and the web application. The tabl
     | A run that failed or was cancelled | The index job failed, with a link to the run | Nothing. |
     | A run that succeeded | Ready | Downloads the run's `review-index` artifact, decodes it and holds it in memory. |
 
-**How this work runs.** All of it runs inside the request that needs it. No state is stored for any of it. A request that finds nothing in memory does the work itself. Within one container, two requests for the same commit share one fetch. In two containers, each fetches once. A request that ends early leaves nothing behind, and the next request starts again.
+**How this work runs.** All of it runs inside the request that needs it. No state is stored for any of it. A request that finds nothing in memory does the work itself. Within one container, two requests for the same commit of the same repository share one fetch. In two containers, each fetches once. A request that ends early leaves nothing behind, and the next request starts again.
 
 **Time limits.** Cloud Run ends a request at the service's configured timeout, which is 300 seconds by default ([request timeout](https://docs.cloud.google.com/run/docs/configuring/request-timeout)). The service sets its own shorter deadline on each fetch from configuration. Entry condition E3 measures the fetch.
 
@@ -353,11 +361,11 @@ One Go binary, `cmd/workspace`, serves the API and the web application. The tabl
 ### Source in memory
 
 *   **Reading an archive.** The service asks GitHub for the commit's tar archive and unpacks the stream in memory. It keeps the path of every entry, and the text of every file that is valid UTF-8, holds no NUL byte, and is within the per-file size limit. Other files are kept as a path with a mark: binary, or too large. If the kept text passes the per-archive limit, the fetch fails with that reason.
-*   **The cache.** Archives and decoded indexes share one in-memory cache per container, bounded by a configured number of bytes. When it is full, the entry used longest ago is dropped. The operating guide gives the rule for sizing the container's memory from the cache size and the two per-item limits.
+*   **The cache.** Archives and decoded indexes share one in-memory cache per container, bounded by a configured number of bytes. Every entry, and every fetch in flight, is keyed by owner, repository and commit hash together, never by the hash alone. When it is full, the entry used longest ago is dropped. The operating guide gives the rule for sizing the container's memory from the cache size and the two per-item limits.
 *   **Text search.** A search is a literal substring match over the kept text of one commit, case-insensitive unless the user asks otherwise, with an optional path prefix. It returns at most 200 matching lines and says when it stopped early.
 *   **Paths the archive lacks.** GitHub's changed-file list can name a path the archive omits. The view shows that file as not available in the archive, with a link to it on GitHub.
 
-Access to cached source is governed by the access check, which runs before any read.
+Access to cached source is governed by the access check, which runs before any read. The check covers the owner and repository in the request's address, and the commit hash arrives separately, so the cache key carries all three. A request for repository A at a hash that was fetched for repository B finds nothing in the cache and asks GitHub for that hash in repository A, with the user's token. A user who can read A and not B therefore cannot reach B's source or index through A's address.
 
 ### The diff
 
@@ -444,7 +452,7 @@ The CLI's model lane runs in CI, outside this service, and is off unless a repos
 
 ### The assistant
 
-A question starts or continues a conversation tied to a repository, a commit and a user. Only that user can read it. The gateway sends the conversation with a description of the tools. The model may answer or ask for a tool. The service runs the tool and returns the result through the gateway. This repeats until the model answers, or a configured limit on rounds or tokens is reached.
+A question starts or continues a conversation tied to a repository, a commit and a user. Only that user can read it through the workspace, and only at that repository's address: a conversation is looked up by its identifier, its repository and its user together. The gateway sends the conversation with a description of the tools. The model may answer or ask for a tool. The service runs the tool and returns the result through the gateway. This repeats until the model answers, or a configured limit on rounds or tokens is reached.
 
 The six tools are read-only and act on the commit the conversation is tied to: search text, read a range of a file, find a definition, find references, list changed files, and read the pull request's title, description and intent record.
 
@@ -1016,7 +1024,7 @@ Each table lists every file its pull request touches. A pull request that adds a
 | --- | --- | --- |
 | `internal/ghclient/client.go`, `client_test.go` | Modify | Add `Compare`, returning the merge base of two commits; `Archive`, returning a commit's tar archive as a stream; and the previous file name on `ChangedFile`. `Archive` uses a new helper for responses that are not JSON, because the existing one decodes JSON and caps the body at 32 MB. |
 | `internal/diff/diff.go`, `diff_test.go` | Modify | `PatchedFile` gains an old path, and `FromPatches` copies it to `File.OldPath`, so a rename can be read at its old path. |
-| `internal/workspace/source/archive.go`, `cache.go`, `search.go`, `source_test.go` | Create | Unpack an archive stream into memory under the limits; the shared byte-bounded cache with one fetch per commit at a time within a container; literal search. Tests build archives in memory: text, binary, NUL-bearing, oversized and symlink entries; an archive over the limit; two concurrent requests making one fetch; a search match in a file the pull request does not change. |
+| `internal/workspace/source/archive.go`, `cache.go`, `search.go`, `source_test.go` | Create | Unpack an archive stream into memory under the limits; the shared byte-bounded cache, keyed by owner, repository and hash, with one fetch per key at a time within a container; literal search. Tests build archives in memory: text, binary, NUL-bearing, oversized and symlink entries; an archive over the limit; two concurrent requests making one fetch; the same hash asked for under two repositories making two fetches and two entries; a search match in a file the pull request does not change. |
 | `internal/workspace/catalog/pulls.go`, `intent.go`, `catalog_test.go` | Create | List and view pull requests as the user; the merge base; changed files through `ListFiles` and `FromPatches`; parsing the intent record. |
 | `internal/workspace/api/pulls.go`, `source.go` | Create | Handlers for the pull request list and view, tree, file and search. |
 | `internal/workspace/api/api_test.go` | Modify | The access test: every route under a repository answers 404 for a user without access. The test reads the route table, so later routes are covered without editing it. |
@@ -1104,7 +1112,7 @@ Each table lists every file its pull request touches. A pull request that adds a
 | 3. Search at the commit | `source` | A match in an unchanged file is found with no index |
 | 4. Ask the AI | `assistant` | A selection reaches the model; tools chain to an answer; every excerpt is listed |
 | 5. Stated reason | `StatedReason.test.tsx`, CUJ 1 | Shown with and without an intent record |
-| 6. Mirror GitHub access | `api`, `access` | Every route under a repository answers 404 without access; removed access is refused within the cache period; a public repository is refused |
+| 6. Mirror GitHub access | `api`, `access`, `source` | Every route under a repository answers 404 without access; removed access is refused within the cache period; a public repository is refused; a commit, index or conversation cached for one repository is not served at another repository's address |
 | 7. Never execute pull request code | `internal/workspace/rules_test.go`, `scan` | No service package imports `os/exec` or calls the CLI's `git` helpers; only `scan` reaches the scanner; the scanner's environment is empty |
 | 8. Scan everything sent | `gateway`, `scan` | Each kind of content with a planted credential is stopped or withheld; the four switch-off attempts fail; every call record carries a scan result |
 | 9. Work without a model | `api`, `model`, CUJ 6 | With no provider reachable, diff, navigation and search answer; each quota form maps to its message |

@@ -1,7 +1,7 @@
 # Review workspace: code navigation and AI help beside GitHub pull requests
 
 *   **Author:** adamtait
-*   **Status:** Draft
+*   **Status:** Proposed
 *   **Date:** 2026-11-23
 
 --------------------------------------------------------------------------------
@@ -19,7 +19,7 @@ The system has two parts:
 
 This document designs the first version only. Three later stages are named under Non-Goals: learnings and risk labels, commenting from the workspace, and unread merges. Each gets its own design document. This document fixes only the constraints those stages place on the first version, so that none of them forces a rewrite.
 
-The concept, the seven-lens review of it and the author's decisions are recorded in [`concepts_brief.md`](./concepts_brief.md).
+The concept, the seven-lens review of it and the author's decisions are recorded in [`concepts_brief.md`](../../concepts_brief.md).
 
 ## The Problem
 
@@ -671,9 +671,9 @@ Each entry says who set the option aside. "Rejected by author" means the author 
 
 ### Additional Resources
 
-*   [`concepts_brief.md`](./concepts_brief.md): the concept, the seven-lens review and the author's decisions.
-*   [`docs/architecture.md`](./docs/architecture.md) and [`docs/adr/`](./docs/adr/): the existing CLI and its recorded decisions.
-*   [`docs/providers.md`](./docs/providers.md): the model access paths the CLI supports today.
+*   [`concepts_brief.md`](../../concepts_brief.md): the concept, the seven-lens review and the author's decisions.
+*   [`docs/architecture.md`](../architecture.md) and [`docs/adr/`](../adr/): the existing CLI and its recorded decisions.
+*   [`docs/providers.md`](../providers.md): the model access paths the CLI supports today.
 *   GitHub documentation consulted for the identity and hand-off decisions: personal access token policy, OAuth App restrictions, the collaborators API, the Actions OpenID Connect reference and workflow artifacts.
 *   `scip-typescript` and the SCIP format, published by Sourcegraph.
 

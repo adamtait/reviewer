@@ -2,7 +2,7 @@
 
 The design in [`../review-workspace.md`](../review-workspace.md) rests on three entry conditions, E1 to E3, and a third review round asked for four additions to them. This directory holds what is needed to run them, and the results of a rehearsal on this repository.
 
-The trials need one of the team's repositories, a fine-grained token and an organisation owner, so the design owner runs them. They take about half a day in all.
+The trials as written need one of the team's repositories, a fine-grained token and an organisation owner. On 2026-11-23 the design owner decided not to run them, and asked for the entry conditions to be judged from tests the drafter could run. Those tests and judgements are in the second half of this page. The steps stay here for anyone who later connects a team repository.
 
 **Record no repository, organisation, file or symbol names here.** This repository is meant to be public (ADR-0010). The tools print counts and timings only, apart from two lists marked below, which stay private.
 
@@ -14,8 +14,9 @@ The trials need one of the team's repositories, a fine-grained token and an orga
 | [`scip_lookup.py`](scip_lookup.py) | E2 | Applies the design's navigation rules to a real index: for every reference, or for one position. |
 | [`e3.py`](e3.py) | E3 | Makes the GitHub calls the service would make with one token, and measures fetch, unpack, memory and search. |
 | [`scan_pass.py`](scan_pass.py) | E3 | Runs the pinned secrets scanner over one commit the way the design's gateway would, and counts the files it would withhold. |
+| [`gemini_live.py`](gemini_live.py) | The model gateway | Runs one streamed, two-tool conversation against the Gemini API and reports what the provider requires. |
 
-The three tools need Python 3 and nothing else. `scan_pass.py` also needs the pinned scanner, which `make tools` installs.
+The four tools need Python 3 and nothing else. `scan_pass.py` also needs the pinned scanner, which `make tools` installs.
 
 ## E1. Credential approval
 
@@ -97,46 +98,114 @@ The third review round found that the design's conversation interface cannot car
 * makes two tool calls in sequence, with each result sent back;
 * reports input and output token counts.
 
-Record whether the second request is accepted when the provider's reasoning data is sent back unchanged and when it is left out, and the output token count, which replaces the 2,000-token assumption in the design's cost estimate. No script is provided for this yet, because it needs a provider key.
+`gemini_live.py` does this for the Gemini API, and its results are below. No such run has been made against the Anthropic API.
 
-## Rehearsal on this repository, 2026-11-23
+## What was run on 2026-11-23
 
-The tools were run in the drafting environment against this repository's own code, to check that they work and to see how the design's rules behave on a real index. This is not E2 or E3: it is not one of the team's repositories, no symbols were picked by hand, the web editor was not used, and GitHub's API cannot be reached from that environment.
+The design owner decided not to run the trials on a team repository, and asked the drafter to run every test it could and to judge the entry conditions from the results. This section records what was run, and the next one records the judgements.
 
-### The indexer and the navigation rules
+Nothing here used one of the team's repositories. GitHub's API cannot be reached from the drafting environment except for this repository, through that environment's own GitHub tool.
 
-`scip-typescript` 0.6.2 indexed the TypeScript plugin under `plugins/typescript` (18 source files) in 6 seconds after `npm ci`, and wrote a 586 KB index. `scip_lookup.py stats` gave:
+### The index workflow on GitHub's runners
+
+[`.github/workflows/review-index.yml`](../../../.github/workflows/review-index.yml) runs the index workflow on this repository's TypeScript plugin, for branches under `claude/`. Its first run:
 
 | Measure | Result |
 | --- | --- |
-| Documents | 18, all with UTF-16 positions, none dropped |
-| Range form | The list form for all 5,884 occurrences; none in the typed form |
-| References looked up | 4,704 |
-| Labelled "from the index" | 2,507 (53.3%) |
-| Labelled "outside the repository" | 1,987 (42.2%), every one naming a real dependency |
-| Targets the name check discarded | 39 (0.8%) |
-| No definition and no package | 171 (3.6%) |
-| Positions where two or more symbols share one range | 654 |
+| Outcome | Succeeded, 57 seconds in all |
+| Install (`npm ci`) | 32 seconds |
+| Indexing | 4 seconds |
+| Artifact | `review-index`, 75 KB compressed, expires after 90 days |
+| Found by commit | Yes. Listing the workflow's runs returned one push run whose head commit was the pushed commit, and the artifact list for that run named the same commit. |
 
-What this shows about the design's rules:
+The artifact record also carries a SHA-256 digest of its content.
 
-* **Ties are common, not rare.** At 654 positions several symbols share one range. Most are a name that is both a type and a value, declared across several library files. The design's "smallest occurrence" rule does not say which to use. It needs to answer with the definitions of all of them.
-* **The name check discarded only import paths.** All 39 discards were a module path in an `import` line, whose target is the file itself and has an empty range. No other correct target was discarded. The rule needs a case for a target that is a whole file.
-* **"Outside the repository" was right every time here.** The index covered the whole project, so no symbol of the project's own was mislabelled. The mislabelling the review predicts needs a partial index, which a repository with several TypeScript projects would produce. E2 should include one if the team has one.
-* **The unresolved 3.6%** are names imported from a dependency and used locally. Text search is the right answer for them.
-* **Not exercised:** constructors, because this code has no classes.
+### Navigation rules, scored against the TypeScript compiler
 
-### The scanner pass
+`scip-typescript` 0.6.2 indexed two projects: this repository's TypeScript plugin (18 files), and the published source of a widely used reactive-programming library (251 files, many classes), each in under 4 seconds. A sample of identifiers in each was put to the TypeScript compiler's own go-to-definition, and the compiler's answer was compared with the answer the design's rules give from the index.
 
-`scan_pass.py` over this repository's 254 tracked text files took under 3 seconds. The planned settings would withhold 4 files (1.6%): three test files and one fixture, each holding a made-up key. A repository whose tests carry fixture credentials should expect the same.
+| | Plugin, 18 files | Library, 251 files |
+| --- | --- | --- |
+| Positions sampled | 724 | 1,437 |
+| Defined inside the project, per the compiler | 432 | 1,225 |
+| Rules as first stated: right / wrong / not resolved | 431 / 0 / 1 | 1,215 / 0 / 10 |
+| Revised rules: right / wrong / not resolved | 431 / 0 / 1 | 1,223 / 0 / 2 |
+| Defined outside the project, resolved inside by mistake | 0 | 0 |
 
-### The archive tool
+Applied to every reference in the library's index, the rules as first stated discarded 9.7% of lookups at the name check. Almost all were import paths, whose target is a whole file, and `new Foo()` calls, whose target is the word `constructor`.
 
-`e3.py --archive-file` on an export of this repository: 254 text files, 1.97 MB of kept text, unpacked in under 0.1 seconds, a search in 0.01 seconds, 29 MB peak memory. This repository is small, so these say only that the tool runs. The tool's network calls have not been run.
+A deliberately partial index, covering 117 of the library's 251 files, tested the label "defined outside the repository". The rule as first stated gave that label to 2,170 references to the library's own code. The revised rule gave it to none of them, and resolved nothing wrongly.
 
-## Results
+The revised rules, which `scip_lookup.py` now implements beside the first ones:
 
-Fill in and commit. Counts and timings only.
+* **Ties.** Every symbol that shares the smallest range at the position is used, and the answer is all their definitions. Ties are common: 654 positions in the plugin and 510 in the library.
+* **Import paths.** A quoted import path may point at a whole file.
+* **Constructors.** `new Foo()` may point at the constructor of the type named `Foo`.
+* **Outside the repository.** A symbol is outside only if its package name matches no `package.json` in the repository.
+
+Other facts: every document used UTF-16 positions; every occurrence used the list form of a range; a 251-file project gives a 2.3 MB index.
+
+### Holding source in memory
+
+`e3.py --archive-file` was run on an archive of a large source tree, the Go standard library:
+
+| Measure | Result |
+| --- | --- |
+| Tree | 10,703 files, 140 MB on disk, 28.5 MB compressed |
+| Unpack into memory | 0.7 seconds |
+| Text kept | 9,960 files, 90 MB |
+| Literal search over all of it | 0.13 seconds, 894 matching lines |
+| Peak memory of the tool | 173 MB |
+
+The tool's network calls were not run. Fetching another repository's archive from GitHub is refused in the drafting environment.
+
+### The secrets scan
+
+| Tree | Text files | Files the planned settings would withhold | Time |
+| --- | --- | --- | --- |
+| This repository | 254 | 4 (1.6%): three test files and one fixture | Under 3 seconds |
+| The Go standard library | 9,960 | 18 (0.2%): test keys and certificates | About 5 seconds |
+
+### A live conversation with the Gemini API
+
+`gemini_live.py` was run with a key the design owner supplied, on the free tier.
+
+| Question | Result |
+| --- | --- |
+| Does a streamed two-tool conversation work on the current API (Interactions, stateless)? | Yes. Search, then read, then an answer, in three requests. The first event arrived in about 1.2 seconds each time. |
+| Does it work on the older API the CLI's adapter uses (`generateContent`)? | Yes. The provider's documentation now calls that API legacy. |
+| Must the provider's reasoning data be sent back inside a tool loop? | Yes, on both APIs. Leaving it out gave HTTP 400 on the second request. |
+| Must it be sent back for an earlier, finished question? | No. A follow-up question was answered correctly with the earlier turn replayed as plain text. |
+| Token counts for the three requests | Input 162, 249 and 464. Visible output 18, 20 and 151. Reasoning 40, 35 and 165. Reasoning was more than half of all output. |
+| A rate limit | HTTP 429, code `too_many_requests`, with the wait in the message ("retry in 36s"). |
+| An exhausted daily quota | The same status and code, with a `retry-after` header of 31,174 seconds. Only the length of the wait tells it from a rate limit. |
+| A model under heavy demand | HTTP 503, code `service_unavailable`. Seen on three of the newest models. |
+| A bad key, an unknown model | HTTP 401 and HTTP 404, each with a message. |
+
+### What could not be run
+
+* **The archive and compare calls with a fine-grained token.** GitHub's API is not reachable from the drafting environment.
+* **GitHub's web editor.** It reads repositories through the same API from the browser, so it cannot be opened there either.
+* **Anything on a team repository:** a monorepo with several TypeScript projects, generated types, or `bun`.
+* **The Anthropic API.** No key was supplied.
+* **Credential approval.** That is a question for the organisation owner.
+
+## Judgements
+
+Made by the drafter on the design owner's instruction. Each says what it rests on and what would overturn it.
+
+| Condition | Judgement | Rests on | Would be overturned by |
+| --- | --- | --- | --- |
+| E1. Credential approval | Not answered. It does not block building, because the first connected repository is this one, on the design owner's own account, where a fine-grained token needs no approval. It blocks connecting an organisation's repository. | GitHub's documented rules for fine-grained tokens | Nothing; it is still to be asked |
+| E2. The indexer | Passed, with the revised rules. | A real run on GitHub's runners; 99.8% of 1,657 in-project definitions right, none wrong, on two projects; no mislabelling on a partial index | A team repository where the index is partial in a way the rules mislabel, or where the install needs something the workflow lacks |
+| E3. Reading as the user | Passed for memory, unpacking, search and finding an index by commit. Not tested for the archive call itself. | The measurements above. A 28.5 MB archive is a few seconds of transfer. | The archive call refusing a full commit hash or a fine-grained token, or taking tens of seconds. PR-50 tests this first, against this repository, before anything is built on it. |
+| E4. Existing tools | Unmeasured. The decision to build stands on the design owner's goal of a platform the team controls. | The design owner's decision | Nothing; the comparison is no longer a gate |
+| Scanner hit rate | Low, and concentrated in tests and fixtures. Withholding single files is kept. | 0.2% and 1.6% of files on two trees | A team repository where most questions touch a flagged file |
+| Provider | Google's API, through its current stateless conversation call, is the first and only adapter in the first version. | The live run | A repository that must use another provider |
+
+## Results from a team repository
+
+To be filled in if the trials are later run on a team repository. Counts and timings only.
 
 ```text
 E1  approved method:                      [tokens | App | both | neither]
@@ -153,8 +222,4 @@ E2  workflow completed:                   [yes | no]      minutes:
 
 E3  e3.py output:                         (paste)
     scan_pass.py counts:                  (paste the first five lines)
-
-Live conversation
-    provider reasoning data must be sent back:   [yes | no | not applicable]
-    output tokens for a two-tool answer:
 ```

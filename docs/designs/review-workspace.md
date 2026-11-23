@@ -19,7 +19,7 @@ The system has two parts:
 
 This document designs the first version only. The later stages are listed once, under Non-Goals.
 
-**Record of decisions.** The concept and its first review are in [`concepts_brief.md`](../../concepts_brief.md). This revision follows a five-stage review, summarised in [`consolidated_review_report.md`](../../consolidated_review_report.md). What was changed in response, and which points still need the author, is in [`goldfish_review_report.md`](../../goldfish_review_report.md).
+**Record of decisions.** The concept and its first review are in [`concepts_brief.md`](../../concepts_brief.md). This revision follows a five-stage review, summarised in [`consolidated_review_report.md`](reviews/round-1/consolidated_review_report.md). What was changed in response, and which points still need the author, is in [`goldfish_review_report.md`](reviews/round-1/goldfish_review_report.md).
 
 ## The Problem
 
@@ -553,7 +553,7 @@ Figures marked as estimates rest on the stated assumptions and are replaced by m
 
 ## Additional Resources
 
-*   [`concepts_brief.md`](../../concepts_brief.md), [`consolidated_review_report.md`](../../consolidated_review_report.md) and [`goldfish_review_report.md`](../../goldfish_review_report.md): the concept, the review, and the response to it.
+*   [`concepts_brief.md`](../../concepts_brief.md), [`consolidated_review_report.md`](reviews/round-1/consolidated_review_report.md) and [`goldfish_review_report.md`](reviews/round-1/goldfish_review_report.md): the concept, the review, and the response to it.
 *   [`docs/architecture.md`](../architecture.md), [`docs/adr/`](../adr/) and [`docs/providers.md`](../providers.md): the existing CLI.
 *   Bacchelli and Bird, "Expectations, Outcomes, and Challenges of Modern Code Review", ICSE 2013: <https://2013.icse-conferences.org/content/expectations-outcomes-and-challenges-modern-code-review.html>
 *   GitHub documentation consulted: [personal access token policy](https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/setting-a-personal-access-token-policy-for-your-organization), [workflow artifacts API](https://docs.github.com/en/rest/actions/artifacts), [comparing two commits](https://docs.github.com/en/rest/commits/commits).

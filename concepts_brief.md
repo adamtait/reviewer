@@ -7,7 +7,7 @@
 
 A web application for reviewing pull requests, used by 10 engineers across 4 or more GitHub repositories. The team opens dozens of pull requests a week, and coding agents write more than 90% of them (mostly Antigravity, some Claude Code). The code is mostly TypeScript, with some Python, bash and Rust.
 
-The application is meant to replace two things: GitHub's pull request page for daily review, and this repository's `reviewer` CLI, which the requester says mostly produces lint findings.
+The first version augments GitHub's pull request page and does not replace it. It adds what GitHub lacks, code navigation and interactive AI help, and reviewers keep using GitHub to comment, approve and merge. The aim is to put those new features in front of the team quickly and collect feedback. This repository's `reviewer` CLI stays as the part that runs in each repository's CI job, and the new system is built in this repository beside it.
 
 It addresses six problems the requester has with review today:
 
@@ -28,7 +28,7 @@ What the requester asked for:
 - An AI reviewer that learns from human reviews.
 - A risk label per pull request, so human reading goes to changes that affect primary data models, workflows or user experience.
 
-Seven independent reviewers examined this concept. They found six problems that block a design as the concept stands. The Analysis records those, the reviewers' proposals, and where the reviewers disagree with each other.
+Seven independent reviewers examined the original concept, which set out to replace GitHub's page. They found six problems that block a design. The author has since decided on each one. The Analysis records the findings and their outcome, and the last section lists the decisions a design document should start from.
 
 ## Analysis
 
@@ -44,9 +44,22 @@ Seven independent reviewers examined this concept. They found six problems that 
 | Long-term maintenance | `egm-structural` | completed |
 | Contradictions and inventive patterns | `egm-inventive-catalyst` | completed |
 
-Each reviewer ran in a fresh context and saw only the requester's stated requirements and this repository. None saw the others' reports. Every proposal below is a reviewer's proposal; the author has accepted none of them yet.
+Each reviewer ran in a fresh context and saw only the requester's stated requirements and this repository. None saw the others' reports. Every proposal below is a reviewer's proposal. The next section says which ones the author has accepted.
 
 Token, memory and volume figures are reviewers' estimates under the assumptions stated beside them. They are not measurements.
+
+### Outcome of the review
+
+The author answered the reviewers' open questions on 2026-11-23. The problems are kept below as the reviewers found them, because their requirements still apply to the design.
+
+| Blocking problem | Outcome |
+| --- | --- |
+| 1. Pull request code beside credentials | Resolved by a design choice: each repository's own GitHub Actions job builds the navigation index. The server never installs or executes pull request code. |
+| 2. Unread merges on an unvalidated classifier | The author accepted the proposal: a written risk list, labels in shadow mode, and unread merges only after a numeric exit criterion per repository. |
+| 3. No first-version boundary | The author changed the bar: the first version augments GitHub with navigation and interactive AI. GitHub keeps commenting, approval and merge. |
+| 4. Private data crossing two boundaries | Still a design requirement: one outbound door for model calls, and a permission check on every read. Only the provider configured for a repository may receive its code. |
+| 5. Agent sessions with no workflow | The author accepted the proposal: the agent writes an intent record into the pull request, and the author's side pulls fixes on an explicit human action. |
+| 6. Review state in three places | Mostly avoided in the first version, which writes no human comments to GitHub. The ownership rules apply from the stage that adds commenting. |
 
 ### Blocking problems
 
@@ -339,21 +352,27 @@ The concept cites only external studies. It gives no `reviewer metrics` figures 
 
 **Proposed resolution.** Before building anything, confirm whether the model lane was ever enabled in the four repositories, run `reviewer metrics` there, and widen the existing lane's inputs with the pull request description and plan files. That tests the idea behind the whole concept, that context is what the AI reviewer lacks, at almost no cost.
 
-### Where the reviewers disagree
+### Where the reviewers disagreed, and how each point was settled
 
-**Replace GitHub's page, or augment it.** Six lenses took the hosted workspace as given and asked how to build it safely. The scope lens argues the first step should need no new infrastructure:
+**Replace GitHub's page, or augment it.** Six lenses took a full replacement as given and asked how to build it safely. The scope lens argued for adding to GitHub first: a "change brief" comment per pull request from the existing model lane, then a web view that does what GitHub cannot and links back to GitHub for commenting and approval.
 
-1. The existing model lane posts one "change brief" comment per pull request: why, how, which data models and workflows changed, and what else is affected, with a diagram. The prompt assembler, provider and comment upsert already exist.
-2. Only if still needed, a web view that does what GitHub cannot (navigate and ask) and links back to GitHub for commenting and approval.
-3. "Stop opening GitHub" becomes a later goal.
+*Outcome:* the author chose to augment. Navigation and interactive AI are required in the first version, and GitHub keeps its existing functions.
 
-The scope lens also proposes evaluating a browser-hosted VS Code with the GitHub Pull Requests extension before building a viewer. It notes that this claim is from memory and unverified, and that the option is weak on a phone.
+The scope lens also proposed evaluating a browser-hosted VS Code with the GitHub Pull Requests extension before building a viewer. It noted that the claim is from memory and unverified, and that the option is weak on a phone.
 
-**Where the index is built.** The architecture and maintenance lenses propose sandboxed workers operated by the service. The scope and inventive lenses prefer each repository's own CI job, which removes pull request code from the server entirely and depends on GitHub Actions.
+*Outcome:* not evaluated. The design document should weigh it under alternatives considered.
 
-**What happens when quota runs out.** The architecture and inventive lenses propose switching between vendors. The scope lens proposes one vendor for chat in the first version and an "AI unavailable" state, with no cross-vendor switching. Switching also sends a repository's code to a second vendor, which each repository must have agreed to beforehand.
+**Where the index is built.** The architecture and maintenance lenses proposed sandboxed workers operated by the service. The scope and inventive lenses preferred each repository's own CI job.
 
-**Phone scope.** The usability lens specifies full touch navigation. The scope lens calls heavy phone use a forecast and proposes desktop first, with the phone limited to reading the change brief and asking questions.
+*Outcome:* CI, under the author's delegated judgement. GitHub Actions is enabled on every repository. A CI job already installs dependencies with the repository's normal `npm` or `bun` command, so generated types are present, and the "install without scripts" question no longer applies to the server.
+
+**What happens when quota runs out.** The architecture and inventive lenses proposed switching between vendors. The scope lens proposed one vendor and an "AI unavailable" state.
+
+*Outcome:* the author chose one provider. Only the provider configured for a repository may be used. When its quota is exhausted, AI features show a message that names quota as the cause.
+
+**Phone scope.** The usability lens specified full touch navigation. The scope lens proposed desktop first, with the phone limited to reading and asking.
+
+*Outcome:* reading and asking is the floor for the first version, and the author prefers navigation as well. An index served from storage makes tap-to-navigate cheap for the server, so it is included if the touch design holds and does not hold up the release.
 
 ### Limits no design removes
 
@@ -393,7 +412,7 @@ Decisions that carry forward as requirements: ADR-0012 (no unscanned content rea
 
 Two further sources shaped the analysis. [Bacchelli & Bird (2013)](https://2013.icse-conferences.org/content/expectations-outcomes-and-challenges-modern-code-review.html) found that understanding the change is the central difficulty of review, and that reviews deliver more knowledge transfer than defect finds. [Duma & Wróblewski (2026)](https://arxiv.org/pdf/2605.02273) found that most AI-written pull requests in open source get little human scrutiny. The Rigby & Bird figure was read from a secondary copy, not the publisher's version.
 
-Per-reviewer time on a ten-person team needs a stated rule for who can see individual figures and how long they are kept.
+The author has decided that any user can see and export telemetry. That includes per-reviewer figures, for repositories the user can access. A retention period is still to be set.
 
 ### Ideal Final Result
 
@@ -401,91 +420,121 @@ A change arrives with its reason and plan written into the pull request by the a
 
 ## Goals vs. Non-Goals
 
-* **In-Scope Goals:**
-  * A web application that works with hotkeys on desktop and by touch on a phone.
+* **In-Scope Goals, first version:**
+  * A web application that augments GitHub's pull request page. Every view links to the matching place on GitHub for commenting, approval, CI status and merge.
   * A view per GitHub pull request or branch, with quick switching between open ones.
   * Diff display by default, with an option to show only the new code.
-  * Go-to-definition, find-references and code search for TypeScript. Go-to-definition shows search results or "not found" when it is not confident.
-  * AI assistance: select code and ask, questions about new or existing code, visualizations, research into alternatives.
-  * An AI review of the plan and of the code changes.
-  * Intent context from the pull request title and description, plans and ADRs in the repository, and exported agent sessions.
-  * Inline and whole-change comments and suggestions posted to the GitHub pull request, under a human's name or a bot name as the requester specified.
-  * A fix loop in which the authoring agent reads comments, makes the change and responds.
-  * Access that mirrors GitHub repository access.
-  * An AI reviewer that learns from human reviews, with learnings anyone on the project can see, correct and remove, and that coding agents can read.
-  * Risk labels, so humans fully understand changes to primary data models, workflows or user experience.
-  * Hosting on a Google Cloud project the requester owns and operates.
-  * Google and Anthropic models, configurable budget limits, and continued operation while token quota is temporarily exhausted.
+  * Go-to-definition, find-references and code search for TypeScript, answered from an index that each repository's CI job builds per commit. Every answer says whether the compiler resolved it or it is a text match.
+  * Interactive AI help: select code and ask, questions about new or existing code, visualizations, research into alternatives.
+  * A change brief and an AI review of the plan and the code, shown in the workspace.
+  * Intent context from the pull request title and description, plans and ADRs in the repository, and an intent record the coding agent writes into the pull request.
+  * Access that mirrors GitHub repository access, checked on every read.
+  * One outbound door for model calls, with a secrets scan that refuses to send when it cannot scan. One configured provider per repository, and a quota-specific message when its quota is exhausted.
+  * Desktop hotkeys. On a phone: reading the change brief and the diff, and asking questions. Tap-to-navigate is preferred and not required.
+  * Telemetry that any user can see and export, and service notices that reach every user.
+* **In-Scope Goals, later stages:**
+  * Learnings: candidates in an inbox, and accepted learnings as files in the repository, read from the base branch.
+  * A written risk list per repository and risk labels in shadow mode. Unread merges only after a numeric exit criterion.
+  * Comments and suggestions written in the workspace and posted to the GitHub pull request, under the human's name or a bot name.
+  * A "send to agent" action on a submitted batch of comments, picked up from the author's side.
+  * Planning, deployment and landed impact.
 * **Out-of-Scope Non-Goals:**
-  * Planning, deployment and landed impact in the first version. The requester places them soon after it.
-  * Navigation for languages other than TypeScript in the first version.
+  * Rebuilding GitHub's commenting, approval, thread resolution, CI status or merge in the first version.
+  * Installing or executing pull request code on the server.
+  * Storing or sharing whole agent transcripts in the first version.
+  * The server running coding agents or pushing commits.
+  * Switching to a second model provider when quota runs out.
+  * Navigation for languages other than TypeScript in the first version. They get text search.
   * OpenAI models, and session support for Codex and other agents, at the start.
-  * A shared service run for other teams at the start.
+  * A shared service run for other teams at the start. Records still carry organisation and repository identifiers, so that it is not a rewrite later.
   * Local-only storage as a requirement.
-  * Extending the existing CLI as it stands.
-
-The concept does not yet say which in-scope goals belong to the first version. That is the first open question below.
 
 ## Alternatives Weighed
 
 1. **Local-first storage as a requirement.** Rejected by author: a phone cannot hold checkouts or run language servers, so local storage is optional for capable devices.
 2. **Extending the existing CLI as it stands.** Rejected by author: the author wants a new system that reuses parts of the CLI where they help.
-
-No other option has been rejected. The reviewers' proposals in the Analysis, including "augment GitHub before replacing it" and "a written risk list before a trained classifier", are proposals awaiting the author's decision.
+3. **Replicating GitHub's pull request page as the bar for the first version.** Rejected by author: the first version should add what GitHub cannot do, so the new features can be tested and get feedback quickly. Users keep using GitHub for its existing functions.
+4. **A trained risk classifier that lets pull requests merge unread from the first version.** Rejected by author: the author accepted the finding that recall cannot be validated at this volume. A written list and shadow mode come first.
+5. **Exporting whole agent transcripts as the source of intent.** Rejected by author: the author accepted the proposal that the agent writes an intent record into the pull request. That record inherits GitHub's access rules and needs no separate link from session to pull request.
+6. **The server resuming the original agent session to make fixes.** Rejected by author: a hosted server cannot reach a session on a laptop. The author's side pulls the work on an explicit human action.
+7. **A learning store kept only in remote storage.** Rejected by author: the author accepted the two-stage design, because files in the repository are visible, correctable and readable by coding agents.
+8. **Switching to a second model provider when quota runs out.** Rejected by author: only the provider configured for a repository may receive its code.
+9. **A new repository for the new system.** Rejected by author: the new system lives in this repository.
+10. **Sandboxed workers on the server to install and index pull request code.** Set aside under the author's delegated judgement: building the index in each repository's own CI job keeps pull request code off the server entirely, and GitHub Actions is enabled on every repository.
+11. **A GitHub App for sign-in, per-user identity and webhooks.** Deferred by author: GitHub Apps are likely not allowed for these repositories. Alternatives are considered first, and an App is investigated only if they fail.
 
 ## Key Decisions & Staging for Next Steps
 
-### Decisions the requester has made
+### Decisions the author has made
 
-1. The product is a web application, with review and navigation hotkeys on desktop and touch navigation on a phone.
-2. GitHub is the primary source of changes. Each pull request or branch has its own view.
-3. The bar for the first version is to replicate the GitHub pull request experience.
-4. The diff is shown by default, with an option to show only the new code.
-5. Navigation is TypeScript first, with other languages later as plugins. Go-to-definition must never be wrong.
-6. Intent comes from the pull request title and description, plans and ADRs in the repository, and exported agent sessions.
-7. On GitHub, a human's name appears on comments the human wrote and on AI-written comments the human asked for. A bot name appears on the AI's own comments.
-8. After comments, the original agent session or a fork of it makes the fix and responds.
-9. Access mirrors GitHub repository access.
-10. Anyone working on a project can see, correct and remove learnings. Where they are stored is left to the design.
-11. High risk means a change to primary data models, workflows or user experience. A low-risk pull request may merge with no human having read it, on a classifier with high recall.
-12. The service runs first on a Google Cloud project the requester owns. It may later be a shared service.
-13. Models are Google and Anthropic first. Budget limits are configurable, and the tool must keep working when token quota runs out.
-14. Planning, deployment and landed impact follow the first version.
-15. The existing CLI can be removed or archived, with parts reused.
+**The first version**
 
-Decisions 3, 8 and 11 are the ones the reviewers challenge most directly (problems 3, 5 and 2).
+1. It augments GitHub's pull request page. Users keep using GitHub for the functions it already has.
+2. Code navigation and interactive AI features are required in it. The purpose is to test them and get feedback quickly.
+3. It is a web application with review and navigation hotkeys on desktop. On a phone, reading and asking is the floor, and navigation is preferred.
+4. GitHub is the primary source of changes. Each pull request or branch has its own view. The diff is shown by default, with an option to show only the new code.
+5. Navigation is TypeScript first, with other languages later as plugins. Go-to-definition must never be wrong: when it is not confident it shows search results or says it found no definition.
+6. The repositories install with their standard `npm` or `bun` install commands.
 
-### Open questions before a design document is drafted
+**Accepted from the review**
 
-1. **First version.** Which reviewer tasks are in it, and which link out to GitHub? Is "stop opening GitHub" the bar for the first version, or a later goal reached after an augment-first step?
-2. **Where pull request code runs.** Sandboxed workers run by the service, or each repository's own CI job? Is GitHub Actions enabled on all four repositories?
-3. **Install without scripts.** Does each repository install and type-check with install scripts disabled, and which depend on generated types? This can be tested now.
-4. **Risk.** Does the author accept a written list plus shadow mode as the first version, with unread merges only after a numeric exit criterion? What does a low-risk label change on GitHub, and who is accountable for a pull request nobody read?
-5. **Sessions.** Does an intent record written into the pull request by the agent replace whole-transcript export for the first version? What is the default visibility of anything exported, and who can remove it?
-6. **Fix loop.** Is an author-side pull on an explicit human action acceptable for the first version, with the server neither running agents nor pushing?
-7. **GitHub identity.** Can a GitHub App with a public webhook endpoint be installed on these repositories, and who approves that?
-8. **Learnings.** Does the author accept the two-stage design, an inbox plus files in the repository read from the base branch? What happens to existing rule packs and guidance documents?
-9. **Quota.** Switch vendors, or show "AI unavailable"? Has each repository agreed to its code going to both vendors?
-10. **Cutover.** Which repositories have the CLI installed, by which trigger, and with the model lane on or off? Does the new system live in this repository or a new one?
-11. **Measurement.** Will a baseline be captured from GitHub history and `reviewer metrics` before anything changes? Who can see per-reviewer time?
-12. **Operations.** Who receives alerts, and what are the storage limits and eviction rule?
-13. **Phone.** Full touch navigation in the first version, or reading and asking only?
+7. Risk: a written list per repository of what always needs a human, with labels in shadow mode. A pull request may merge unread only after a numeric exit criterion is met for its repository. High risk means a change to primary data models, workflows or user experience.
+8. Intent: the coding agent writes an intent record into the pull request. Whole transcripts are not exported in the first version.
+9. Fix loop: the author's side pulls the work on an explicit human action. The server neither runs agents nor pushes.
+10. Learnings: candidates go to an inbox, and accepted learnings are files in the repository read from the base branch. Anyone working on the project can see, correct and remove them.
+
+**Constraints**
+
+11. Access mirrors GitHub repository access. Not every engineer can see every repository.
+12. Google and Anthropic models are supported at first. Only the provider configured for a repository may be used. Budget limits are configurable. When quota is exhausted, AI features are unavailable and the message says quota is the cause.
+13. GitHub Apps are likely not allowed. Alternatives are considered first.
+14. The service runs on a Google Cloud project the author owns and operates. It may later be a shared service.
+15. The new system lives in this repository. Some of the reviewed repositories already have the existing CLI installed.
+16. A baseline may be captured from GitHub history. Any user can see and generate telemetry.
+17. Every user receives notices about the service.
+18. When the workspace later posts comments: a human's name appears on comments the human wrote and on AI-written comments the human asked for, and a bot name appears on the AI's own comments.
+19. Planning, deployment and landed impact follow the first version.
+
+### Choices made under the author's delegated judgement
+
+The author said "use your judgement" on these. Each can be overruled in the design document.
+
+1. **The index is built in CI.** Each repository's GitHub Actions job builds a navigation index for every pull request commit and every default-branch commit, and hands it to the service. A branch with no pull request gets the diff and text search.
+2. **The CLI stays as the CI-side component.** It keeps running the deterministic checks, and gains the index build and the change brief. Repositories that already have it installed keep working, which avoids the cutover failures in problem 14. The AI's own comments keep being posted by that job under the Actions bot identity, which needs no GitHub App.
+3. **Existing rules and guidance are kept.** Pattern rules under `.review/rules/` stay as the deterministic form of a learning. Existing guidance documents become the first accepted learnings. New accepted learnings are files beside them.
+4. **Identity without a GitHub App.** The options are tried in this order, against what the organisation permits:
+   1. Each user supplies a fine-grained personal access token limited to the repositories they can read. The service checks access with it and stores it encrypted.
+   2. Sign-in through an OAuth App.
+   3. A GitHub App, only if both fail.
+5. **Events without App webhooks.** A small workflow in each repository tells the service when a pull request changes, and the service also reconciles by polling on a timer.
+6. **Notices.** A status banner and a status page inside the application for every user, plus email for outages. Quota exhaustion is shown in the place where the AI feature was used.
+7. **Telemetry visibility.** All users see the same telemetry for the repositories they can access, including per-reviewer figures. Known risk: review time that colleagues can see changes how people behave. Meta used it as an aggregate guardrail for that reason.
+
+### To verify in the design document
+
+1. Which identity option the organisation permits, and whether a fine-grained token can be scoped tightly enough.
+2. How the CI job hands the index to the service, and how the service authenticates that hand-off without a secret stored in the repository. A workflow's own short-lived identity token is the candidate.
+3. The index format and tool for TypeScript, including repositories managed with `bun`.
+4. An inventory of which repositories have the CLI installed, by which trigger, and whether the model lane is on.
+5. The numeric exit criterion for shadow mode, per repository.
+6. Retention periods for telemetry and for stored AI conversations.
+7. The browser-hosted VS Code alternative, which no one has evaluated.
 
 ### Staging
 
-Three checks cost almost nothing and can run before any design work:
+Three checks cost almost nothing and can run before design work finishes:
 
 1. Capture the baseline: time to first review and to merge, comments per pull request, share merged with no human comment, and `reviewer metrics` per repository.
-2. Run "install without scripts, then type-check" on each repository.
+2. Build an index for one repository in its CI job, and measure build time and index size.
 3. Turn on the existing model lane with the pull request description and plan files as input, and add the two example learnings to guidance. Compare the findings with today's.
 
-The migration lens then proposes this rollout order, each step proven on one repository first:
+Then, each stage proven on one repository first:
 
-1. A read-only mirror of GitHub pull requests with navigation. Nothing is written to GitHub.
-2. Human comments and approvals posted to GitHub.
-3. AI review visible only in the workspace while the old CLI still runs. Then posted to GitHub, with the old workflow removed from that repository in the same step.
-4. Intent records and learning.
-5. The risk list and classifier in shadow mode, then active per repository.
-6. Retire the CLI's releases and npm package last.
+1. **First version.** A read-only workspace: pull request and branch views, diff or new code, navigation and search from the CI-built index, interactive AI help, the change brief, intent context and the AI review. Everything else links to GitHub. The agent skill is updated to write the intent record and to address review comments when the author asks.
+2. **Learnings and risk.** The learning inbox and repository files. The written risk list, with labels in shadow mode.
+3. **Commenting.** Comments written in the workspace and posted to GitHub, and the "send to agent" action. The state-ownership rules in problem 6 apply from here.
+4. **Unread merges and the wider lifecycle.** Unread merges per repository once its exit criterion is met. Planning, deployment and landed impact.
 
-Once the author has answered the open questions, this brief is ready for `/egm-draft`.
+The existing CLI workflow in each repository is updated in place at stage 1. It is not removed.
+
+This brief is ready for `/egm-draft`.

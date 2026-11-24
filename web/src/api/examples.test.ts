@@ -44,7 +44,7 @@ function exactly(recorded: unknown, known: string[]) {
 describe('the recorded responses match the types', () => {
   it('me', () => {
     const typed: Me = me;
-    exactly(typed, ['login', 'repositories', 'repositories[].owner', 'repositories[].name']);
+    exactly(typed, ['login', 'repositories', 'repositories[].owner', 'repositories[].name', 'repositories[].assistant']);
   });
 
   it('health', () => {

@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiFailure, api, isNotFound } from '../api/client';
 import type { File, LookupKind, PullView } from '../api/types';
 import { ActionSheet, type SheetAction } from '../components/ActionSheet';
-import { CodePane, type LineRef, type PaneHandle } from '../components/CodePane';
+import { AssistantPanel } from '../components/AssistantPanel';
+import { CodePane, type LineRef, type PaneHandle, type SelectedLines } from '../components/CodePane';
 import { IndexStatus } from '../components/IndexStatus';
 import { Link } from '../components/Link';
 import { type LookupResult, LookupResults, ReportWrong } from '../components/References';
@@ -14,6 +15,7 @@ import { ShortcutHelp } from '../components/ShortcutHelp';
 import { blobUrl, openOnGitHub } from '../github/links';
 import type { Action } from '../keys/keymap';
 import { useHotkeys } from '../keys/useHotkeys';
+import { type Quoted, useConversation } from '../nav/conversation';
 import {
   type Context,
   type Origin,
@@ -39,9 +41,11 @@ export interface CodeViewProps {
   line?: number | undefined;
   /** The pull request this file was opened from, if any. */
   pull?: number | undefined;
+  /** Whether this repository has an assistant configured. */
+  assistant?: boolean;
 }
 
-const available: ReadonlySet<Action> = new Set<Action>(['definition', 'references', 'search', 'switchPull', 'back', 'help']);
+const always: readonly Action[] = ['definition', 'references', 'search', 'switchPull', 'back', 'help'];
 
 const whyNoText: Record<Exclude<File['kind'], 'text'>, string> = {
   binary: 'This file is not text, so it is not shown.',
@@ -50,10 +54,13 @@ const whyNoText: Record<Exclude<File['kind'], 'text'>, string> = {
 };
 
 /** One file at one commit: where a search result or a "go to" lands, often outside the pull request's changes. */
-export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) {
+export function CodeView({ owner, repo, sha, path, line, pull, assistant = false }: CodeViewProps) {
+  const available: ReadonlySet<Action> = new Set<Action>(assistant ? [...always, 'ask'] : always);
+  const conversation = useConversation(owner, repo, pull);
+  const [quoted, setQuoted] = useState<Quoted | null>(null);
   const [state, setState] = useState<State>({ phase: 'loading' });
   const [from, setFrom] = useState<PullView | null>(null);
-  const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup'>('none');
+  const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup' | 'assistant'>('none');
   const [sheet, setSheet] = useState<LineRef | null>(null);
   const [shown, setShown] = useState<{ origin: Origin; lookup: LookupResult } | null>(null);
   const [notice, setNotice] = useState('');
@@ -134,7 +141,19 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
     [owner, repo, sha, pull, path],
   );
 
+  const askAbout = (chosen: SelectedLines | null) => {
+    if (chosen) setQuoted({ sha, path, startLine: chosen.startLine, endLine: chosen.endLine, text: chosen.text });
+    setPanel('assistant');
+  };
+
   useHotkeys({
+    ...(assistant
+      ? {
+          ask: () => {
+            askAbout(pane.current?.selection() ?? null);
+          },
+        }
+      : {}),
     definition: () => {
       const at = pane.current?.cursor();
       if (at) look('definition', at);
@@ -189,6 +208,18 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
         },
       );
     }
+    if (assistant) {
+      const text = pane.current?.lines('new', at.line, at.line + 1);
+      if (text !== null && text !== undefined) {
+        list.push({
+          label: 'Ask',
+          hint: 'a',
+          run: () => {
+            askAbout({ side: 'new', startLine: at.line, endLine: at.line + 1, text });
+          },
+        });
+      }
+    }
     if (from) {
       list.push({
         label: 'Open on GitHub',
@@ -201,7 +232,7 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
   };
 
   return (
-    <div className={`code-view${panel === 'search' || panel === 'lookup' ? ' with-panel' : ''}`}>
+    <div className={`code-view${panel === 'search' || panel === 'lookup' || panel === 'assistant' ? ' with-panel' : ''}`}>
       <main>
         <header className="code-header">
           {how ? (
@@ -253,6 +284,16 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
             >
               Search code
             </button>
+            {assistant ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPanel('assistant');
+                }}
+              >
+                Ask
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -274,7 +315,7 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
             text={state.file.text}
             line={line === undefined ? undefined : line - 1}
             onLineAction={(at) => {
-              if (from) setSheet(at);
+              if (from || assistant) setSheet(at);
             }}
             tapMenu={narrow}
             onSymbolAction={(at, intent) => {
@@ -292,6 +333,25 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
             repo={repo}
             sha={sha}
             pull={pull}
+            onClose={() => {
+              setPanel('none');
+            }}
+          />
+        </aside>
+      ) : null}
+      {panel === 'assistant' ? (
+        <aside className="side-panel">
+          <AssistantPanel
+            owner={owner}
+            repo={repo}
+            sha={sha}
+            pull={pull}
+            github={from?.webUrl}
+            conversation={conversation}
+            selection={quoted}
+            onClearSelection={() => {
+              setQuoted(null);
+            }}
             onClose={() => {
               setPanel('none');
             }}

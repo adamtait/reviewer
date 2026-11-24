@@ -18,9 +18,11 @@ import (
 	"github.com/adamtait/reviewer/internal/ghclient"
 	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api"
+	"github.com/adamtait/reviewer/internal/workspace/gateway"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/navigation"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
+	"github.com/adamtait/reviewer/internal/workspace/scan"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/web"
 	"github.com/adamtait/reviewer/internal/workspace/wsconfig"
@@ -33,6 +35,10 @@ const shutdownGrace = 8 * time.Second
 // onListen is called with the address once the server is accepting
 // connections. Tests set it to learn which port ":0" became.
 var onListen func(addr string)
+
+// scannerBinary is the secrets scanner to run. Empty means the one on PATH.
+// Tests point it at a stand-in.
+var scannerBinary string
 
 // serve loads the configuration and serves until ctx is cancelled.
 func serve(ctx context.Context, configPath string, logTo io.Writer, getenv func(string) string) error {
@@ -49,8 +55,7 @@ func serve(ctx context.Context, configPath string, logTo io.Writer, getenv func(
 	}
 
 	// The one place the secrets leave their type. The cookie key goes to
-	// sign-in. The provider keys will go to the model gateway when it arrives;
-	// until then their only use is to be kept out of the log.
+	// sign-in and the provider keys to the model gateway, and nowhere else.
 	keys := secrets.Reveal()
 	known := []string{base64.StdEncoding.EncodeToString(keys.Cookie)}
 	for _, key := range keys.Provider {
@@ -58,7 +63,7 @@ func serve(ctx context.Context, configPath string, logTo io.Writer, getenv func(
 	}
 	log := obs.New(logTo, obs.NewRedactor(known...))
 
-	handler, err := newHandler(ctx, cfg, keys.Cookie, log)
+	handler, err := newHandler(ctx, cfg, keys, log)
 	if err != nil {
 		return err
 	}
@@ -109,7 +114,8 @@ func serve(ctx context.Context, configPath string, logTo io.Writer, getenv func(
 func userAgent() string { return "review-workspace/" + version }
 
 // newHandler builds the service from its configuration.
-func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log *obs.Logger) (http.Handler, error) {
+func newHandler(ctx context.Context, cfg wsconfig.Config, keys wsconfig.Keys, log *obs.Logger) (http.Handler, error) {
+	cookieKey := keys.Cookie
 	checker := access.New(cfg.Repositories, time.Duration(cfg.AccessCacheSeconds)*time.Second,
 		func(owner, name string) {
 			// A configuration mistake, found only once a user's token can be
@@ -152,9 +158,15 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 			slog.Int64("cache_bytes", held.Bytes), slog.Int("cache_entries", held.Entries))...)
 	}
 
+	answers, err := newGateway(cfg, keys, log)
+	if err != nil {
+		return nil, err
+	}
+
 	return api.New(api.Deps{
 		Log:     log,
 		Version: version,
+		Gateway: answers,
 		Identity: &identity.TokenMethod{
 			NewClient: func(token string) (*ghclient.REST, error) {
 				return ghclient.New(cfg.GitHub.APIBaseURL, token, userAgent())
@@ -173,4 +185,43 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 		WebBaseURL: cfg.GitHub.WebBaseURL,
 		Web:        web.Handler(),
 	}).Handler(), nil
+}
+
+// newGateway builds the one way out to a model provider, for the repositories
+// that have one configured. It returns nil when none has.
+//
+// This is the only place the provider keys go once they have left their type.
+func newGateway(cfg wsconfig.Config, keys wsconfig.Keys, log *obs.Logger) (*gateway.Gateway, error) {
+	var repos []gateway.Repository
+	for _, r := range cfg.Repositories {
+		if !r.HasProvider() {
+			continue
+		}
+		repos = append(repos, gateway.Repository{
+			Owner: r.Owner, Name: r.Name, Provider: r.Provider, Model: r.Model, BaseURL: r.BaseURL, Key: keys.Provider[r.Slug()],
+		})
+	}
+	if len(repos) == 0 {
+		return nil, nil
+	}
+	// Everything sent to a provider is scanned first, and if the scanner
+	// cannot run nothing is sent. A service with an assistant and no scanner
+	// could answer no question, so it says so now and not at the first one.
+	scanner, err := scan.New(scannerBinary)
+	if err != nil {
+		return nil, fmt.Errorf("a repository has an assistant configured, and the secrets scanner that guards what is sent to its "+
+			"provider cannot be run: %w. Install gitleaks, or remove the repository's model settings", err)
+	}
+	targets, err := gateway.Connect(repos)
+	if err != nil {
+		return nil, err
+	}
+	limits := cfg.Limits
+	return gateway.New(targets, scanner, gateway.Limits{
+		ModelCalls:     limits.ModelCalls,
+		QuestionTokens: limits.QuestionTokens,
+		AnswerTokens:   limits.AnswerTokens,
+		CallTimeout:    time.Duration(limits.CallSeconds) * time.Second,
+		MaxWait:        time.Duration(limits.WaitSeconds) * time.Second,
+	}, log), nil
 }

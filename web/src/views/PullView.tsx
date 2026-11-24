@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiFailure, api, isNotFound } from '../api/client';
 import type { ChangedFile, LookupKind, PullView as Pull } from '../api/types';
 import { ActionSheet, type SheetAction } from '../components/ActionSheet';
-import type { LineRef, PaneHandle } from '../components/CodePane';
+import { AssistantPanel } from '../components/AssistantPanel';
+import type { LineRef, PaneHandle, SelectedLines } from '../components/CodePane';
 import { Description } from '../components/Description';
 import { FileDiff, sources } from '../components/DiffView';
 import { IndexStatus } from '../components/IndexStatus';
@@ -16,6 +17,7 @@ import { ShortcutHelp } from '../components/ShortcutHelp';
 import { commentUrl, openOnGitHub } from '../github/links';
 import type { Action } from '../keys/keymap';
 import { useHotkeys } from '../keys/useHotkeys';
+import { type Quoted, useConversation } from '../nav/conversation';
 import {
   type Context,
   type Origin,
@@ -38,12 +40,14 @@ export interface PullViewProps {
   /** From the address: a file to scroll to, and a line in it, counted from 1. */
   file?: string | undefined;
   line?: number | undefined;
+  /** Whether this repository has an assistant configured. */
+  assistant?: boolean;
 }
 
-const available: ReadonlySet<Action> = new Set<Action>([
+const always: readonly Action[] = [
   'nextChange', 'prevChange', 'nextFile', 'prevFile', 'definition', 'references', 'search', 'toggleDiff', 'comment',
   'switchPull', 'back', 'help',
-]);
+];
 
 /** A lookup whose answer is being shown and not followed. */
 interface Shown {
@@ -52,10 +56,13 @@ interface Shown {
   lookup: LookupResult;
 }
 
-export function PullView({ owner, repo, number, file, line }: PullViewProps) {
+export function PullView({ owner, repo, number, file, line, assistant = false }: PullViewProps) {
   const [state, setState] = useState<State>({ phase: 'loading' });
   const [mode, setMode] = useState<'diff' | 'new'>('diff');
-  const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup'>('none');
+  const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup' | 'assistant'>('none');
+  const conversation = useConversation(owner, repo, number);
+  const [quoted, setQuoted] = useState<Quoted | null>(null);
+  const available = useMemo(() => new Set<Action>(assistant ? [...always, 'ask'] : always), [assistant]);
   const [sheet, setSheet] = useState<{ file: ChangedFile; at: LineRef } | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [notice, setNotice] = useState('');
@@ -182,6 +189,26 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
     [pull, owner, repo, number],
   );
 
+  // Asks about lines of a changed file. Lines the pull request removes are in
+  // the old version of the file, so a question about them is asked at the
+  // merge base; any other at the head commit.
+  const askAbout = useCallback(
+    (target: ChangedFile | null, chosen: SelectedLines | null) => {
+      if (!pull) return;
+      if (target && chosen) {
+        setQuoted({
+          sha: lookupCommit(pull, chosen.side),
+          path: chosen.side === 'old' ? target.previousPath || target.path : target.path,
+          startLine: chosen.startLine,
+          endLine: chosen.endLine,
+          text: chosen.text,
+        });
+      }
+      setPanel('assistant');
+    },
+    [pull],
+  );
+
   const lookAtCursor = useCallback(
     (kind: LookupKind) => {
       const target = files[active];
@@ -194,6 +221,14 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
   useHotkeys(
     pull
       ? {
+          ...(assistant
+            ? {
+                ask: () => {
+                  const target = files[active];
+                  askAbout(target ?? null, target ? (panes.current.get(target.path)?.selection() ?? null) : null);
+                },
+              }
+            : {}),
           definition: () => {
             lookAtCursor('definition');
           },
@@ -268,6 +303,18 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
         },
       );
     }
+    if (assistant) {
+      const text = panes.current.get(target.path)?.lines(at.side, at.line, at.line + 1);
+      if (text !== null && text !== undefined) {
+        actions.push({
+          label: 'Ask',
+          hint: 'a',
+          run: () => {
+            askAbout(target, { side: at.side, startLine: at.line, endLine: at.line + 1, text });
+          },
+        });
+      }
+    }
     actions.push({
       label: 'Comment on GitHub',
       hint: 'c',
@@ -287,7 +334,7 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
   };
 
   return (
-    <div className={`pull-view${panel === 'search' || panel === 'lookup' ? ' with-panel' : ''}`}>
+    <div className={`pull-view${panel === 'search' || panel === 'lookup' || panel === 'assistant' ? ' with-panel' : ''}`}>
       <main>
         <header className="pull-header">
           <h1>
@@ -319,6 +366,16 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
             >
               Search code
             </button>
+            {assistant ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPanel('assistant');
+                }}
+              >
+                Ask
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -337,7 +394,7 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
           </p>
         ) : null}
 
-        <Description body={current.body} />
+        <Description body={current.body} github={current.webUrl} />
 
         <nav className="file-list" aria-label="Changed files">
           <h2>
@@ -430,6 +487,25 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
             repo={repo}
             sha={current.headSha}
             pull={number}
+            onClose={() => {
+              setPanel('none');
+            }}
+          />
+        </aside>
+      ) : null}
+      {panel === 'assistant' ? (
+        <aside className="side-panel">
+          <AssistantPanel
+            owner={owner}
+            repo={repo}
+            sha={current.headSha}
+            pull={number}
+            github={current.webUrl}
+            conversation={conversation}
+            selection={quoted}
+            onClearSelection={() => {
+              setQuoted(null);
+            }}
             onClose={() => {
               setPanel('none');
             }}

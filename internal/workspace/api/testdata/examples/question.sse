@@ -1,0 +1,12 @@
+event: excerpt
+data: {"sha":"5555555555555555555555555555555555555555","path":"src/cart.ts","startLine":12,"endLine":17}
+
+event: excerpt
+data: {"sha":"5555555555555555555555555555555555555555","path":"src/money.ts","startLine":10,"endLine":15}
+
+event: delta
+data: {"text":"`add` returns a new `Money` with the two amounts summed (src/money.ts, line 13)."}
+
+event: done
+data: {"model":"the-configured-model","inputTokens":2300,"outputTokens":30,"reasoningTokens":70,"modelCalls":2}
+

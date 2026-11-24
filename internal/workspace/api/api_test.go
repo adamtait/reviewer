@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"net/http"
@@ -15,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamtait/reviewer/internal/model"
 	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
+	"github.com/adamtait/reviewer/internal/workspace/gateway"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/navigation"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
@@ -41,7 +44,27 @@ type world struct {
 	cache  *source.Cache
 	log    *bytes.Buffer
 	http   http.Handler
+	// model is the provider behind example/alpha's assistant, and scanner the
+	// secrets scan in front of it. example/beta has no assistant.
+	model   *modelSwitch
+	scanner *gateway.FakeScanner
 }
+
+// modelSwitch lets a test say, after the server is built, what the model will do.
+type modelSwitch struct{ current *gateway.Scripted }
+
+func (m *modelSwitch) Converse(ctx context.Context, req model.ConvRequest, onEvent func(model.Event)) error {
+	return m.current.Converse(ctx, req, onEvent)
+}
+
+// script sets what the model does for the calls that follow.
+func (w *world) script(steps ...gateway.Step) *gateway.Scripted {
+	w.model.current = gateway.NewScripted(steps...)
+	return w.model.current
+}
+
+// credentialMarker stands for a credential: the test scanner flags text holding it.
+const credentialMarker = "CREDENTIAL-HERE"
 
 // roomy is limits no test fixture reaches.
 var roomy = source.Limits{ArchiveBytes: 1 << 20, FileBytes: 1 << 16}
@@ -72,8 +95,14 @@ func newWorldWith(t *testing.T, limits source.Limits, fetchTimeout time.Duration
 	var log bytes.Buffer
 	cache := source.NewCache(1<<22, fetchTimeout)
 	store := source.NewStore(cache, limits)
+	logger := obs.New(&log, obs.NewRedactor())
+	answers := &modelSwitch{current: gateway.NewScripted()}
+	scanner := &gateway.FakeScanner{Marker: credentialMarker}
 	server := New(Deps{
-		Log:     obs.New(&log, obs.NewRedactor()),
+		Log: logger,
+		Gateway: gateway.New(map[string]gateway.Target{
+			"example/alpha": {Provider: "gemini", Model: "the-configured-model", Converser: answers},
+		}, scanner, gateway.Limits{ModelCalls: 6, QuestionTokens: 50000, AnswerTokens: 4000, CallTimeout: time.Minute, MaxWait: time.Second}, logger),
 		Version: "test-version",
 		Identity: &identity.TokenMethod{
 			NewClient: gh.Client, Access: checker, SessionLength: time.Hour,
@@ -86,7 +115,7 @@ func newWorldWith(t *testing.T, limits source.Limits, fetchTimeout time.Duration
 		}, cache, store),
 		WebBaseURL: "https://github.example",
 	})
-	return &world{t: t, gh: gh, server: server, cache: cache, log: &log}
+	return &world{t: t, gh: gh, server: server, cache: cache, log: &log, model: answers, scanner: scanner}
 }
 
 // do sends one request. A non-GET carries the workspace's header unless bare.
@@ -154,6 +183,26 @@ func example(t *testing.T, name string, rec *httptest.ResponseRecorder) {
 	}
 	got := strings.TrimSpace(pretty.String()) + "\n"
 	path := filepath.Join("testdata", "examples", name+".json")
+	if *update {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("no recorded example for %s; run the tests with -update to record it: %v", name, err)
+	}
+	if got != string(want) {
+		t.Errorf("%s does not match its recorded example.\n--- got ---\n%s--- want ---\n%s", name, got, want)
+	}
+}
+
+// exampleText compares a response body that is not JSON, such as an event
+// stream, with its recorded example, or rewrites the example under -update.
+func exampleText(t *testing.T, name string, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", "examples", name)
 	if *update {
 		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatal(err)
@@ -472,6 +521,7 @@ func TestTheRouteTableMarksWhatNeedsASession(t *testing.T) {
 		"health": false, "sign_in": false, "sign_out": false, "me": true,
 		"pull_list": true, "pull_view": true, "tree": true, "file": true, "search": true,
 		"index_state": true, "definition": true, "references": true, "navigation_report": true,
+		"question": true,
 	}
 	for _, route := range w.server.Routes() {
 		needs, known := want[route.Name]

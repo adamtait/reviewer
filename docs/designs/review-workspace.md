@@ -731,6 +731,7 @@ indexWorkflowFile: "review-index.yml"
 indexArtifactName: "review-index"
 sessionDays: 0
 accessCacheSeconds: 0
+allowedLogins: []      # the only GitHub accounts that may sign in; required with allowPublic
 limits:
   archiveBytes: 0      # kept text of one commit
   fileBytes: 0         # one file's text
@@ -749,6 +750,7 @@ repositories:
     model: ""
     baseUrl: ""
     apiKeyEnv: ""      # the NAME of the environment variable holding the key
+    allowPublic: false # serve this repository although it is public (decision 14)
 ```
 
 Environment variables: `WORKSPACE_COOKIE_KEY`, 32 random bytes in base64, and one variable per repository's `apiKeyEnv`.
@@ -796,11 +798,13 @@ The first adapter calls Google's `interactions` method with `store` false and `s
 #### Gateway interface
 
 ```text
-Segment = { path, startLine, endLine, text }      # path is empty for text that quotes no file
-Call    = { owner, repo, sha, userLogin, system, history: [{role, text}], question, selection: Segment | none }
-Tool    = { spec: ToolSpec, run(argumentsJSON) -> [Segment] }
-Result  = { outcome, message, withheld: [{ what, reason }], inputTokens, outputTokens, reasoningTokens,
-            modelCalls, retryAfterSeconds, resetAt }
+Segment = { path, name, startLine, endLine, text }  # path is empty for text that quotes no file,
+                                                    # and name then says what the text is
+Call    = { owner, repo, sha, userLogin, system, history: [{role, text}], question,
+            selection: Segment | none, file(path) -> text }   # file: the whole file, for the scan
+Tool    = { spec: ToolSpec, run(argumentsJSON) -> [Segment] or an error told to the model }
+Result  = { outcome, message, withheld: [{ what, reason }], model, inputTokens, outputTokens,
+            reasoningTokens, modelCalls, retryAfterSeconds, resetAt }
 
 Gateway.Answer(ctx, Call, tools: [Tool], onEvent) -> Result
 ```
@@ -849,7 +853,7 @@ In every body: `line` and `startLine` count from 0, `endLine` is exclusive, and 
 
 ```text
 Error         = { error: { code, message } }
-Me            = { login, repositories: [{ owner, name }] }
+Me            = { login, repositories: [{ owner, name, assistant }] }   # assistant: a provider is configured
 PullSummary   = { number, title, author, draft, headSha, updatedAt }
 PullList      = { pulls: [PullSummary], truncated }  # at most 300, most recently updated first
 ChangedFile   = { path, previousPath, status }       # status: added | modified | deleted | renamed
@@ -873,7 +877,7 @@ Ask           = { text, pullNumber, history: [{ role, text }],
 
 | Method and path | Request | Response |
 | --- | --- | --- |
-| `POST /auth/token` | `{ token }` | 204 and the cookie; or 401 with code `not_fine_grained`, `rejected` or `no_repository` |
+| `POST /auth/token` | `{ token }` | 204 and the cookie; or 401 with code `not_fine_grained`, `rejected`, `no_repository` or `not_listed` |
 | `POST /auth/signout` | | 204, clearing the cookie |
 | `GET /api/v1/me` | | `Me`, listing only repositories that pass the access check for this user |
 | `GET /api/v1/repos/{owner}/{repo}/pulls` | | `PullList` |
@@ -885,7 +889,7 @@ Ask           = { text, pullNumber, history: [{ role, text }],
 | `GET /api/v1/repos/{owner}/{repo}/commits/{sha}/definition?path=&line=&character=` | | `Definition` |
 | `GET /api/v1/repos/{owner}/{repo}/commits/{sha}/references?path=&line=&character=` | | `References` |
 | `POST /api/v1/repos/{owner}/{repo}/navigation/reports` | `Report` | 204. Written as a log line |
-| `POST /api/v1/repos/{owner}/{repo}/commits/{sha}/questions` | `Ask` | An event stream, described below |
+| `POST /api/v1/repos/{owner}/{repo}/commits/{sha}/questions` | `Ask` | An event stream, described below; or 404 with code `no_assistant` when the repository has no provider |
 | `GET /healthz` | | 200 |
 
 Rules that apply to every route:
@@ -1133,6 +1137,18 @@ Measured through the service's own code against this repository on 2026-11-24: 3
 | `docs/providers.md`, `docs/workspace.md`, `SECURITY.md` | Modify | Which access path the service supports; keys, limits and the provider-side spending limit; what is sent to a provider, what the scan catches and what it does not. |
 | `docs/adr/0031-one-gateway-scanning-at-send.md`, `0033-conversation-interface-beside-provider.md` | Create | |
 
+**As built.** PR-53 follows the table above with these differences:
+
+*   **Three streamed responses are recorded, not two:** a tool call, a second tool call that carries the first call's reasoning data back, and an answer. Each is kept with the request that produced it, and the adapter's tests check that the adapter builds that request byte for byte. They were recorded with `trials/gemini_live.py` in a recording mode added for the purpose. The same page holds a response whose reasoning data was left out, and the heavy-demand error in both shapes.
+*   **`End` carries the provider's own word for how a call ended,** beside the reason, for the log.
+*   **A ninth outcome, `abandoned`, exists inside the service.** It is written to the log when the reader goes away before the answer ends, and is never sent.
+*   **A model call may ask for at most 16 tools.** The model is told that the rest were not run.
+*   **The scan remembers results by the content's hash,** for up to a fixed number of items, and scans identical content once per call. Twenty lines found by a search in one file do not scan that file twenty times.
+*   **A selection is scanned twice over:** the lines quoted, and the whole file they come from. A tool's segments are scanned the same way, which is why `Call` carries a function that returns a whole file.
+*   **The image check lets five more names through,** only while they are empty: the files Docker itself puts in every container it creates. The check lists a created container, so they appear in it. `.dockerignore` now admits `.github/scripts`, which the scanner stage needs.
+*   **`docs/providers.md`, `docs/workspace.md` and `SECURITY.md` were written with PR-54,** when there was an assistant to describe.
+*   **One live question was run through the gateway, the real scanner and the real provider** before PR-54: six model calls, 8,191 input tokens, about 40 seconds, of which the first call took 28. A file holding the fixture credential was withheld and the answer said so. The slow first call was not explained and was not seen again in the recorded calls.
+
 #### 8. PR-54: assistant
 
 | File | Action | What changes and why |
@@ -1144,6 +1160,18 @@ Measured through the service's own code against this repository on 2026-11-24: 3
 | `web/src/components/Description.tsx` | Modify | Draw the description with the same Markdown rules. |
 | `web/src/views/PullView.tsx`, `web/src/components/ActionSheet.tsx`, `web/src/keys/keymap.ts`, `web/src/api/client.ts`, `web/e2e/journeys.spec.ts`, `fake-api.ts`, `web/package.json`, `package-lock.json`, `THIRD_PARTY_LICENSES.md` | Modify | "Ask" from a selection and a line; journeys 5, 6 and 7, and asking in journey 8; add `markdown-it` and its inventory rows. |
 | `docs/workspace.md`, `README.md`, `CHANGELOG.md` | Modify | The saved log queries for the assistant week; a short description of the workspace and a link to its guide. |
+
+**As built.** PR-54 follows the table above with these differences:
+
+*   **The service will not start with an assistant configured and no scanner it can run.** Otherwise the fault would show up as `scan_failed` on every question. A repository without the four model settings needs no scanner.
+*   **`Me` says, for each repository, whether it has an assistant,** and the question route answers 404 `no_assistant` for one that has not. The page offers "Ask" only where there is one.
+*   **A link in a description or an answer is shown with its address beside its text,** and can be followed only when it leads to the workspace itself or to the configured GitHub host. The design said "links as text". A description's links to its own issues and pull requests are the ones a reviewer follows, and showing the address removes the risk the rule was for: text that hides where a link leads.
+*   **More files.** `web/src/nav/conversation.ts` holds the conversation and builds the history sent with a follow-up; `internal/workspace/api/assistant_test.go` records two example streams, an answer and a stopped question, which the page's tests and the fake API read. `CodePane.tsx`, `CodeView.tsx` and `App.tsx` changed too: asking works from the code view as well as from the diff.
+*   **`ActionSheet.tsx`, `keymap.ts` and `client.ts` did not change.** The sheet takes its actions from the view, the `a` key was already in the table, and the stream has its own file.
+*   **What is asked about.** With lines selected, those lines. With none, the line the cursor is on. A selection is at most 400 lines, a question at most 4,000 characters, and a conversation's history at most 40 messages and 200,000 bytes; past any of these the request is refused with 400 and the page says which.
+*   **The pull request and the index are loaded for a question when they can be.** If either cannot be, the question goes ahead: `list_changed_files` and `read_description` then say there is no pull request, and the two lookup tools fall back to text search, labelled as such.
+*   **A stream that ends without `done` or `stopped`** is shown as a lost connection, with what had arrived kept on screen.
+*   **Not done: a full question through a deployed service.** The parts were verified separately: the adapter against recorded provider calls, the gateway against the real scanner and provider once, the route and the page against scripted models. See "Verification Plan".
 
 ### Verification Plan
 

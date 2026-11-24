@@ -107,6 +107,10 @@ func (s *Scanner) Check(ctx context.Context, items []string) ([]Result, error) {
 	results := make([]Result, len(items))
 	keys := make([][sha256.Size]byte, len(items))
 	var pending []int
+	// The same content twice in one call is scanned once: twenty lines found
+	// in one file bring that file with them twenty times.
+	first := map[[sha256.Size]byte]int{}
+	same := map[int]int{}
 
 	s.mu.Lock()
 	for i, item := range items {
@@ -115,6 +119,11 @@ func (s *Scanner) Check(ctx context.Context, items []string) ([]Result, error) {
 			results[i] = known
 			continue
 		}
+		if earlier, seen := first[keys[i]]; seen {
+			same[i] = earlier
+			continue
+		}
+		first[keys[i]] = i
 		pending = append(pending, i)
 	}
 	s.mu.Unlock()
@@ -136,6 +145,9 @@ func (s *Scanner) Check(ctx context.Context, items []string) ([]Result, error) {
 	for _, i := range pending {
 		results[i] = found[i]
 		s.remembered[keys[i]] = found[i]
+	}
+	for i, earlier := range same {
+		results[i] = results[earlier]
 	}
 	return results, nil
 }

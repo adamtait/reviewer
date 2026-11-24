@@ -80,6 +80,15 @@ export function App() {
     return null;
   }
 
+  // Whether the repository on screen has an assistant: the Ask controls are
+  // shown only where a question can be answered.
+  const repository = place.view === 'pull' || place.view === 'code' ? place : null;
+  const assistant =
+    repository !== null &&
+    session.me.repositories.some(
+      (r) => r.assistant && r.owner.toLowerCase() === repository.owner.toLowerCase() && r.name.toLowerCase() === repository.repo.toLowerCase(),
+    );
+
   return (
     <>
       <header className="app-header">
@@ -108,10 +117,19 @@ export function App() {
           number={place.number}
           file={place.file}
           line={place.line}
+          assistant={assistant}
         />
       ) : null}
       {place.view === 'code' ? (
-        <CodeView owner={place.owner} repo={place.repo} sha={place.sha} path={place.path} line={place.line} pull={place.pull} />
+        <CodeView
+          owner={place.owner}
+          repo={place.repo}
+          sha={place.sha}
+          path={place.path}
+          line={place.line}
+          pull={place.pull}
+          assistant={assistant}
+        />
       ) : null}
       {place.view === 'notfound' ? <NotFound /> : null}
     </>

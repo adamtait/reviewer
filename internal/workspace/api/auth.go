@@ -89,7 +89,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusBadGateway, apitypes.CodeGitHubFailed, "GitHub could not be asked; try again")
 			return
 		case ok:
-			out.Repositories = append(out.Repositories, apitypes.RepositoryRef{Owner: repo.Owner, Name: repo.Name})
+			_, assistant := s.model(repo.Owner, repo.Name)
+			out.Repositories = append(out.Repositories, apitypes.RepositoryRef{Owner: repo.Owner, Name: repo.Name, Assistant: assistant})
 		}
 	}
 	WriteJSON(w, http.StatusOK, out)

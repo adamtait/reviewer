@@ -5,11 +5,11 @@ The review workspace is a web application used beside GitHub's pull request page
 navigation and an AI assistant to a pull request, and leaves commenting, approving and merging to
 GitHub. Its design is [`designs/review-workspace.md`](designs/review-workspace.md).
 
-This guide is for the person who deploys and configures it. It grows with each pull request of the
-design's plan. **So far a user can sign in, see the open pull requests of the repositories they can
-read, read a pull request's description and diff, open any file at its commit, search the whole
-repository at that commit, go to a definition and find references in TypeScript, and jump to GitHub
-to comment. The assistant is not built yet.**
+This guide is for the person who deploys and configures it. **A user can sign in, see the open pull
+requests of the repositories they can read, read a pull request's description and diff, open any
+file at its commit, search the whole repository at that commit, go to a definition and find
+references in TypeScript, ask an assistant questions about the code, and jump to GitHub to
+comment.** That is the whole of the design's first version. It has not yet been used by a team.
 
 ## What it is
 
@@ -98,9 +98,11 @@ configured, everyone listed can spend the provider's budget.
 
 A repository gets an assistant when all four of `provider`, `model`, `baseUrl` and `apiKeyEnv` are
 set. With none of them set it has navigation and search, which need no model. Setting only some is
-an error. The only `provider` this version can call is `gemini`.
+an error. The only `provider` this version can call is `gemini`. See "The assistant" below.
 
-`apiKeyEnv` is the name of an environment variable, never the key itself.
+`apiKeyEnv` is the name of an environment variable, never the key itself. To change a key, for
+example from a trial key to a paid one, change that variable's value and restart. Nothing in the
+configuration file or the code changes.
 
 ### Secrets
 
@@ -384,6 +386,158 @@ GROUP BY label ORDER BY lookups DESC
 
 The fifth measure is a question the design owner asks the team, and is not in the log.
 
+## The assistant
+
+A reader can ask a question about the code they are looking at. The answer comes from the model
+provider configured for that repository, which is given read-only tools to look through the commit.
+
+### Turning it on
+
+Set the four model fields on a repository, put the key in the environment variable `apiKeyEnv`
+names, and make sure the secrets scanner, `gitleaks`, is on the service's `PATH`. The container
+image already holds it. The service will not start with an assistant configured and no scanner:
+everything sent to a provider is scanned first, so without a scanner no question could be answered.
+
+```yaml
+repositories:
+  - owner: "example-owner"
+    name: "example-repo"
+    provider: "gemini"
+    model: "the-model-name-as-the-provider-spells-it"
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta"
+    apiKeyEnv: "WORKSPACE_MODEL_KEY_EXAMPLE"
+```
+
+The model name is sent to the provider exactly as written. Each repository has its own provider
+settings and its own key, and a question about a repository goes to that repository's provider
+and nowhere else.
+
+**Set a spending limit with the provider.** The service bounds each question; it keeps no budget
+across questions. A free-tier key is enough to try it and not to use it: the tier tested allowed
+five requests a minute and twenty a day, and one question takes three or more.
+
+### What is sent to the provider
+
+For each question: the question, the earlier questions and answers of that conversation, the code
+the reader selected, and whatever the model asks its tools to read. The tools can search the
+commit's text, read lines of a file, look up a definition or references, list the pull request's
+changed files, and read its title and description. They cannot write, post or reach the network.
+
+Nothing is stored on the provider's side: every call carries the whole conversation and asks the
+provider to keep none of it. Nothing is stored on the service's side either. The conversation
+lives in the reader's browser page and is gone on reload.
+
+### The secrets scan
+
+Everything is scanned at the moment of sending, by `gitleaks` with its default rules, and the whole
+file is scanned behind any lines quoted from it.
+
+| Where a credential is found | What happens |
+| --- | --- |
+| The question, or an earlier question or answer | Nothing is sent. The reader is told why. |
+| The selected code, or anywhere in the file it comes from | Nothing is sent. The reader is told which file. |
+| A file, or lines of files, a tool returned | That file is withheld. The model is told it was withheld, the answer goes on without it, and the reader is told which file. |
+| The pull request's title and description | Withheld in the same way. |
+| The scanner cannot run | Nothing is sent. |
+
+Content cannot switch the scan off. The scanner is run with its inline exemption comment disabled,
+with encoded text decoded, with no environment, and with each item under a generated file name, so
+that no ignore file, rule file or file name in a repository has any effect.
+
+What the scan does not catch: a credential in a format none of the scanner's rules knows, and
+values its generic rule exempts as placeholders. It is a filter, not a guarantee. Do not connect a
+repository whose secrets you would not want a model provider to see if the filter missed one.
+
+### Limits
+
+Five of the `limits` bound a question:
+
+| Limit | What it bounds | When it is reached |
+| --- | --- | --- |
+| `modelCalls` | Calls to the model in one question. Each tool round is one. | The reader is told the assistant stopped at that limit. |
+| `questionTokens` | Input tokens, as the provider counts them, summed over the question's calls. | The same. |
+| `answerTokens` | The output of one call, the model's reasoning included. In the trials reasoning was more than half of all output. | The answer is cut off, and the reader is told. |
+| `callSeconds` | One call. | The reader is told the provider could not be reached. |
+| `waitSeconds` | The longest wait the provider names that the assistant sits out. It does so once per question, and tells the reader. | Past it, the reader is told when to try again. |
+
+In one live question against a small project, the model made six calls to read three files and
+answer, used 8,191 input tokens in all, and took 40 seconds. Set `modelCalls` above six.
+
+### How a question can end
+
+| Outcome | What the reader is told |
+| --- | --- |
+| `ok` | The answer, the model's name, and every run of lines the model was given, each a link. |
+| `rate_limited` | The provider is limiting requests, and when to try again. |
+| `quota_exhausted` | The provider's quota is exhausted, and when it resets. The provider answers a rate limit and an exhausted quota alike; a named wait over five minutes is taken to be a quota. |
+| `limit_reached` | Which of the limits above. |
+| `secret_blocked` | What held a credential, and that nothing was sent. |
+| `scan_failed` | That the scan could not run and nothing was sent. |
+| `refused` | That the provider declined. |
+| `provider_error` | The provider's status, code and message: a bad key, an unknown model name, heavy demand twice running, no connection. |
+
+A bad key or a wrong model name shows up here, at the first question, and not at start: the
+service does not call the provider until someone asks.
+
+### The assistant week's measures
+
+Every call to a provider writes one log line, and a question that was not sent writes one too.
+Neither holds any of what was said.
+
+```json
+{"level":"INFO","msg":"model_call","user":"…","owner":"…","repo":"…","sha":"…","provider":"gemini",
+ "model":"…","call":2,"outcome":"tool_use","input_tokens":943,"output_tokens":20,
+ "reasoning_tokens":27,"duration_ms":1480,"scan":"withheld:1","withheld":"src/config.ts"}
+```
+
+A call's `outcome` is `tool_use`, `answered`, `cut_off`, `refused` or `error`. The request's own
+line, with `route` `question`, carries the question's outcome from the table above.
+
+Like the navigation queries, these are for Log Analytics and **have not been run against a
+deployment.**
+
+Engineers who asked at least one question, questions asked, and the share that ended in an answer:
+
+```sql
+SELECT
+  COUNT(DISTINCT JSON_VALUE(json_payload.user)) AS engineers,
+  COUNT(*) AS questions,
+  ROUND(100 * COUNTIF(JSON_VALUE(json_payload.outcome) = 'ok') / COUNT(*), 1) AS percent_answered
+FROM `VIEW`
+WHERE timestamp BETWEEN TIMESTAMP('2027-01-18') AND TIMESTAMP('2027-01-23')
+  AND JSON_VALUE(json_payload.msg) = 'request'
+  AND JSON_VALUE(json_payload.route) = 'question'
+```
+
+How the questions that were not answered ended:
+
+```sql
+SELECT JSON_VALUE(json_payload.outcome) AS outcome, COUNT(*) AS questions
+FROM `VIEW`
+WHERE timestamp BETWEEN TIMESTAMP('2027-01-18') AND TIMESTAMP('2027-01-23')
+  AND JSON_VALUE(json_payload.msg) = 'request'
+  AND JSON_VALUE(json_payload.route) = 'question'
+GROUP BY outcome ORDER BY questions DESC
+```
+
+Tokens by day, to set against the provider's bill, and how often a file was withheld:
+
+```sql
+SELECT
+  DATE(timestamp) AS day,
+  SUM(CAST(JSON_VALUE(json_payload.input_tokens) AS INT64)) AS input_tokens,
+  SUM(CAST(JSON_VALUE(json_payload.output_tokens) AS INT64)
+      + CAST(JSON_VALUE(json_payload.reasoning_tokens) AS INT64)) AS output_and_reasoning_tokens,
+  COUNT(*) AS model_calls,
+  COUNTIF(STARTS_WITH(JSON_VALUE(json_payload.scan), 'withheld')) AS calls_with_something_withheld
+FROM `VIEW`
+WHERE timestamp BETWEEN TIMESTAMP('2027-01-18') AND TIMESTAMP('2027-01-23')
+  AND JSON_VALUE(json_payload.msg) = 'model_call'
+GROUP BY day ORDER BY day
+```
+
+The fourth measure is a question the design owner asks the team.
+
 ## The web application
 
 One page, served by the service at every address that is not under `/api/`, `/auth/` or
@@ -402,8 +556,13 @@ by changing the host.
 
 What a user should know:
 
-- **The description is shown as plain text.** It is its author's text and is not trusted, so
-  nothing in it is drawn as a link, an image or formatting.
+- **The description and every answer are drawn as Markdown, with limits.** Both are text the
+  service does not trust. Raw HTML is shown as the characters it is, images are not loaded, and a
+  link is shown with its full address and can be followed only if it leads to the workspace or to
+  GitHub. A diagram is shown as its source.
+- **Asking is `a`**, with the cursor on a line or with lines selected, or "Ask" after clicking a
+  line number. The code asked about is quoted above the question. The conversation is kept in the
+  page and is gone on reload.
 - **The diff is drawn between the pull request's head and its merge base**, in two columns on a
   wide screen and one on a narrow one. Each file is read when it nears the screen.
 - **Commenting happens on GitHub.** Clicking or tapping a line number offers "Comment on GitHub",
@@ -494,12 +653,16 @@ Be plain with the team about this:
   and position, so that the result can be looked into.
 - **Memory.** While a commit is held, its text is in the process's memory. Anyone who can read the
   process's memory can read it.
+- **The provider keys.** They are in the process's environment.
+- **Not the conversations.** Questions and answers pass through the process and are written
+  nowhere. The log records that a question was asked, by whom, about which commit, how it ended and
+  how many tokens it used.
 
 The service stores nothing else.
 
 ## What the image contains
 
-The image is built on a base with no shell and no package manager, and holds one program, the
-service. CI checks this on every pull request with
+The image is built on a base with no shell and no package manager, and holds two programs: the
+service, and the secrets scanner the service starts, installed at a pinned version and checksum. CI checks this on every pull request with
 [`.github/scripts/check-image.sh`](../.github/scripts/check-image.sh), because the service reads
 pull requests whose authors it does not trust and must never run their code.

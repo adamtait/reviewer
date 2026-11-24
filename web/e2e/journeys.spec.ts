@@ -2,7 +2,7 @@
 
 import { type Page, expect, test } from '@playwright/test';
 
-import { fakeApi, indexReady, pullView } from './fake-api';
+import { fakeApi, indexReady, pullView, recordedRefusal, stream } from './fake-api';
 
 // The journeys the design names for the first version of the web application,
 // each run at a desktop size and at 390 points wide (see playwright.config.ts).
@@ -346,6 +346,281 @@ test.describe('journey 3: a lookup the index could not resolve', () => {
     expect(world.lookups).toEqual([
       expect.objectContaining({ kind: 'definition', sha: pullView.mergeBaseSha, path: 'src/cart.ts', line: 3, word: 'total' }),
     ]);
+  });
+});
+
+const model = 'the-configured-model';
+const done = { event: 'done', data: { model, inputTokens: 900, outputTokens: 40, reasoningTokens: 60, modelCalls: 2 } } as const;
+
+test.describe('journey 5: ask about selected code, then follow up', () => {
+  test('each answer names its model and lists what the model was given, and the follow-up carries the first exchange', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    const first = 'It applies the tax rate to an amount, rounding with `round`.';
+    const world = await fakeApi(page, {
+      answers: [
+        stream(
+          { event: 'excerpt', data: { sha: pullView.headSha, path: 'src/tax.ts', startLine: 3, endLine: 4 } },
+          { event: 'excerpt', data: { sha: pullView.headSha, path: 'src/round.ts', startLine: 0, endLine: 3 } },
+          { event: 'delta', data: { text: 'It applies the tax rate to an amount, ' } },
+          { event: 'delta', data: { text: 'rounding with `round`.' } },
+          done,
+        ),
+        stream({ event: 'delta', data: { text: 'Only `withTax` calls it.' } }, done),
+      ],
+    });
+    await page.goto(pull);
+    await page.locator(taxEditor).scrollIntoViewIfNeeded();
+
+    // Put the cursor on line 4 of the added file and ask about it.
+    await pressWord(page, taxEditor, 4, 'withTax');
+    await page.keyboard.press('a');
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    const quoted = panel.getByTestId('quoted');
+    await expect(quoted).toContainText('src/tax.ts, line 4');
+    await expect(quoted).toContainText('export const withTax');
+
+    const box = panel.getByLabel('Your question');
+    await expect(box).toBeFocused();
+    // Typing a question is typing, not shortcuts: none of these letters does anything else.
+    await box.fill('What does this do, and what calls it? jkd');
+    await panel.getByRole('button', { name: 'Ask', exact: true }).click();
+
+    // The two pieces arrive as one answer, drawn as Markdown: `round` is code.
+    const answer = panel.getByTestId('answer').first();
+    await expect(answer).toHaveText('It applies the tax rate to an amount, rounding with round.');
+    await expect(answer.locator('code')).toHaveText('round');
+    await expect(panel.getByTestId('answered-by').first()).toContainText(`Answered by ${model}`);
+
+    // Every excerpt the model was given, each a link to those lines.
+    const excerpts = panel.locator('.excerpts').first();
+    await expect(excerpts).toContainText('The model was given 2 excerpts');
+    await expect(excerpts.getByRole('link', { name: 'src/tax.ts, line 4' })).toHaveAttribute(
+      'href', `/example/alpha/blob/${pullView.headSha}/src/tax.ts?pull=${pullView.number}#L4`);
+    await expect(excerpts.getByRole('link', { name: 'src/round.ts, lines 1 to 3' })).toBeVisible();
+
+    // The question went in the body, about the head commit, with the selected lines and no history.
+    expect(world.asked).toHaveLength(1);
+    expect(world.asked[0]).toEqual({
+      sha: pullView.headSha,
+      ask: {
+        text: 'What does this do, and what calls it? jkd',
+        pullNumber: pullView.number,
+        history: [],
+        selection: { sha: pullView.headSha, path: 'src/tax.ts', startLine: 3, endLine: 4 },
+      },
+    });
+
+    // A second question: it carries the first question and its answer, and no selection.
+    await box.fill('What else calls round?');
+    await box.press('Control+Enter');
+    await expect(panel.getByTestId('answer').nth(1)).toHaveText('Only withTax calls it.');
+    expect(world.asked[1]?.ask).toEqual({
+      text: 'What else calls round?',
+      pullNumber: pullView.number,
+      history: [
+        { role: 'user', text: 'What does this do, and what calls it? jkd' },
+        { role: 'assistant', text: first },
+      ],
+      selection: null,
+    });
+
+    // The conversation is still there after the panel is closed and opened again.
+    await panel.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Assistant' }).getByTestId('answer')).toHaveCount(2);
+
+    // An excerpt leads to the code it names.
+    await page.getByRole('region', { name: 'Assistant' }).getByRole('link', { name: 'src/round.ts, lines 1 to 3' }).click();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('src/round.ts');
+  });
+
+  test('an answer is drawn as text: nothing in it runs, loads or leads away', async ({ page }) => {
+    test.skip(narrow(page), 'one size is enough');
+    await fakeApi(page, {
+      answers: [
+        stream(
+          {
+            event: 'delta',
+            data: {
+              text: 'See <img src=x onerror="document.title=\'pwned\'"> and [the docs](https://elsewhere.example/steal?c=1) and ![x](https://elsewhere.example/p.png).',
+            },
+          },
+          done,
+        ),
+      ],
+    });
+    await page.goto(pull);
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    await panel.getByLabel('Your question').fill('q');
+    await panel.getByRole('button', { name: 'Ask', exact: true }).click();
+    const answer = panel.getByTestId('answer');
+    await expect(answer).toContainText('(https://elsewhere.example/steal?c=1)');
+    await expect(answer.locator('img, a, script')).toHaveCount(0);
+    await expect(page).toHaveTitle('Review workspace');
+  });
+
+  test('a repository with no assistant offers no way to ask', async ({ page }) => {
+    await fakeApi(page, { assistant: false });
+    await page.goto(pull);
+    await expect(page.getByRole('button', { name: 'Search code' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ask', exact: true })).toHaveCount(0);
+    if (!narrow(page)) {
+      await page.keyboard.press('a');
+      await expect(page.getByRole('region', { name: 'Assistant' })).toHaveCount(0);
+    }
+  });
+});
+
+test.describe('journey 6: quota is exhausted, or the provider is limiting requests', () => {
+  const askSomething = async (page: Page) => {
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    await panel.getByLabel('Your question').fill('What does this pull request change?');
+    await panel.getByRole('button', { name: 'Ask', exact: true }).click();
+    return panel;
+  };
+
+  test('an exhausted quota says so and when it resets, and the rest of the page is unaffected', async ({ page }) => {
+    await fakeApi(page, {
+      answers: [
+        stream({
+          event: 'stopped',
+          data: {
+            outcome: 'quota_exhausted',
+            message: 'The model provider’s quota is exhausted. It resets at 20:39 UTC on 24 November.',
+            retryAfterSeconds: 31174,
+            resetAt: '2026-11-24T20:39:34Z',
+          },
+        }),
+      ],
+    });
+    await page.goto(pull);
+    const panel = await askSomething(page);
+    const stopped = panel.getByRole('alert');
+    await expect(stopped).toContainText('The model provider’s quota is exhausted');
+    await expect(stopped).toContainText('It resets at 20:39 UTC on 24 November');
+    await expect(stopped).toHaveAttribute('data-outcome', 'quota_exhausted');
+    await expect(panel.getByTestId('answer')).toHaveCount(0);
+
+    // The diff and search need no model.
+    await panel.getByRole('button', { name: 'Close' }).click();
+    await expect(page.locator('[data-path="src/cart.ts"]')).toContainText('return sum(prices);');
+    await page.getByRole('button', { name: 'Search code' }).click();
+    await page.getByRole('searchbox').fill('sum(');
+    await page.getByRole('region', { name: 'Search code' }).getByRole('button', { name: 'Search', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Search code' })).toContainText('3 matching lines');
+  });
+
+  test('a short wait is shown, and then the answer', async ({ page }) => {
+    await fakeApi(page, {
+      answers: [
+        stream(
+          { event: 'waiting', data: { seconds: 13, reason: 'The model provider is limiting requests.' } },
+          { event: 'delta', data: { text: 'It renames a function.' } },
+          done,
+        ),
+      ],
+    });
+    await page.goto(pull);
+    const panel = await askSomething(page);
+    await expect(panel.getByText('The model provider is limiting requests. Waiting 13 seconds, then trying once more.')).toBeVisible();
+    await expect(panel.getByTestId('answer')).toHaveText('It renames a function.');
+  });
+
+  test('a rate limit too long to sit out says when to try again', async ({ page }) => {
+    await fakeApi(page, {
+      answers: [
+        stream({
+          event: 'stopped',
+          data: { outcome: 'rate_limited', message: 'The model provider is limiting requests. Try again in about a minute.', retryAfterSeconds: 90, resetAt: '' },
+        }),
+      ],
+    });
+    await page.goto(pull);
+    const panel = await askSomething(page);
+    await expect(panel.getByRole('alert')).toContainText('Try again in about a minute');
+  });
+});
+
+test.describe('journey 7: a secret is found', () => {
+  test('a file the scan flags is withheld from the model, and the reader is told which and why', async ({ page }) => {
+    await fakeApi(page, {
+      answers: [
+        stream(
+          {
+            event: 'withheld',
+            data: { what: 'src/config.ts', reason: 'The secrets scan found what looks like a credential there, so it was not sent to the model provider.' },
+          },
+          { event: 'delta', data: { text: 'I could not read src/config.ts, so I cannot say how it is configured.' } },
+          done,
+        ),
+      ],
+    });
+    await page.goto(pull);
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    await panel.getByLabel('Your question').fill('How is this configured?');
+    await panel.getByRole('button', { name: 'Ask', exact: true }).click();
+
+    const held = panel.locator('.withheld');
+    await expect(held).toContainText('Withheld from the model: src/config.ts.');
+    await expect(held).toContainText('was not sent to the model provider');
+    // The answer went on without it.
+    await expect(panel.getByTestId('answer')).toContainText('I could not read src/config.ts');
+  });
+
+  test('a credential in the question itself: nothing is sent, and the reader is told why', async ({ page }) => {
+    await fakeApi(page, { answers: [recordedRefusal] });
+    await page.goto(pull);
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    await panel.getByLabel('Your question').fill('Is this key still valid?');
+    await panel.getByRole('button', { name: 'Ask', exact: true }).click();
+
+    const stopped = panel.getByRole('alert');
+    await expect(stopped).toContainText('Not sent: the secrets scan found a credential');
+    await expect(stopped).toContainText('Nothing was sent to the model provider');
+    await expect(stopped).toHaveAttribute('data-outcome', 'secret_blocked');
+    await expect(panel.getByTestId('answer')).toHaveCount(0);
+  });
+});
+
+test.describe('journey 8: ask on a phone', () => {
+  test('tapping a line asks about it, and the code stays in view above the question', async ({ page }) => {
+    test.skip(!narrow(page), 'the narrow layout');
+    const world = await fakeApi(page, {
+      answers: [stream({ event: 'delta', data: { text: 'It is the tax rate, as a fraction.' } }, done)],
+    });
+    await page.goto(pull);
+
+    const tax = page.locator(taxEditor);
+    await tax.scrollIntoViewIfNeeded();
+    await tax.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^3$/ }).tap();
+    await page.getByRole('dialog', { name: 'src/tax.ts, line 3' }).getByRole('button', { name: /^Ask/ }).tap();
+
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    const quoted = panel.getByTestId('quoted');
+    const box = panel.getByLabel('Your question');
+    await expect(quoted).toContainText('export const rate = 0.2;');
+    await box.fill('What is this number?');
+
+    // With the question box in use, the code being asked about is on screen with it.
+    await expect(quoted).toBeInViewport();
+    await expect(box).toBeInViewport();
+    const order = await page.evaluate(() => {
+      const top = (selector: string) => document.querySelector(selector)?.getBoundingClientRect().top ?? -1;
+      return [top('[data-testid=quoted]'), top('.ask-form textarea')];
+    });
+    expect(order[0]).toBeLessThan(order[1] ?? 0);
+
+    await panel.getByRole('button', { name: 'Ask', exact: true }).tap();
+    await expect(panel.getByTestId('answer')).toHaveText('It is the tax rate, as a fraction.');
+    expect(world.asked[0]?.ask.selection).toEqual({ sha: pullView.headSha, path: 'src/tax.ts', startLine: 2, endLine: 3 });
+
+    // The page itself still does not scroll sideways with the panel open.
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 });
 

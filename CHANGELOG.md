@@ -58,6 +58,16 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   is served under a content security policy that allows scripts and requests
   from the service alone. `THIRD_PARTY_LICENSES.md` gains its packages, and
   `tools/checklicenses` reads them from the web application's lockfile.
+- An assistant in the workspace. A reader asks about the code on screen, or about
+  lines they select, and the answer streams in from the model provider configured
+  for that repository, with the model's name and a link to every run of lines the
+  model was given. The model reads the commit through six read-only tools.
+  Everything sent is scanned for credentials at the moment of sending: one in
+  the question or the selection stops the question, and one in a file the model
+  asked for withholds that file and says so (ADR-0031). The first provider is
+  Google's Gemini API (ADR-0033). A pull request's description and every answer
+  are drawn as Markdown with raw HTML and images off and links shown with their
+  address.
 - The workspace can serve a public repository when the configuration allows it
   by name with `allowPublic`. That requires `allowedLogins`, the list of GitHub
   accounts that may sign in, because GitHub lets every account read a public

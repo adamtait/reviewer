@@ -469,3 +469,9 @@ func TestRemovedAccessStopsMemoryToo(t *testing.T) {
 		t.Errorf("after access was removed: status %d, want 404 although the commit is still in memory", rec.Code)
 	}
 }
+
+// archiveWith builds a commit's archive from files.
+func archiveWith(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	return testgithub.Archive(t, files)
+}

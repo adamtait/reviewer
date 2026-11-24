@@ -40,7 +40,23 @@ export interface PaneHandle {
   moveChange(direction: 1 | -1, from: 'cursor' | 'edge'): boolean;
   /** The line the cursor is on. */
   cursor(): LineRef | null;
+  /**
+   * The lines the reader has selected, or the cursor's line when nothing is
+   * selected, with their text. `startLine` counts from 0 and `endLine` is
+   * exclusive.
+   */
+  selection(): SelectedLines | null;
+  /** The text of whole lines on one side, or null if that side has no such lines. */
+  lines(side: Side, startLine: number, endLine: number): string | null;
   focus(): void;
+}
+
+/** A run of whole lines in one side of a file. */
+export interface SelectedLines {
+  side: Side;
+  startLine: number;
+  endLine: number;
+  text: string;
 }
 
 const theme = EditorView.theme({
@@ -150,6 +166,27 @@ function cursorPlace(view: EditorView): { line: number; character: number } {
   return { line: line.number - 1, character: head - line.from };
 }
 
+/** The whole lines the selection touches. A selection that ends at the start of a line does not take that line. */
+function selectedLines(view: EditorView, side: Side): SelectedLines {
+  const { from, to } = view.state.selection.main;
+  const first = view.state.doc.lineAt(from);
+  let last = view.state.doc.lineAt(to);
+  if (to > from && to === last.from && last.number > first.number) last = view.state.doc.line(last.number - 1);
+  return {
+    side,
+    startLine: first.number - 1,
+    endLine: last.number,
+    text: view.state.doc.sliceString(first.from, last.to),
+  };
+}
+
+/** The text of lines startLine up to endLine, counted from 0 with the end excluded. */
+function textOfLines(view: EditorView, startLine: number, endLine: number): string | null {
+  const total = view.state.doc.lines;
+  if (startLine < 0 || endLine <= startLine || endLine > total) return null;
+  return view.state.doc.sliceString(view.state.doc.line(startLine + 1).from, view.state.doc.line(endLine).to);
+}
+
 /**
  * Moves the cursor to a neighbouring change. The library's own command wraps
  * round at the last change; this one says there is none, so the page can go on
@@ -240,6 +277,8 @@ export function CodePane({ path, text, side = 'new', line, onLineAction, onSymbo
   useImperativeHandle(ref, () => ({
     moveChange: () => false,
     cursor: () => (view.current ? { side, ...cursorPlace(view.current) } : null),
+    selection: () => (view.current ? selectedLines(view.current, side) : null),
+    lines: (which, startLine, endLine) => (view.current && which === side ? textOfLines(view.current, startLine, endLine) : null),
     focus: () => view.current?.focus(),
   }));
 
@@ -329,6 +368,14 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
       // The side that has focus is the side the user means.
       if (oldSide.current?.hasFocus) return { side: 'old', ...cursorPlace(oldSide.current) };
       return newSide.current ? { side: 'new', ...cursorPlace(newSide.current) } : null;
+    },
+    selection: () => {
+      if (oldSide.current?.hasFocus) return selectedLines(oldSide.current, 'old');
+      return newSide.current ? selectedLines(newSide.current, 'new') : null;
+    },
+    lines: (which, startLine, endLine) => {
+      const view = which === 'old' ? oldSide.current : newSide.current;
+      return view ? textOfLines(view, startLine, endLine) : null;
     },
     focus: () => newSide.current?.focus(),
   }));

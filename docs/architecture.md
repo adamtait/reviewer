@@ -155,6 +155,9 @@ in memory under a byte limit (ADR-0030).
 | `catalog` | Lists and describes pull requests. |
 | `navigation`, `navigation/scip` | Finds a commit's CI-built index, decodes it, checks it against the commit's files, and answers definition and reference lookups by the design's five rules. |
 | `api`, `api/apitypes` | The route table, the middleware every request passes through, the handlers, and the request and response bodies. |
+| `scan` | Runs the secrets scanner over what is about to be sent to a model provider, in one fixed way that content cannot change. |
+| `gateway` | The one way out to a model provider: scans, calls the repository's provider, runs the tools the model asks for, applies the limits. |
+| `assistant` | Builds a question for the gateway, with the six read-only tools bound to the commit. |
 | `web` | Embeds the built web application and serves it under a content security policy. |
 | `testgithub` | A stand-in for GitHub's API, for the tests. |
 

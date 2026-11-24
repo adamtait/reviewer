@@ -232,3 +232,31 @@ func TestItemOf(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSameContentTwiceInOneCallIsScannedOnce(t *testing.T) {
+	// A scanner that counts the items it is shown, by counting the files it finds.
+	dir := t.TempDir()
+	counting := filepath.Join(dir, "gitleaks")
+	script := "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.0.0; exit 0; }\n" +
+		"for last; do :; done\nfind \"$last\" -name item | wc -l > " + filepath.Join(dir, "count") + "\n" +
+		"while [ $# -gt 0 ]; do case \"$1\" in --report-path) shift; out=\"$1\";; esac; shift; done\n" +
+		"echo '[]' > \"$out\"\nexit 0\n"
+	if err := os.WriteFile(counting, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(counting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := check(t, s, "a file", "one line", "a file", "another line", "a file")
+	if len(results) != 5 {
+		t.Fatalf("%d results", len(results))
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "count"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(raw)); got != "3" {
+		t.Errorf("the scanner was shown %s items for three different contents", got)
+	}
+}

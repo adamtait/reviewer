@@ -127,3 +127,18 @@ on a finding about code the change did not touch, and reading an empty result as
 A fork's pull request gets no secrets (ADR-0018). The model lane is therefore skipped on fork
 pull requests and the deterministic lane still runs and still comments. That is the intended
 degradation, not a limitation to work around.
+
+## The review workspace's one path
+
+The review workspace (`cmd/workspace`, [`workspace.md`](workspace.md)) does not use any of the six
+paths above. Its assistant holds a conversation in which the model asks for tools, and that needs
+streaming, tool calls and token counts, which the one-method `Provider` behind the six paths
+deliberately leaves out (ADR-0021, ADR-0033).
+
+It has one path of its own: Google's Gemini API, through its `interactions` method, with a key.
+The model name, the base address and the name of the variable holding the key are set for each
+connected repository in the service's configuration file. The model name is sent as written. A
+subscription cannot be used: a conversation cannot be driven through a command-line program.
+
+Every call goes through one gateway that scans what is sent (ADR-0031). The command-line tool's
+model lane is unchanged and keeps its own rule, ADR-0012.

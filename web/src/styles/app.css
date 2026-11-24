@@ -254,9 +254,8 @@ main {
   margin: 0.5rem 0;
 }
 
-/* The description is its author's text, shown exactly as written. */
+/* The description is its author's text, drawn under the rules in Markdown.tsx. */
 .description {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -495,6 +494,155 @@ main {
   padding: 0.4rem 0;
   border-top: 1px solid var(--border);
   text-decoration: none;
+}
+
+/* Markdown from a description or an answer */
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown pre {
+  overflow-x: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.markdown table {
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.5rem;
+}
+
+.markdown blockquote {
+  margin-left: 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+/* A link's address is always shown, so a reader sees where it leads. */
+.link-address {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* The assistant */
+
+.assistant .row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.assistant h2 {
+  margin: 0;
+}
+
+.exchanges {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.exchange {
+  border-top: 1px solid var(--border);
+  padding: 0.6rem 0;
+}
+
+.asked {
+  font-weight: 600;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.asked-about {
+  margin: 0.1rem 0 0.4rem;
+  font-size: 0.85rem;
+}
+
+.answer {
+  overflow-wrap: anywhere;
+}
+
+.stopped {
+  border: 1px solid var(--modified);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin: 0.4rem 0;
+}
+
+.stopped p {
+  margin: 0.25rem 0 0;
+}
+
+.notice.withheld {
+  border-color: var(--modified);
+}
+
+.excerpts {
+  font-size: 0.85rem;
+  margin: 0.4rem 0;
+}
+
+.excerpts ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.model {
+  font-size: 0.8rem;
+  margin: 0.3rem 0 0;
+}
+
+.ask-form {
+  display: grid;
+  gap: 0.5rem;
+  position: sticky;
+  bottom: 0;
+  background: inherit;
+  padding-top: 0.5rem;
+}
+
+.ask-form textarea {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  resize: vertical;
+}
+
+.ask-form .hint {
+  font-size: 0.8rem;
+}
+
+/* The code a question is about stays in view above the question box. */
+.quoted {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+}
+
+.quoted pre {
+  margin: 0.3rem 0 0;
+  max-height: 9rem;
+  overflow: auto;
+  font-size: 0.8rem;
 }
 
 /* Sheets: a line's actions, and the shortcut help */

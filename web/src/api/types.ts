@@ -25,11 +25,14 @@ export type ErrorCode =
   | 'not_fine_grained'
   | 'rejected'
   | 'no_repository'
-  | 'not_listed';
+  | 'not_listed'
+  | 'no_assistant';
 
 export interface RepositoryRef {
   owner: string;
   name: string;
+  /** Whether questions can be asked about this repository: whether it has a model provider configured. */
+  assistant: boolean;
 }
 
 export interface Me {
@@ -176,3 +179,80 @@ export interface Report {
   kind: LookupKind;
   label: Label;
 }
+
+/** An earlier question or answer. The page holds the conversation; the service keeps none of it. */
+export interface AskMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/** The code the reader selected. `startLine` counts from 0 and `endLine` is exclusive. */
+export interface AskSelection {
+  sha: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
+export interface Ask {
+  text: string;
+  /** The pull request the reader has open, or 0. */
+  pullNumber: number;
+  history: AskMessage[];
+  selection: AskSelection | null;
+}
+
+/** A run of lines the model was given. `startLine` counts from 0 and `endLine` is exclusive. */
+export interface Excerpt {
+  sha: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
+/** Content the secrets scan held back from the model. */
+export interface Withheld {
+  what: string;
+  reason: string;
+}
+
+export interface Waiting {
+  seconds: number;
+  reason: string;
+}
+
+/** Ends an answer that was completed. */
+export interface Done {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  modelCalls: number;
+}
+
+/** Why an answer ended without being completed. */
+export type StopOutcome =
+  | 'rate_limited'
+  | 'quota_exhausted'
+  | 'limit_reached'
+  | 'secret_blocked'
+  | 'scan_failed'
+  | 'refused'
+  | 'provider_error';
+
+/** Ends an answer that was not completed. */
+export interface Stopped {
+  outcome: StopOutcome | (string & {});
+  message: string;
+  retryAfterSeconds: number;
+  resetAt: string;
+}
+
+/** The events of an answer's stream. Exactly one of `done` and `stopped` ends every stream. */
+export type AnswerEvent =
+  | { event: 'delta'; data: { text: string } }
+  | { event: 'excerpt'; data: Excerpt }
+  | { event: 'withheld'; data: Withheld }
+  | { event: 'waiting'; data: Waiting }
+  | { event: 'done'; data: Done }
+  | { event: 'stopped'; data: Stopped };

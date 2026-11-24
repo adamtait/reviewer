@@ -124,9 +124,23 @@ and no build step — the example plugin is forty lines of POSIX shell.
 
 See [docs/plugin-protocol.md](docs/plugin-protocol.md).
 
+## The review workspace
+
+A second program in this repository, `cmd/workspace`, is a small web service for
+the human half of a review. You sign in with a read-only GitHub token, open a pull
+request, and read it with the whole repository at that commit to hand: the
+description and the diff, any file, text search, go-to-definition and references
+for TypeScript from an index your own CI builds, and an assistant you can ask about
+the code on screen. It reads everything from GitHub as you, stores nothing, and
+never runs the code it shows. Comments stay on GitHub.
+
+It has not yet been used by a team. To deploy one, see
+[docs/workspace.md](docs/workspace.md).
+
 ## Documentation
 
 - [How it fits together](docs/architecture.md)
+- [Running the review workspace](docs/workspace.md)
 - [Writing convention rules](docs/writing-rules.md)
 - [Model access paths](docs/providers.md)
 - [The plugin protocol](docs/plugin-protocol.md)

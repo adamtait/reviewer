@@ -24,6 +24,20 @@ const testCookieKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" // 32 zero 
 
 func noEnv(string) string { return "" }
 
+// standInScanner puts a program that answers "version" where the service looks
+// for the secrets scanner, so that a configuration with an assistant can start
+// on a machine that has no scanner installed. Nothing in these tests asks a
+// question, so nothing is ever scanned by it.
+func standInScanner(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "scanner")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho stand-in\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scannerBinary = path
+	t.Cleanup(func() { scannerBinary = "" })
+}
+
 func TestVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if err := run(context.Background(), []string{"version"}, &stdout, &stderr, noEnv); err != nil {
@@ -118,6 +132,7 @@ func TestServeAnswersHealthAndStopsWhenTold(t *testing.T) {
 		return ""
 	}
 
+	standInScanner(t)
 	listening := make(chan string, 1)
 	onListen = func(addr string) { listening <- addr }
 	t.Cleanup(func() { onListen = nil })
@@ -275,5 +290,35 @@ repositories:
 	}
 	if !strings.Contains(stdout.String(), `"user":"alice"`) {
 		t.Errorf("the log should name the signed-in user:\n%s", stdout.String())
+	}
+}
+
+// Everything sent to a model provider is scanned first. A service that has an
+// assistant configured and cannot run the scanner could answer no question, so
+// it does not start, and says what to do.
+func TestServeRefusesAnAssistantItCannotGuard(t *testing.T) {
+	scannerBinary = filepath.Join(t.TempDir(), "no-scanner-here")
+	t.Cleanup(func() { scannerBinary = "" })
+	getenv := func(name string) string {
+		switch name {
+		case "WORKSPACE_COOKIE_KEY":
+			return testCookieKey
+		case "TEST_MODEL_KEY":
+			return "a-provider-value"
+		}
+		return ""
+	}
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"serve", "--config", writeConfig(t, validConfig)}, &stdout, &stderr, getenv)
+	if err == nil {
+		t.Fatal("the service started with an assistant and no scanner")
+	}
+	for _, want := range []string{"secrets scanner", "cannot be run", "Install gitleaks"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "a-provider-value") {
+		t.Error("the refusal carries the provider key")
 	}
 }

@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MIT
 
-// A pull request's description is written by its author, who is not trusted.
-// It is shown as text: no HTML, no images, no links to click. Markdown drawing
-// arrives with the assistant, with raw HTML off.
+import { Markdown } from './Markdown';
 
-export function Description({ body }: { body: string }) {
+// A pull request's description is written by its author, who is not trusted.
+// It is drawn as Markdown under the rules in Markdown.tsx: no HTML, no images,
+// and no link that can be followed unless it leads to this workspace or to
+// the GitHub it reads from.
+
+export function Description({ body, github }: { body: string; github?: string | undefined }) {
   if (body.trim() === '') {
     return <p className="description description-empty">No description.</p>;
   }
   return (
     <div className="description" data-testid="description">
-      {body}
+      <Markdown text={body} trusted={github ? [github] : []} />
     </div>
   );
 }

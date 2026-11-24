@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import type { Page, Route } from '@playwright/test';
 
 import type {
+  AnswerEvent,
   ApiError,
+  Ask,
   Definition,
   File,
   IndexState,
@@ -46,6 +48,16 @@ const signedOut = example('error_signed_out') as ApiError;
 const recordedHead = example('file') as File;
 const recordedBase = example('file_merge_base') as File;
 export const indexReady = example('index_state') as IndexState;
+
+/** An answer's stream, exactly as the service's own tests record it. */
+export const recordedAnswer = readFileSync(join(examples, 'question.sse'), 'utf8');
+/** The stream of a question that was not sent, as recorded. */
+export const recordedRefusal = readFileSync(join(examples, 'question_stopped.sse'), 'utf8');
+
+/** Writes events as the service writes them: a name line, a data line, a blank line. */
+export function stream(...events: AnswerEvent[]): string {
+  return events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join('');
+}
 
 const text = (path: string, body: string): File => ({ path, kind: 'text', text: body });
 
@@ -101,6 +113,12 @@ export interface World {
   reports: Report[];
   /** Every lookup asked for, with the word found at its position. */
   lookups: { kind: string; sha: string; path: string; line: number; character: number; word: string }[];
+  /** Whether example/alpha has an assistant. */
+  assistant: boolean;
+  /** The streams the next questions are answered with, in order. When empty, the recorded answer. */
+  answers: string[];
+  /** Every question asked, with the commit it was asked about. */
+  asked: { sha: string; ask: Ask }[];
 }
 
 const span = (path: string, line: number, character: number, length: number): Location => ({
@@ -174,6 +192,9 @@ export async function fakeApi(page: Page, initial: Partial<World> = {}): Promise
     index: indexReady,
     reports: [],
     lookups: [],
+    assistant: true,
+    answers: [],
+    asked: [],
     ...initial,
   };
 
@@ -202,7 +223,9 @@ export async function fakeApi(page: Page, initial: Partial<World> = {}): Promise
     }
 
     if (!world.signedIn) return json(route, 401, signedOut);
-    if (url.pathname === '/api/v1/me') return json(route, 200, me);
+    if (url.pathname === '/api/v1/me') {
+      return json(route, 200, { ...me, repositories: me.repositories.map((r) => ({ ...r, assistant: r.assistant && world.assistant })) });
+    }
 
     const match = /^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/(.*)$/.exec(url.pathname);
     if (!match) return json(route, 404, notFound);
@@ -219,6 +242,18 @@ export async function fakeApi(page: Page, initial: Partial<World> = {}): Promise
     if (rest === 'navigation/reports') {
       world.reports.push(request.postDataJSON() as Report);
       return route.fulfill({ status: 204 });
+    }
+
+    const question = /^commits\/([0-9a-f]{40})\/questions$/.exec(rest ?? '');
+    if (question) {
+      if (!world.assistant) return json(route, 404, { error: { code: 'no_assistant', message: 'This repository has no assistant configured.' } });
+      world.asked.push({ sha: question[1] ?? '', ask: request.postDataJSON() as Ask });
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream; charset=utf-8',
+        headers: { 'Cache-Control': 'no-store' },
+        body: world.answers.shift() ?? recordedAnswer,
+      });
     }
 
     const commit = /^commits\/([0-9a-f]{40})\/(tree|file|search|index|definition|references)$/.exec(rest ?? '');

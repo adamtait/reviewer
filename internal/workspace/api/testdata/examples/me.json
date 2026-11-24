@@ -3,11 +3,13 @@
   "repositories": [
     {
       "owner": "example",
-      "name": "alpha"
+      "name": "alpha",
+      "assistant": true
     },
     {
       "owner": "example",
-      "name": "beta"
+      "name": "beta",
+      "assistant": false
     }
   ]
 }

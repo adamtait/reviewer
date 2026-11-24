@@ -45,10 +45,12 @@ type TokenRequest struct {
 	Token string `json:"token"`
 }
 
-// RepositoryRef names a repository.
+// RepositoryRef names a repository, and says whether questions can be asked
+// about it: whether it has a model provider configured.
 type RepositoryRef struct {
-	Owner string `json:"owner"`
-	Name  string `json:"name"`
+	Owner     string `json:"owner"`
+	Name      string `json:"name"`
+	Assistant bool   `json:"assistant"`
 }
 
 // Me is the signed-in user and the connected repositories they can read. A
@@ -256,4 +258,91 @@ type Report struct {
 	Kind string `json:"kind"`
 	// Label is the label the wrong result carried.
 	Label string `json:"label"`
+}
+
+// CodeNoAssistant: the repository has no model provider configured.
+const CodeNoAssistant = "no_assistant"
+
+// AskMessage is an earlier question or answer. The browser holds the
+// conversation and sends it with each question; the service keeps none of it.
+type AskMessage struct {
+	// Role is "user" or "assistant".
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// AskSelection is the code the reader selected. StartLine counts from 0 and
+// EndLine is exclusive.
+type AskSelection struct {
+	SHA       string `json:"sha"`
+	Path      string `json:"path"`
+	StartLine int    `json:"startLine"`
+	EndLine   int    `json:"endLine"`
+}
+
+// Ask is one question.
+type Ask struct {
+	Text string `json:"text"`
+	// PullNumber is the pull request the reader has open, or 0.
+	PullNumber int           `json:"pullNumber"`
+	History    []AskMessage  `json:"history"`
+	Selection  *AskSelection `json:"selection"`
+}
+
+// The events of an answer's stream. Each is sent as one server-sent event
+// whose name is the constant and whose data is the type beside it. Exactly one
+// of "done" and "stopped" ends every stream.
+const (
+	EventDelta    = "delta"
+	EventExcerpt  = "excerpt"
+	EventWithheld = "withheld"
+	EventWaiting  = "waiting"
+	EventDone     = "done"
+	EventStopped  = "stopped"
+)
+
+// Delta is more of the answer.
+type Delta struct {
+	Text string `json:"text"`
+}
+
+// Excerpt is a run of lines the model was given. StartLine counts from 0 and
+// EndLine is exclusive.
+type Excerpt struct {
+	SHA       string `json:"sha"`
+	Path      string `json:"path"`
+	StartLine int    `json:"startLine"`
+	EndLine   int    `json:"endLine"`
+}
+
+// Withheld is content the secrets scan held back from the model.
+type Withheld struct {
+	What   string `json:"what"`
+	Reason string `json:"reason"`
+}
+
+// Waiting says the assistant is sitting out a wait the provider named.
+type Waiting struct {
+	Seconds int    `json:"seconds"`
+	Reason  string `json:"reason"`
+}
+
+// Done ends an answer that was completed.
+type Done struct {
+	Model           string `json:"model"`
+	InputTokens     int    `json:"inputTokens"`
+	OutputTokens    int    `json:"outputTokens"`
+	ReasoningTokens int    `json:"reasoningTokens"`
+	ModelCalls      int    `json:"modelCalls"`
+}
+
+// Stopped ends an answer that was not completed. Outcome is one of
+// rate_limited, quota_exhausted, limit_reached, secret_blocked, scan_failed,
+// refused and provider_error.
+type Stopped struct {
+	Outcome string `json:"outcome"`
+	Message string `json:"message"`
+	// RetryAfterSeconds and ResetAt are set when the provider named a wait.
+	RetryAfterSeconds int    `json:"retryAfterSeconds"`
+	ResetAt           string `json:"resetAt"`
 }

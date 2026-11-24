@@ -35,8 +35,12 @@ only if it has the fine-grained shape, GitHub says whose it is, and it can read 
 connected repository. The token, the login and an expiry time are sealed with AES-256-GCM into a
 cookie that scripts cannot read, and nothing about the session is kept on the server. Every read of
 GitHub for a user is made with that user's token. "Can this user read this repository" is GitHub's
-answer to that token, believed for a configured period of at most an hour. A repository GitHub
-reports as public is refused for every user.
+answer to that token, believed for a configured period of at most an hour.
+
+A repository GitHub reports as public is refused for every user, unless the operator has allowed
+that repository by name. Allowing one requires a list of the GitHub accounts that may sign in, and
+the service will not start without it: for a public repository GitHub's answer is "yes" for every
+account, so the list does the admitting that GitHub no longer does.
 
 ## Consequences
 
@@ -55,8 +59,11 @@ reports as public is refused for every user.
   and an outside collaborator cannot use one at all.
 - **Negative:** the service cannot check which permissions a pasted token carries. It asks for
   read-only ones and makes no write call whatever the token allows.
-- **Neutral:** a public repository cannot be connected. Every GitHub token can read one, so
-  connecting one would let any GitHub account sign in.
+- **Neutral:** a public repository is refused unless allowed by name. Every GitHub token can read
+  one, so connecting one lets any GitHub account pass the access check.
+- **Negative:** a deployment that allows a public repository has a second access table after all,
+  the list of admitted accounts, kept by hand. It is the price of serving a repository whose
+  access GitHub does not limit, and it is paid only by deployments that choose to.
 
 ## Alternatives rejected
 
@@ -68,8 +75,9 @@ reports as public is refused for every user.
   repository, and a hand-kept table of who may see what.
 - **Keep each user's token on the server, encrypted** — a store of credentials, and a database the
   service otherwise does not have.
-- **A list of permitted logins** — a second access table beside GitHub's. Refusing public
-  repositories closes the same gap with no table.
+- **A list of permitted logins as the rule for every deployment** — a second access table beside
+  GitHub's. Refusing public repositories closes the same gap with no table, so the list is required
+  only where a public repository is allowed, and is optional elsewhere.
 - **Accept classic tokens** — a classic token that reads private code can also write to it.
 
 ## Revisit when

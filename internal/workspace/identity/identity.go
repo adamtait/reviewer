@@ -26,8 +26,8 @@ type Session struct {
 	Expires time.Time
 }
 
-// The three ways a sign-in is refused. Each has its own message for the user,
-// because each has a different fix.
+// The ways a sign-in is refused. Each has its own message for the user, because
+// each has a different fix.
 var (
 	// ErrNotFineGrained: the credential is not a fine-grained personal access
 	// token. A classic token is refused because it can carry write access to
@@ -39,13 +39,17 @@ var (
 	// still waiting for an organisation owner's approval looks like this, because
 	// until it is approved it reads nothing private.
 	ErrNoRepository = errors.New("the token cannot read any connected repository")
+	// ErrNotListed: the workspace admits listed accounts only, and this is not
+	// one of them. Said as itself and not as ErrNoRepository: the fix is for
+	// the operator to add the account, not for the user to change their token.
+	ErrNotListed = errors.New("this account is not one the workspace admits")
 )
 
 // Provider is the identity interface: its three operations are all the rest of
 // the service knows about sign-in.
 type Provider interface {
 	// SignIn turns a credential into a session, or refuses it with one of the
-	// three errors above. Any other error means GitHub could not be asked.
+	// errors above. Any other error means GitHub could not be asked.
 	SignIn(ctx context.Context, credential string) (Session, error)
 	// CanRead reports whether the session's user may see a repository's data.
 	// See access.Checker.CanRead for what false and a non-nil error mean.

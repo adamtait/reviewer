@@ -536,3 +536,53 @@ func TestEveryResponseForbidsContentSniffing(t *testing.T) {
 		}
 	}
 }
+
+// A deployment that serves a public repository, as the operator may choose to
+// for a trial. GitHub lets every account read it, so the list of admitted
+// accounts is what keeps a stranger out.
+func TestAPublicRepositoryWithAListOfAdmittedAccounts(t *testing.T) {
+	gh := testgithub.New(t)
+	gh.SetRepo("example", "open", testgithub.Repo{Private: false})
+	gh.AddPull("example", "open", testgithub.Pull{Number: 1, Title: "A public change", Author: "alice", HeadSHA: headSHA, BaseSHA: tipSHA, MergeBase: baseSHA})
+	checker := access.New([]wsconfig.Repository{{Owner: "example", Name: "open", AllowPublic: true}}, time.Minute, nil)
+	checker.Permit([]string{"alice"})
+	cookies, err := identity.NewCookies(bytes.Repeat([]byte{7}, 32), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	cache := source.NewCache(1<<22, time.Minute)
+	store := source.NewStore(cache, roomy)
+	server := New(Deps{
+		Log: obs.New(&log, obs.NewRedactor()), Version: "test",
+		Identity: &identity.TokenMethod{NewClient: gh.Client, Access: checker, SessionLength: time.Hour},
+		Cookies:  cookies, Access: checker, Source: store,
+		Navigation: navigation.NewService(navigation.Config{WorkflowFile: "review-index.yml", ArtifactName: "review-index", IndexBytes: 1 << 20}, cache, store),
+		WebBaseURL: "https://github.example",
+	})
+	w := &world{t: t, gh: gh, server: server, cache: cache, log: &log}
+
+	// The listed account signs in and is shown the public repository.
+	alice := w.signIn("alice")
+	rec := w.do(http.MethodGet, "/api/v1/repos/example/open/pulls", nil, alice, false)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "A public change") {
+		t.Errorf("the listed account: status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// A stranger with a valid token, who can read the repository on GitHub.
+	rec = w.do(http.MethodPost, "/auth/token", apitypes.TokenRequest{Token: gh.AddUser("stranger")}, nil, false)
+	if rec.Code != http.StatusUnauthorized || errorCode(t, rec) != apitypes.CodeNotListed {
+		t.Errorf("a stranger's sign-in: status %d: %s; want 401 not_listed", rec.Code, rec.Body.String())
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Error("a refused sign-in set a cookie")
+	}
+
+	// A session sealed while an account was listed stops working when the
+	// account is taken off the list, as it would after a restart with a new list.
+	checker.Permit([]string{"someone-else"})
+	rec = w.do(http.MethodGet, "/api/v1/repos/example/open/pulls", nil, alice, false)
+	if rec.Code != http.StatusUnauthorized || errorCode(t, rec) != apitypes.CodeSignedOut {
+		t.Errorf("after being taken off the list: status %d: %s; want 401 signed_out", rec.Code, rec.Body.String())
+	}
+}

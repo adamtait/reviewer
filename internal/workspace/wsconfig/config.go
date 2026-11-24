@@ -42,15 +42,19 @@ const maxSessionDays = 366
 
 // Config is the whole configuration file.
 type Config struct {
-	Listen             string       `yaml:"listen"`
-	PublicURL          string       `yaml:"publicUrl"`
-	GitHub             GitHub       `yaml:"github"`
-	IndexWorkflowFile  string       `yaml:"indexWorkflowFile"`
-	IndexArtifactName  string       `yaml:"indexArtifactName"`
-	SessionDays        int          `yaml:"sessionDays"`
-	AccessCacheSeconds int          `yaml:"accessCacheSeconds"`
-	Limits             Limits       `yaml:"limits"`
-	Repositories       []Repository `yaml:"repositories"`
+	Listen             string `yaml:"listen"`
+	PublicURL          string `yaml:"publicUrl"`
+	GitHub             GitHub `yaml:"github"`
+	IndexWorkflowFile  string `yaml:"indexWorkflowFile"`
+	IndexArtifactName  string `yaml:"indexArtifactName"`
+	SessionDays        int    `yaml:"sessionDays"`
+	AccessCacheSeconds int    `yaml:"accessCacheSeconds"`
+	// AllowedLogins, if set, is every GitHub account that may sign in. Anyone
+	// else is refused whatever their token can read. It is required when a
+	// connected repository may be public, and optional otherwise.
+	AllowedLogins []string     `yaml:"allowedLogins"`
+	Limits        Limits       `yaml:"limits"`
+	Repositories  []Repository `yaml:"repositories"`
 }
 
 // GitHub says where GitHub is. Supplied rather than compiled in, so no host
@@ -96,6 +100,11 @@ type Repository struct {
 	// APIKeyEnv is the NAME of the environment variable holding the key. The key
 	// itself is never written to a file.
 	APIKeyEnv string `yaml:"apiKeyEnv"`
+	// AllowPublic lets this repository be served although GitHub reports it as
+	// public. Without it a public repository is refused for every user,
+	// because every GitHub token can read one: GitHub's access rules then
+	// admit anyone, and AllowedLogins has to do the admitting instead.
+	AllowPublic bool `yaml:"allowPublic"`
 }
 
 // HasProvider reports whether the assistant is configured for this repository.
@@ -134,6 +143,9 @@ var (
 	artifactNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	repoPartRe     = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	envNameRe      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	// A GitHub login: letters, digits and single hyphens, up to 39 characters.
+	// Bot accounts end in "[bot]" and never sign in here.
+	loginRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
 )
 
 // Problems returns everything wrong with the configuration, not just the first
@@ -195,7 +207,17 @@ func (c Config) Problems() []string {
 	}
 
 	if len(c.Repositories) == 0 {
-		add("repositories is empty: list at least one private repository to connect")
+		add("repositories is empty: list at least one repository to connect")
+	}
+	listed := map[string]bool{}
+	for _, login := range c.AllowedLogins {
+		switch {
+		case !loginRe.MatchString(login):
+			add("allowedLogins holds %q, which is not a GitHub login", login)
+		case listed[strings.ToLower(login)]:
+			add("allowedLogins lists %s twice", login)
+		}
+		listed[strings.ToLower(login)] = true
 	}
 	seen := map[string]bool{}
 	for i, r := range c.Repositories {
@@ -209,6 +231,12 @@ func (c Config) Problems() []string {
 			add("%s is listed twice", where)
 		}
 		seen[r.Slug()] = true
+		if r.AllowPublic && len(c.AllowedLogins) == 0 {
+			// Not a default to fall back on: with a public repository and no
+			// list, anyone with a GitHub account could sign in and, where there
+			// is an assistant, spend the provider's budget.
+			add("%s sets allowPublic, so any GitHub account could pass its access check: list who may sign in under allowedLogins", where)
+		}
 
 		set := 0
 		for _, v := range []string{r.Provider, r.Model, r.BaseURL, r.APIKeyEnv} {

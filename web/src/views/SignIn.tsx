@@ -18,6 +18,10 @@ const refusals: Record<string, { title: string; fix: string }> = {
     title: 'That token cannot read any repository connected to this workspace.',
     fix: 'Check that the token names the connected repositories and has the four permissions below. In an organisation, an owner may need to approve the token first; until then it reads nothing private.',
   },
+  not_listed: {
+    title: 'Your GitHub account is not one this workspace admits.',
+    fix: 'Whoever runs this workspace keeps a list of the accounts that may sign in. Ask them to add yours. Nothing is wrong with your token.',
+  },
   github_failed: {
     title: 'GitHub could not be asked.',
     fix: 'This is not a problem with your token. Try again in a moment.',

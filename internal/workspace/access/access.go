@@ -37,6 +37,10 @@ type Checker struct {
 	// onPublic is called once for each connected repository found to be public.
 	onPublic func(owner, name string)
 
+	// permitted, if not empty, is every login that may use the workspace,
+	// lower-cased. It is fixed at start.
+	permitted map[string]bool
+
 	mu        sync.Mutex
 	connected map[string]wsconfig.Repository // by Slug
 	order     []string                       // Slugs, in configuration order
@@ -67,6 +71,25 @@ func New(repos []wsconfig.Repository, ttl time.Duration, onPublic func(owner, na
 // SetClock replaces the clock, for tests.
 func (c *Checker) SetClock(now func() time.Time) { c.now = now }
 
+// Permit limits the workspace to the listed GitHub logins. With an empty list
+// there is no limit of this kind, and who may use the workspace is decided by
+// GitHub alone. Call it before the Checker is used.
+//
+// The list exists for one case. GitHub lets every account read a public
+// repository, so for a public repository "GitHub says this user can read it"
+// admits everyone, and something else has to say who the workspace is for.
+func (c *Checker) Permit(logins []string) {
+	c.permitted = map[string]bool{}
+	for _, login := range logins {
+		c.permitted[strings.ToLower(login)] = true
+	}
+}
+
+// Permitted reports whether a login may use the workspace at all.
+func (c *Checker) Permitted(login string) bool {
+	return len(c.permitted) == 0 || c.permitted[strings.ToLower(login)]
+}
+
 // Connected returns the configured repositories, in configuration order.
 func (c *Checker) Connected() []wsconfig.Repository {
 	c.mu.Lock()
@@ -93,9 +116,10 @@ func slug(owner, name string) string {
 
 // CanRead reports whether the user may see the repository's data.
 //
-// False with a nil error covers three cases that a caller must not be able to
+// False with a nil error covers four cases that a caller must not be able to
 // tell apart, and so neither can a user: the repository is not connected,
-// GitHub says this user cannot see it, or it is public. The error is non-nil
+// GitHub says this user cannot see it, it is public and not allowed to be, or
+// the user is not one the workspace admits. The error is non-nil
 // only when no answer was reached: the token was rejected (ErrTokenRejected),
 // or GitHub could not be asked.
 func (c *Checker) CanRead(ctx context.Context, login string, gh RepoGetter, owner, name string) (bool, error) {
@@ -109,7 +133,7 @@ func (c *Checker) CanRead(ctx context.Context, login string, gh RepoGetter, owne
 	now := c.now()
 	c.mu.Unlock()
 
-	if !connected || refused {
+	if !connected || refused || !c.Permitted(login) {
 		return false, nil
 	}
 	if cached && now.Before(expires) {
@@ -131,10 +155,11 @@ func (c *Checker) CanRead(ctx context.Context, login string, gh RepoGetter, owne
 		return false, err
 	}
 
-	if !info.Private {
+	if !info.Private && !repo.AllowPublic {
 		// Every GitHub token can read a public repository, so serving one would
 		// let any GitHub account in. Refused for everyone, until a restart: this
-		// is a mistake in the configuration, not a fact about this user.
+		// is a mistake in the configuration, not a fact about this user. The
+		// operator can allow it, and must then list who may sign in.
 		c.mu.Lock()
 		first := !c.public[s]
 		c.public[s] = true

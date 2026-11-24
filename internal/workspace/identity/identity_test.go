@@ -206,3 +206,36 @@ func TestTheCookieKeyMustBe32Bytes(t *testing.T) {
 		t.Error("want a short key refused")
 	}
 }
+
+// With a list of admitted accounts, an account that is not on it is refused at
+// sign-in, in its own words, whatever its token can read.
+func TestAnAccountThatIsNotListedIsRefusedAtSignIn(t *testing.T) {
+	gh := testgithub.New(t)
+	gh.SetRepo("example", "open", testgithub.Repo{Private: false})
+	gh.SetRepo("example", "closed", testgithub.Repo{Private: true, Readers: []string{"alice", "mallory"}})
+	checker := access.New([]wsconfig.Repository{
+		{Owner: "example", Name: "open", AllowPublic: true}, {Owner: "example", Name: "closed"},
+	}, time.Minute, nil)
+	checker.Permit([]string{"alice"})
+	m := &TokenMethod{NewClient: gh.Client, Access: checker, SessionLength: time.Hour, Now: func() time.Time { return testNow }}
+
+	// mallory can read the public repository, as anyone can, and the private one too.
+	if _, err := m.SignIn(context.Background(), gh.AddUser("mallory")); !errors.Is(err, ErrNotListed) {
+		t.Errorf("an account that is not listed: %v, want ErrNotListed", err)
+	}
+	// Refused on the login alone: no repository was asked about.
+	for _, call := range gh.Calls() {
+		if strings.Contains(call, "/repos/") {
+			t.Errorf("GitHub was asked %q for an account the workspace does not admit", call)
+		}
+	}
+
+	session, err := m.SignIn(context.Background(), gh.AddUser("alice"))
+	if err != nil {
+		t.Fatalf("the listed account: %v", err)
+	}
+	// The public repository is served to her, because the operator allowed it.
+	if ok, err := m.CanRead(context.Background(), session, "example", "open"); !ok || err != nil {
+		t.Errorf("the allowed public repository: %v, %v", ok, err)
+	}
+}

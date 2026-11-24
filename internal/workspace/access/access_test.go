@@ -159,3 +159,63 @@ func TestConnectedKeepsConfigurationOrder(t *testing.T) {
 		t.Errorf("Lookup should match without regard to case, got %+v, %v", r, ok)
 	}
 }
+
+// A public repository can be served when the operator says so. GitHub's check
+// then admits every account, so the list of admitted logins does the admitting.
+func TestAPublicRepositoryIsServedOnlyWhenAllowedAndOnlyToListedLogins(t *testing.T) {
+	gh := &fakeGitHub{answers: map[string]func() (ghclient.RepoInfo, error){
+		"Example/Alpha": func() (ghclient.RepoInfo, error) { return ghclient.RepoInfo{Private: false, Visibility: "public"}, nil },
+	}}
+	var reported []string
+	allowed := []wsconfig.Repository{{Owner: "Example", Name: "Alpha", AllowPublic: true}}
+	c := New(allowed, time.Minute, func(owner, name string) { reported = append(reported, owner+"/"+name) })
+	c.Permit([]string{"Octocat"})
+	ctx := context.Background()
+
+	// The listed account, under any spelling of its login.
+	for _, login := range []string{"octocat", "OCTOCAT"} {
+		if ok, err := c.CanRead(ctx, login, gh, "example", "alpha"); !ok || err != nil {
+			t.Errorf("%s: want the allowed public repository served, got %v, %v", login, ok, err)
+		}
+	}
+	// Any other account, which GitHub would let read it.
+	calls := gh.calls
+	if ok, err := c.CanRead(ctx, "stranger", gh, "example", "alpha"); ok || err != nil {
+		t.Errorf("an account that is not listed: got %v, %v", ok, err)
+	}
+	if gh.calls != calls {
+		t.Error("GitHub was asked about an account the workspace does not admit")
+	}
+	if len(reported) != 0 {
+		t.Errorf("an allowed public repository was reported as a configuration error: %v", reported)
+	}
+	if !c.Permitted("octocat") || c.Permitted("stranger") {
+		t.Error("Permitted disagrees with the list")
+	}
+}
+
+func TestWithNoListEveryLoginIsPermitted(t *testing.T) {
+	c := New(repos, time.Minute, nil)
+	if !c.Permitted("anyone") {
+		t.Error("with no list, GitHub alone decides")
+	}
+	c.Permit(nil)
+	if !c.Permitted("anyone") {
+		t.Error("an empty list is no list")
+	}
+}
+
+// The list applies to private repositories too, when one is set.
+func TestTheListAppliesToPrivateRepositories(t *testing.T) {
+	gh := &fakeGitHub{answers: map[string]func() (ghclient.RepoInfo, error){
+		"Example/Alpha": func() (ghclient.RepoInfo, error) { return ghclient.RepoInfo{Private: true}, nil },
+	}}
+	c := New(repos, time.Minute, nil)
+	c.Permit([]string{"octocat"})
+	if ok, _ := c.CanRead(context.Background(), "hubot", gh, "example", "alpha"); ok {
+		t.Error("an account that is not listed read a private repository")
+	}
+	if ok, _ := c.CanRead(context.Background(), "octocat", gh, "example", "alpha"); !ok {
+		t.Error("the listed account was refused")
+	}
+}

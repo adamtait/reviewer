@@ -173,3 +173,47 @@ func TestSecretsAreValidatedAndNeverPrinted(t *testing.T) {
 			len(keys.Cookie), len(keys.Provider))
 	}
 }
+
+func TestAPublicRepositoryNeedsAListOfWhoMaySignIn(t *testing.T) {
+	c := valid()
+	c.Repositories[0].AllowPublic = true
+	if problems := c.Problems(); !mentions(problems, "allowPublic") || !mentions(problems, "allowedLogins") {
+		t.Errorf("allowPublic with no allowedLogins should be refused, got %v", problems)
+	}
+	c.AllowedLogins = []string{"octocat"}
+	if problems := c.Problems(); len(problems) != 0 {
+		t.Errorf("allowPublic with a list: %v", problems)
+	}
+
+	// The list is optional when every repository is private, and checked when given.
+	c = valid()
+	c.AllowedLogins = []string{"octocat", "Mona-Lisa", "a"}
+	if problems := c.Problems(); len(problems) != 0 {
+		t.Errorf("a list with private repositories: %v", problems)
+	}
+	for name, logins := range map[string][]string{
+		"an empty login":              {""},
+		"a login with a space":        {"octo cat"},
+		"an address":                  {"octocat@example.com"},
+		"a login listed twice":        {"octocat", "Octocat"},
+		"a login far too long":        {strings.Repeat("a", 40)},
+		"a login with a slash":        {"example/octocat"},
+		"a login with a hyphen first": {"-octocat"},
+	} {
+		c := valid()
+		c.AllowedLogins = logins
+		if problems := c.Problems(); !mentions(problems, "allowedLogins") {
+			t.Errorf("%s: want a problem naming allowedLogins, got %v", name, problems)
+		}
+	}
+}
+
+func TestTheTwoSettingsAreReadFromTheFile(t *testing.T) {
+	c, err := Parse([]byte("allowedLogins: [octocat, hubot]\nrepositories:\n  - owner: example\n    name: open\n    allowPublic: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.AllowedLogins) != 2 || !c.Repositories[0].AllowPublic {
+		t.Errorf("config = %+v", c)
+	}
+}

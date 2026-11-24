@@ -59,6 +59,13 @@ The design owner has made two sets of decisions that narrow what was first asked
 12. **The feedback thresholds below** were set by the drafter.
 13. **The repository moves to supported Go releases.**
 
+**Decided by the design owner on 2026-11-24, in answer to the open questions:**
+
+14. **A public repository can be connected, when the configuration allows it by name.** This changes decision 6. The reason is practical: the first deployment has to be tried on a public repository. Allowing one requires a list of the GitHub accounts that may sign in, because GitHub's own check admits every account to a public repository. The default is unchanged: a public repository that is not allowed is refused for everyone.
+15. **PR-53 and PR-54 are built before the navigation week.** The week then decides whether the assistant is turned on for the team, not whether it is built.
+16. **The first version covers pull requests only.** Branch views stay unscheduled.
+17. **The provider key stays a setting.** Each repository names the environment variable that holds its key, so a paid key replaces a trial key with no change to the code or the configuration file.
+
 ## The Problem
 
 The design owner reviews each pull request line by line on GitHub's pull request page, and reports three gaps.
@@ -158,16 +165,11 @@ The workspace shows whatever the description holds, so it gains from an intent r
 
 ## Open Questions
 
-Eight questions are open, as of 2026-11-24. PR-47 to PR-52 are built. Each question says what it holds up.
+The design owner answered the eight questions that were open on 2026-11-24; the answers are decisions 14 to 17 above, and pull request 18 was opened so that CI runs. Three things are still not known. None holds up building.
 
-1.  **The first connected repository.** An earlier revision said the first connected repository would be this one. This repository is public, and a public repository cannot be connected. The first must be a private TypeScript repository. One on the design owner's own account needs no organisation approval. Which one? *Holds up:* the first deployment, and so the navigation week.
-2.  **Building past the navigation week.** The plan says PR-53 does not start until the navigation week has passed its thresholds. That week needs a deployment and the team, and neither exists yet. Should PR-53 and PR-54 be built now, with the week then deciding whether the assistant is turned on, or wait for the week as planned? *Holds up:* PR-53 and PR-54. The drafter has stopped at this gate.
-3.  **A key for the model provider, and a paid tier.** PR-53's adapter is tested against recorded responses from the provider. Recording them needs a key, entered through the environment's credential form and not pasted into a conversation. The key used in the earlier tests is on a free tier that allows five requests a minute and twenty a day for the model tested, and one question takes three or more requests, so the assistant week needs a paid tier with a spending limit. *Holds up:* the adapter in PR-53, and the assistant week.
-4.  **A pull request for this work.** CI in this repository runs on pull requests and on `main`, so nothing on the working branch has been through CI. Two jobs in particular have never run anywhere: the image build, because the drafting environment has no Docker daemon, and the browser journeys on a clean machine. *Holds up:* knowing the image builds.
-5.  **Credential approval (E1).** Will an organisation owner approve fine-grained personal access tokens with read access to Contents, Pull requests, Metadata and Actions for the team's repositories? Two limits apply whatever the answer: one deployment serves one organisation's repositories, because a token covers one owner; and an outside collaborator cannot sign in, because GitHub does not let outside collaborators use fine-grained tokens on an organisation's repositories. *Holds up:* connecting an organisation's repository. It does not hold up a repository on a personal account.
-6.  **A fine-grained token on a private repository.** The archive call and the other GitHub calls the service makes were run against this repository and work as designed; the results are in the trials page. What has not been run is the same calls with a fine-grained token on a private repository. *Holds up:* nothing. It is checked at the first deployment.
-7.  **Branch views.** The concept asked for a view per branch as well as per pull request. This design covers pull requests only. The index is built for every branch push and source is read by commit, so a branch view needs one more list and one more address. It is listed as unscheduled. Is it wanted in the first version? *Holds up:* nothing.
-8.  **The trial copy of the index workflow** in this repository runs for branches under `claude/`. Keep it or remove it? *Holds up:* nothing.
+1.  **Credential approval (E1).** The design owner believes an organisation owner will approve fine-grained personal access tokens with read access to Contents, Pull requests, Metadata and Actions, and cannot test it yet. Two limits apply whatever the answer: one deployment serves one organisation's repositories, because a token covers one owner; and an outside collaborator cannot sign in, because GitHub does not let outside collaborators use fine-grained tokens on an organisation's repositories. *Holds up:* connecting an organisation's repository.
+2.  **A fine-grained token on a private repository.** The GitHub calls the service makes were run against this repository and work as designed. The same calls with a fine-grained token on a private repository have not been run: the drafting environment cannot reach one. *Holds up:* nothing. It is checked at the first deployment on a private repository.
+3.  **A paid tier for the model provider.** The assistant is developed against a free-tier key, which allows five requests a minute and twenty a day for the model tested. One question takes three or more requests. *Holds up:* the assistant week, which needs a paid key with a spending limit. The key is a setting, so it is replaced without a change to the code.
 
 ## Critical User Journeys (CUJs)
 

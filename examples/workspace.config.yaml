@@ -39,6 +39,12 @@ limits:
   callSeconds: 120            # one model call
   waitSeconds: 30             # the longest provider-named wait the assistant sits out
 
+# Optional: the only GitHub accounts that may sign in. Leave it out and GitHub
+# alone decides, which is right when every connected repository is private.
+# It is required if any repository below sets allowPublic.
+# allowedLogins:
+#   - "your-github-login"
+
 repositories:
   # A repository with an assistant. All four model fields are set.
   - owner: "example-owner"
@@ -51,3 +57,11 @@ repositories:
   # A repository with navigation and no assistant. No model field is set.
   - owner: "example-owner"
     name: "another-repo"
+
+  # A PUBLIC repository, for a trial. Without allowPublic the service refuses a
+  # public repository for everyone, because every GitHub account can read one
+  # and so every GitHub account could sign in. With it, allowedLogins above
+  # must say who may.
+  # - owner: "example-owner"
+  #   name: "a-public-repo"
+  #   allowPublic: true

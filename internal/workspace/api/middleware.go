@@ -81,6 +81,13 @@ func (s *Server) wrap(route Route) http.Handler {
 				s.signedOut(rec)
 				return
 			}
+			// A session sealed before its account was taken off the list of
+			// admitted accounts is not a session any more. Nothing on the
+			// server holds sessions, so this is where the list takes effect.
+			if !s.Access.Permitted(session.Login) {
+				s.signedOut(rec)
+				return
+			}
 			fields.SetUser(session.Login)
 			ctx = context.WithValue(ctx, sessionKey{}, session)
 

@@ -31,11 +31,13 @@ const (
 	CodeGitHubTimeout = "github_timeout"
 	CodeInternal      = "internal"
 
-	// The three ways a sign-in is refused. Each has a different fix, so each
+	// The ways a sign-in is refused. Each has a different fix, so each
 	// has its own code and the sign-in page explains each in its own words.
 	CodeNotFineGrained = "not_fine_grained"
 	CodeRejected       = "rejected"
 	CodeNoRepository   = "no_repository"
+	// CodeNotListed: the workspace admits listed accounts only.
+	CodeNotListed = "not_listed"
 )
 
 // TokenRequest is the body of a sign-in.

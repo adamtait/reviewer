@@ -119,6 +119,8 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 				slog.String("owner", owner), slog.String("repo", name))
 		})
 
+	checker.Permit(cfg.AllowedLogins)
+
 	public, err := url.Parse(cfg.PublicURL)
 	if err != nil {
 		return nil, fmt.Errorf("publicUrl: %w", err)

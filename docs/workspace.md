@@ -61,14 +61,40 @@ starting, so the service never chooses such a value for you.
 | `indexWorkflowFile`, `indexArtifactName` | The file name of the index workflow and the name of its artifact. They must match what `reviewer init` writes into a repository: `review-index.yml` and `review-index`. |
 | `sessionDays` | How long a sign-in lasts, from 1 to 366. |
 | `accessCacheSeconds` | How long "this user can read this repository" is believed before GitHub is asked again, from 1 to 3600. Access removed on GitHub takes effect within this period. |
+| `allowedLogins` | Optional. The only GitHub accounts that may sign in. Required when a repository sets `allowPublic`. |
 | `limits` | Ten bounds on memory, time and model use. Each is described in the example file. |
 | `repositories` | The connected repositories. Each has an `owner` and a `name`. |
 
 ### Repositories
 
-A connected repository must be private. GitHub lets any token read a public repository, so
-connecting one would let any GitHub account sign in. The service refuses a public repository for
-every user; see "Who can see what" below.
+A connected repository is expected to be private. The rule the service runs on is that it shows a
+user a repository if and only if GitHub lets that user read it, and for a private repository that
+rule is the whole of access control.
+
+A public repository breaks the rule's usefulness, not its truth: GitHub lets every account read
+one, so every GitHub account would pass the check and could sign in. By default the service
+therefore refuses a public repository for every user; see "Who can see what" below.
+
+To connect a public repository anyway, for a trial or for an open-source project, set both of
+these. The service will not start with the first and without the second:
+
+```yaml
+allowedLogins: ["your-login", "a-colleague"]
+repositories:
+  - owner: "example-owner"
+    name: "a-public-repo"
+    allowPublic: true
+```
+
+`allowedLogins` then decides who may sign in, in place of GitHub. It applies to the whole
+deployment: an account that is not listed cannot sign in at all, whatever its token can read, and
+a session whose account is taken off the list stops working at the next restart. Each listed
+account still needs a token GitHub accepts. The list can also be set with only private
+repositories, as a second limit on top of GitHub's.
+
+What a public repository changes for the people listed: nothing. What it changes for you: the
+list is now a table you keep, and a wrong entry admits the wrong person. With an assistant
+configured, everyone listed can spend the provider's budget.
 
 A repository gets an assistant when all four of `provider`, `model`, `baseUrl` and `apiKeyEnv` are
 set. With none of them set it has navigation and search, which need no model. Setting only some is
@@ -108,12 +134,13 @@ repositories, so cannot sign in.
 
 ### What sign-in checks
 
-A token is accepted only if all three hold:
+A token is accepted only if all of these hold:
 
 | Check | Refusal code | What the user is told |
 | --- | --- | --- |
 | It is a fine-grained token | `not_fine_grained` | Classic tokens are not accepted, because they can carry write access to every repository the user can reach. |
 | GitHub accepts it | `rejected` | It may have expired or been revoked. |
+| Its account is listed, if `allowedLogins` is set | `not_listed` | The operator keeps a list of who may sign in, and this account is not on it. |
 | It can read at least one connected repository | `no_repository` | It may be waiting for an organisation owner's approval. |
 
 The service cannot check which permissions a token carries. It makes no write call to GitHub,
@@ -148,9 +175,10 @@ time, so access granted on GitHub works at once and access removed stops within 
 A repository the user cannot read, one that is not connected, and an address that does not exist
 all get the same "not found" response.
 
-If a connected repository turns out to be public, the service refuses it for every user and logs
-`a connected repository is public and is refused for every user`. Remove it from the configuration,
-or make it private and restart.
+If a connected repository turns out to be public and does not set `allowPublic`, the service refuses
+it for every user and logs `a connected repository is public and is refused for every user`. Remove
+it from the configuration, make it private, or allow it as described under "Repositories", and
+restart.
 
 ## Reading source
 

@@ -24,7 +24,8 @@ export type ErrorCode =
   | 'internal'
   | 'not_fine_grained'
   | 'rejected'
-  | 'no_repository';
+  | 'no_repository'
+  | 'not_listed';
 
 export interface RepositoryRef {
   owner: string;

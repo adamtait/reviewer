@@ -39,6 +39,11 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusUnauthorized, apitypes.CodeRejected,
 			"GitHub did not accept this token. It may have expired or been revoked.")
 		return
+	case errors.Is(err, identity.ErrNotListed):
+		fields.SetOutcome(apitypes.CodeNotListed)
+		WriteError(w, http.StatusUnauthorized, apitypes.CodeNotListed,
+			"This workspace admits only the GitHub accounts its operator has listed, and yours is not one of them.")
+		return
 	case errors.Is(err, identity.ErrNoRepository):
 		fields.SetOutcome(apitypes.CodeNoRepository)
 		WriteError(w, http.StatusUnauthorized, apitypes.CodeNoRepository,

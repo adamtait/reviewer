@@ -58,6 +58,10 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   is served under a content security policy that allows scripts and requests
   from the service alone. `THIRD_PARTY_LICENSES.md` gains its packages, and
   `tools/checklicenses` reads them from the web application's lockfile.
+- The workspace can serve a public repository when the configuration allows it
+  by name with `allowPublic`. That requires `allowedLogins`, the list of GitHub
+  accounts that may sign in, because GitHub lets every account read a public
+  repository. The default is unchanged: a public repository is refused.
 - Go-to-definition and find-references in the workspace, for TypeScript, from
   the index the `review-index.yml` workflow builds. The service decodes the
   index itself, checks it against the commit's files, and follows a definition

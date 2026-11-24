@@ -39,8 +39,9 @@ func (m *TokenMethod) now() time.Time {
 	return time.Now()
 }
 
-// SignIn accepts a token only if all three of these hold: it is fine-grained,
-// GitHub says whose it is, and it can read at least one connected repository.
+// SignIn accepts a token only if all of these hold: it is fine-grained, GitHub
+// says whose it is, that account is one the workspace admits, and the token can
+// read at least one connected repository.
 //
 // The third check is what keeps a stranger out. Without it anyone with any
 // fine-grained token could hold a session — one that showed them nothing, but a
@@ -61,6 +62,9 @@ func (m *TokenMethod) SignIn(ctx context.Context, credential string) (Session, e
 		return Session{}, ErrRejected
 	case err != nil:
 		return Session{}, err
+	}
+	if !m.Access.Permitted(user.Login) {
+		return Session{}, ErrNotListed
 	}
 
 	var failure error

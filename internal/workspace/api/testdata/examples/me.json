@@ -1,0 +1,13 @@
+{
+  "login": "alice",
+  "repositories": [
+    {
+      "owner": "example",
+      "name": "alpha"
+    },
+    {
+      "owner": "example",
+      "name": "beta"
+    }
+  ]
+}

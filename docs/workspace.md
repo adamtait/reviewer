@@ -6,8 +6,9 @@ navigation and an AI assistant to a pull request, and leaves commenting, approvi
 GitHub. Its design is [`designs/review-workspace.md`](designs/review-workspace.md).
 
 This guide is for the person who deploys and configures it. It grows with each pull request of the
-design's plan. **So far the service starts, logs, and answers its health address. It has no
-sign-in and shows nothing of a repository yet.**
+design's plan. **So far the service starts, logs, signs users in, and says which connected
+repositories each can read. It shows nothing of a repository yet, and has no web page: sign-in is
+an API call until the web application arrives.**
 
 ## What it is
 
@@ -57,8 +58,8 @@ starting, so the service never chooses such a value for you.
 ### Repositories
 
 A connected repository must be private. GitHub lets any token read a public repository, so
-connecting one would let any GitHub account sign in. The service will refuse a public repository
-once sign-in exists.
+connecting one would let any GitHub account sign in. The service refuses a public repository for
+every user; see "Who can see what" below.
 
 A repository gets an assistant when all four of `provider`, `model`, `baseUrl` and `apiKeyEnv` are
 set. With none of them set it has navigation and search, which need no model. Setting only some is
@@ -74,6 +75,72 @@ Secrets come from the environment and are never written to a file.
 | --- | --- |
 | `WORKSPACE_COOKIE_KEY` | 32 random bytes, base64-encoded. It seals session cookies. Changing it signs everyone out. Generate one with `head -c 32 /dev/urandom \| base64`. |
 | The variable each repository's `apiKeyEnv` names | That repository's model provider key. |
+
+## Signing in
+
+A user signs in with a fine-grained personal access token of their own. The service keeps no
+credential of its own for GitHub: everything it reads, it reads as the user who asked.
+
+### Creating a token
+
+On GitHub, under Settings, Developer settings, Personal access tokens, Fine-grained tokens:
+
+1. Set the resource owner to the owner of the connected repositories.
+2. Choose "Only select repositories" and pick the connected ones.
+3. Under repository permissions, set these four to **Read-only** and leave the rest at "No access":
+   Contents, Pull requests, Metadata, Actions.
+
+In an organisation, an owner must by default approve the token before it reads anything private.
+Until then sign-in is refused with the third message below.
+
+Two limits come from GitHub. A token covers one owner, so one deployment serves one organisation's
+repositories. And an outside collaborator cannot use a fine-grained token on an organisation's
+repositories, so cannot sign in.
+
+### What sign-in checks
+
+A token is accepted only if all three hold:
+
+| Check | Refusal code | What the user is told |
+| --- | --- | --- |
+| It is a fine-grained token | `not_fine_grained` | Classic tokens are not accepted, because they can carry write access to every repository the user can reach. |
+| GitHub accepts it | `rejected` | It may have expired or been revoked. |
+| It can read at least one connected repository | `no_repository` | It may be waiting for an organisation owner's approval. |
+
+The service cannot check which permissions a token carries. It makes no write call to GitHub,
+whatever the token allows.
+
+Until the web application exists, sign in with:
+
+```
+curl -i -c cookies.txt -H 'X-Workspace-Request: 1' \
+  -d '{"token":"<the token>"}' http://localhost:8080/auth/token
+curl -b cookies.txt http://localhost:8080/api/v1/me
+```
+
+### The session
+
+The token, the login and an expiry time are sealed into a cookie with `WORKSPACE_COOKIE_KEY`. The
+cookie cannot be read by scripts and is not sent with requests another site makes. Nothing about
+the session is kept on the server, which has three consequences:
+
+- Signing out clears the cookie in that browser only.
+- A copy of the cookie works until it expires, after `sessionDays`, or until the token is revoked
+  on GitHub. Revoking the token is how to end a session for certain.
+- Changing `WORKSPACE_COOKIE_KEY` signs everyone out.
+
+### Who can see what
+
+Before anything of a repository is shown, the service asks GitHub, with the user's own token,
+whether that user can read it. A yes is believed for `accessCacheSeconds`; a no is asked again every
+time, so access granted on GitHub works at once and access removed stops within that period.
+
+A repository the user cannot read, one that is not connected, and an address that does not exist
+all get the same "not found" response.
+
+If a connected repository turns out to be public, the service refuses it for every user and logs
+`a connected repository is public and is refused for every user`. Remove it from the configuration,
+or make it private and restart.
 
 ## Deploying on Cloud Run
 
@@ -111,7 +178,7 @@ container passes its memory limit Cloud Run stops it, and every request in fligh
 
 The service writes one JSON line per request to standard output, which Cloud Run sends to Cloud
 Logging. Each line has a request identifier, the route's name, the status and the duration, and,
-once sign-in exists, the user's login and the repository, pull request and commit.
+for a signed-in user, their login and the repository, pull request and commit.
 
 The service's own lines never contain source code, a pull request description, conversation text,
 search text, a token or a key. Every string it logs passes through a filter that removes GitHub

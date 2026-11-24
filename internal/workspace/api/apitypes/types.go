@@ -30,7 +30,32 @@ const (
 	CodeGitHubFailed  = "github_failed"
 	CodeGitHubTimeout = "github_timeout"
 	CodeInternal      = "internal"
+
+	// The three ways a sign-in is refused. Each has a different fix, so each
+	// has its own code and the sign-in page explains each in its own words.
+	CodeNotFineGrained = "not_fine_grained"
+	CodeRejected       = "rejected"
+	CodeNoRepository   = "no_repository"
 )
+
+// TokenRequest is the body of a sign-in.
+type TokenRequest struct {
+	Token string `json:"token"`
+}
+
+// RepositoryRef names a repository.
+type RepositoryRef struct {
+	Owner string `json:"owner"`
+	Name  string `json:"name"`
+}
+
+// Me is the signed-in user and the connected repositories they can read. A
+// repository the user cannot read is absent, not marked: the list must not
+// reveal what is connected.
+type Me struct {
+	Login        string          `json:"login"`
+	Repositories []RepositoryRef `json:"repositories"`
+}
 
 // Health is the body of the health address.
 type Health struct {

@@ -889,7 +889,7 @@ Rules that apply to every route:
 *   Every route under `/api/v1/repos/{owner}/{repo}` passes the access check before anything is read. A user without access gets 404 with code `not_found`, the same as for a repository that is not connected.
 *   `sha` is a full 40-character commit hash. Anything else is 400.
 *   Other errors: 400 `bad_request`; 401 `signed_out`; 413 `too_large`, when an archive or index passes its limit; 502 `github_failed`; 504 `github_timeout`. Every error body is an `Error`.
-*   A request that changes state, or that asks a question, must carry the header `X-Workspace-Request: 1`. The cookie is `SameSite=Lax`, `Secure` and `HttpOnly`.
+*   Every request that is not a `GET` must carry the header `X-Workspace-Request: 1`. The cookie is `SameSite=Lax`, `Secure` and `HttpOnly`.
 
 The question route answers with `text/event-stream`. Each event has a name and one JSON object:
 
@@ -1031,8 +1031,10 @@ Each table lists every file its pull request touches. A pull request that adds a
 | `internal/workspace/identity/identity.go`, `token.go`, `cookie.go`, `identity_test.go` | Create | The interface; the token method with its three sign-in checks; sealing and opening the cookie with AES-256-GCM. Tests: a classic token is refused; a token that reads no connected repository is refused; a cookie sealed with another key is refused; an expired cookie is refused. |
 | `internal/workspace/access/access.go`, `middleware.go`, `access_test.go` | Create | `CanRead`, cached per user and repository in memory for `accessCacheSeconds`. A repository GitHub reports as public is refused for everyone and logged as a configuration error. The same response for "no access" and "not connected". |
 | `internal/workspace/api/auth.go` | Create | `POST /auth/token`, `POST /auth/signout`, `GET /api/v1/me`. |
+| `internal/workspace/testgithub/testgithub.go` | Create | A stand-in for GitHub's API for the service's tests. It answers 401 for an unknown token and 404 for a private repository the user cannot read, as GitHub does. |
+| `internal/workspace/api/testdata/examples/` | Create | The first recorded example responses: the health address, the user's repository list, and the two error bodies. |
 | `internal/workspace/api/middleware.go` | Modify | Open the cookie, build the request's GitHub client, and require the custom header where the rules above say. |
-| `internal/ghclient/client.go`, `client_test.go` | Modify | Add `GetRepo`, returning whether the repository is private, as a method on `REST`. Add description, author, creation time and web address to `PullRequest`. The `Client` interface is not changed, so the fakes in `internal/poller` and `internal/reporters` still compile. |
+| `internal/ghclient/client.go`, `client_test.go` | Modify | Add `GetRepo`, returning whether the repository is private, as a method on `REST`. Add description, author, creation time and web address to `PullRequest`. Add `ErrForbidden` for a request GitHub refuses, so a token without a permission, or one waiting for approval, reads as "cannot read" and not as a failure; a rate limit keeps its own message. The `Client` interface is not changed, so the fakes in `internal/poller` and `internal/reporters` still compile. |
 | `docs/workspace.md`, `SECURITY.md` | Modify | How users create a token and sign in; what the cookie holds; that no token is stored. |
 | `docs/adr/0032-identity-behind-one-interface.md` | Create | |
 

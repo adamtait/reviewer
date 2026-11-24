@@ -3,15 +3,19 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
+	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 )
 
@@ -19,15 +23,29 @@ import (
 // person reporting a problem can quote the one value that finds its log line.
 const HeaderRequestID = "X-Request-Id"
 
-// wrap puts a handler behind the three things every request gets: an
-// identifier, one log line, and a panic that becomes a 500 rather than a dropped
-// connection.
-func (s *Server) wrap(name string, next http.HandlerFunc) http.Handler {
+// HeaderRequest must be present, with the value "1", on every request that is
+// not a GET. A browser will not let another site's page add a header to a
+// request without this service's permission, which it never gives, so the
+// header shows the request came from the workspace's own page. The cookie's
+// SameSite attribute says the same thing a second way.
+const HeaderRequest = "X-Workspace-Request"
+
+type sessionKey struct{}
+
+// SessionFrom returns the signed-in user for a request on an Auth or Repo route.
+func SessionFrom(ctx context.Context) (identity.Session, bool) {
+	s, ok := ctx.Value(sessionKey{}).(identity.Session)
+	return s, ok
+}
+
+// wrap puts a route's handler behind everything a request gets: an identifier,
+// one log line, a panic that becomes a 500 rather than a dropped connection,
+// and, where the route asks for them, a signed-in user and the access check.
+func (s *Server) wrap(route Route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		id := newRequestID()
-		ctx, _ := obs.WithFields(r.Context())
-		r = r.WithContext(ctx)
+		ctx, fields := obs.WithFields(r.Context())
 
 		rec := &recorder{ResponseWriter: w}
 		rec.Header().Set(HeaderRequestID, id)
@@ -38,17 +56,59 @@ func (s *Server) wrap(name string, next http.HandlerFunc) http.Handler {
 				// The caller is told only that something broke: a panic message
 				// can quote whatever the handler was holding.
 				s.log.Event(ctx, slog.LevelError, "panic",
-					slog.String("request_id", id), slog.String("route", name),
+					slog.String("request_id", id), slog.String("route", route.Name),
 					slog.String("panic", fmt.Sprint(recovered)))
 				if !rec.wrote {
 					WriteError(rec, http.StatusInternalServerError, apitypes.CodeInternal, "internal error")
 				}
 			}
-			s.log.Request(ctx, id, name, r.Method, rec.status(), time.Since(started))
+			s.log.Request(ctx, id, route.Name, r.Method, rec.status(), time.Since(started))
 		}()
 
-		next(rec, r)
+		if route.Method != "" && r.Method != http.MethodGet && r.Method != http.MethodHead &&
+			r.Header.Get(HeaderRequest) != "1" {
+			WriteError(rec, http.StatusBadRequest, apitypes.CodeBadRequest,
+				"this request must carry the header "+HeaderRequest+": 1")
+			return
+		}
+
+		if route.Auth || route.Repo {
+			session, err := s.Cookies.Read(r)
+			if err != nil {
+				s.signedOut(rec)
+				return
+			}
+			fields.SetUser(session.Login)
+			ctx = context.WithValue(ctx, sessionKey{}, session)
+
+			if route.Repo {
+				owner, repo := r.PathValue("owner"), r.PathValue("repo")
+				fields.SetRepo(owner, repo)
+				ok, err := s.Identity.CanRead(ctx, session, owner, repo)
+				switch {
+				case errors.Is(err, access.ErrTokenRejected):
+					s.signedOut(rec)
+					return
+				case err != nil:
+					fields.SetOutcome("github_failed")
+					WriteError(rec, http.StatusBadGateway, apitypes.CodeGitHubFailed, "GitHub could not be asked; try again")
+					return
+				case !ok:
+					notFound(rec, r)
+					return
+				}
+			}
+		}
+
+		route.Handler(rec, r.WithContext(ctx))
 	})
+}
+
+// signedOut tells the browser its session is gone and removes the cookie, so
+// the page stops presenting it.
+func (s *Server) signedOut(w http.ResponseWriter) {
+	s.Cookies.Clear(w)
+	WriteError(w, http.StatusUnauthorized, apitypes.CodeSignedOut, "sign in again")
 }
 
 // newRequestID returns 16 random hex characters.

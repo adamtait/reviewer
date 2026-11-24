@@ -5,13 +5,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/adamtait/reviewer/internal/workspace/testgithub"
 )
 
 const testCookieKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" // 32 zero bytes
@@ -160,5 +166,114 @@ func TestServeAnswersHealthAndStopsWhenTold(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Errorf("the log should contain %s:\n%s", want, log)
 		}
+	}
+}
+
+// The wiring, end to end: a configuration naming a stand-in GitHub, a real
+// listener, a sign-in over HTTP, and the list of repositories that comes back.
+// The unit tests cover each part; only this shows the parts are joined up.
+func TestSignInThroughTheRunningService(t *testing.T) {
+	gh := testgithub.New(t)
+	gh.SetRepo("example", "private-repo", testgithub.Repo{Private: true, Readers: []string{"alice"}})
+	gh.SetRepo("example", "other-repo", testgithub.Repo{Private: true, Readers: []string{"someone-else"}})
+	token := gh.AddUser("alice")
+
+	config := fmt.Sprintf(`
+listen: "127.0.0.1:0"
+publicUrl: "http://localhost:8080"
+github:
+  apiBaseUrl: %q
+  webBaseUrl: %q
+indexWorkflowFile: "review-index.yml"
+indexArtifactName: "review-index"
+sessionDays: 30
+accessCacheSeconds: 300
+limits: {archiveBytes: 1000, fileBytes: 100, indexBytes: 1000, cacheBytes: 10000, fetchSeconds: 5,
+  modelCalls: 2, questionTokens: 1000, answerTokens: 100, callSeconds: 5, waitSeconds: 1}
+repositories:
+  - {owner: example, name: private-repo}
+  - {owner: example, name: other-repo}
+`, gh.URL, gh.URL)
+
+	listening := make(chan string, 1)
+	onListen = func(addr string) { listening <- addr }
+	t.Cleanup(func() { onListen = nil })
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	var stdout, stderr bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, []string{"serve", "--config", writeConfig(t, config)}, &stdout, &stderr,
+			func(name string) string {
+				if name == "WORKSPACE_COOKIE_KEY" {
+					return testCookieKey
+				}
+				return ""
+			})
+	}()
+	var base string
+	select {
+	case addr := <-listening:
+		base = "http://" + addr
+	case err := <-done:
+		t.Fatalf("serve returned before listening: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not start listening")
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+
+	// Before sign-in there is no session.
+	resp, err := client.Get(base + "/api/v1/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("me before sign-in: status %d, want 401", resp.StatusCode)
+	}
+
+	body, _ := json.Marshal(map[string]string{"token": token})
+	req, _ := http.NewRequest(http.MethodPost, base+"/auth/token", bytes.NewReader(body))
+	req.Header.Set("X-Workspace-Request", "1")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("sign-in: status %d, want 204", resp.StatusCode)
+	}
+
+	resp, err = client.Get(base + "/api/v1/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var me struct {
+		Login        string
+		Repositories []struct{ Owner, Name string }
+	}
+	if err := json.Unmarshal(raw, &me); err != nil {
+		t.Fatalf("me: %v: %s", err, raw)
+	}
+	if me.Login != "alice" || len(me.Repositories) != 1 || me.Repositories[0].Name != "private-repo" {
+		t.Errorf("want alice with the one repository she can read, got %s", raw)
+	}
+
+	stop()
+	if err := <-done; err != nil {
+		t.Errorf("want a clean stop, got %v", err)
+	}
+	if strings.Contains(stdout.String(), token) {
+		t.Errorf("the user's token reached the log:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"user":"alice"`) {
+		t.Errorf("the log should name the signed-in user:\n%s", stdout.String())
 	}
 }

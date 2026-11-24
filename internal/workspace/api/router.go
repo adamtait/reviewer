@@ -7,7 +7,9 @@ package api
 import (
 	"net/http"
 
+	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
+	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 )
 
@@ -25,23 +27,41 @@ type Route struct {
 	// Name identifies the route in the log. The feedback measures are counts
 	// by this name, so it is stable and never contains a path value.
 	Name string
-	// Repo marks a route that carries a repository's data.
+	// Auth marks a route that needs a signed-in user.
+	Auth bool
+	// Repo marks a route that carries a repository's data. Its pattern has
+	// {owner} and {repo}, and the middleware refuses it unless GitHub says the
+	// signed-in user can read that repository. Repo implies Auth.
 	Repo    bool
 	Handler http.HandlerFunc
 }
 
-// Server holds the route table.
-type Server struct {
-	log     *obs.Logger
-	version string
-	routes  []Route
+// Deps is what the server is built from.
+type Deps struct {
+	Log     *obs.Logger
+	Version string
+	// Identity and Cookies are sign-in. Everything else in the service is
+	// handed a session and does not know how it came about.
+	Identity identity.Provider
+	Cookies  *identity.Cookies
+	// Access lists the connected repositories.
+	Access *access.Checker
 }
 
-// New returns a Server with the routes that need nothing but the process: so
-// far, the health address.
-func New(log *obs.Logger, version string) *Server {
-	s := &Server{log: log, version: version}
+// Server holds the route table.
+type Server struct {
+	Deps
+	log    *obs.Logger
+	routes []Route
+}
+
+// New returns a Server with the routes that exist so far.
+func New(deps Deps) *Server {
+	s := &Server{Deps: deps, log: deps.Log}
 	s.Add(Route{Method: http.MethodGet, Pattern: "/healthz", Name: "health", Handler: s.health})
+	s.Add(Route{Method: http.MethodPost, Pattern: "/auth/token", Name: "sign_in", Handler: s.signIn})
+	s.Add(Route{Method: http.MethodPost, Pattern: "/auth/signout", Name: "sign_out", Handler: s.signOut})
+	s.Add(Route{Method: http.MethodGet, Pattern: "/api/v1/me", Name: "me", Auth: true, Handler: s.me})
 	return s
 }
 
@@ -55,14 +75,12 @@ func (s *Server) Routes() []Route { return append([]Route(nil), s.routes...) }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	for _, r := range s.routes {
-		mux.Handle(r.Method+" "+r.Pattern, s.wrap(r.Name, r.Handler))
+		mux.Handle(r.Method+" "+r.Pattern, s.wrap(r))
 	}
 	// Everything the table does not name. The same body as "a repository you
 	// cannot read", deliberately: an address that does not exist and an address
 	// that is not yours to see must not look different.
-	mux.Handle("/", s.wrap("unmatched", func(w http.ResponseWriter, _ *http.Request) {
-		WriteError(w, http.StatusNotFound, apitypes.CodeNotFound, "not found")
-	}))
+	mux.Handle("/", s.wrap(Route{Name: "unmatched", Handler: notFound}))
 	return mux
 }
 
@@ -70,5 +88,12 @@ func (s *Server) Handler() http.Handler {
 // provider: diff, navigation and search must keep working when a provider is
 // down, so a health check that failed with one would take them down with it.
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	WriteJSON(w, http.StatusOK, apitypes.Health{Status: "ok", Version: s.version})
+	WriteJSON(w, http.StatusOK, apitypes.Health{Status: "ok", Version: s.Version})
+}
+
+// notFound is the one "not found" there is. A route the table does not have, a
+// repository that is not connected, and a repository this user cannot read all
+// answer with it, byte for byte.
+func notFound(w http.ResponseWriter, _ *http.Request) {
+	WriteError(w, http.StatusNotFound, apitypes.CodeNotFound, "not found")
 }

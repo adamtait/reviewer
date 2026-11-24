@@ -43,6 +43,9 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   `docs/designs/review-workspace.md`: configuration, logging and a health
   address, with a container image. It does nothing for a user yet. See
   `docs/workspace.md` (ADR-0029).
+- Sign-in for the workspace service with a fine-grained personal access token,
+  sealed into the session cookie and not stored, and an access check that asks
+  GitHub as the user and refuses public repositories (ADR-0032).
 
 - `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
   into a repository with a root `tsconfig.json`. On every push it builds a

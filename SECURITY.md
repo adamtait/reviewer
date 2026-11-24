@@ -36,6 +36,29 @@ argument list. Provider errors pass through a redactor that strips the configure
 key, the configured endpoint, and anything key-shaped; the subscription CLI adapters
 put the prompt on stdin because an argument list is world-readable.
 
+## What the review workspace does with your token
+
+The review workspace (`cmd/workspace`, [`docs/workspace.md`](docs/workspace.md)) is a separate
+program from the review tool above, and is on trial.
+
+**You sign in with a fine-grained personal access token of your own**, with read access to
+Contents, Pull requests, Metadata and Actions. A classic token is refused. The service makes no
+write call to GitHub, whatever a token allows, and cannot check which permissions a token carries.
+
+**The token is not stored.** It is sealed, with a key held by the operator, into a session cookie
+that scripts cannot read. The server keeps no copy and has no database. Whoever holds that key can
+open any cookie presented while the key is in use.
+
+**Everything is read from GitHub as you.** The service has no GitHub credential of its own. You see
+a repository in the workspace only if GitHub lets your token read it, and a public repository
+cannot be connected at all.
+
+**Signing out clears the cookie in that browser only.** A copy of the cookie made beforehand works
+until it expires or you revoke the token on GitHub. Revoking the token ends every session it is in.
+
+**Tokens are filtered from the log.** Every string the service logs passes through a filter that
+removes anything in the shape of a GitHub token.
+
 ## Trust boundaries
 
 **A fork's pull request is untrusted.** The generated workflow triggers on

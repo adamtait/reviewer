@@ -1,0 +1,92 @@
+{
+ "model": "gemini-3-flash-preview",
+ "store": false,
+ "stream": true,
+ "input": [
+  {
+   "type": "user_input",
+   "content": "Where is parseIntent defined, and what does it return when the description has no intent block? Search first, then read the file."
+  },
+  {
+   "type": "thought",
+   "signature": "EowDCokDAWkUfRM5vxs3oegjqYjhY1iKb+0aFvZeas9HaeqFK5ZxcqSWyWSZOTl66y6TBMhmFxvvBAugBVetQFA/YtsB4Dv+V6NSH2bV7PiiM7O+WW+1yO0Fa1BCHvgq4s/VONJUUCjutS16RFm+XYXweGl0+KVfzC7Rfv586Win2T5NBXT0lRYO/SYJCDok0cNbD8sK6f8KDNFF/zAZUTY8T2swl4lO7yV66UjFExBm60aGUccyZzUpEYS5sLXtQLjUiO6Z2f/pK6zrSjyeuxiOjwoDGd5Op+SX6yh1OeUMw0GP9fuJVMGvFKRPEYEUUqAE5zu9lfASnHxpDCTZcNt7SZXGhC9w0dLg5X9g/WCaedNnowlkoXeyj1fp1ROBN15hu5Fe8kcUScdrpFZne3Pu3Qko0Z3kz0XelrYzcOcTR0r8g5eWaKJmxh1Nskf8b3qReBM+KBg+oA5vTCgglbSYE0bvfhZ7fsWuMQlLEWEWQJE3cakEnct36UcbzgPODWV3F9TwQqm923E5oZQs"
+  },
+  {
+   "id": "call_12860669791746725244",
+   "type": "function_call",
+   "name": "search_text",
+   "arguments": {
+    "query": "parseIntent"
+   }
+  },
+  {
+   "type": "function_result",
+   "name": "search_text",
+   "call_id": "call_12860669791746725244",
+   "result": [
+    {
+     "type": "text",
+     "text": "src/intent.ts:3: export function parseIntent(body: string): Intent | null {\nsrc/view.ts:1: import { parseIntent } from './intent';\nsrc/view.ts:2: export function render(body: string) { return parseIntent(body)?.goal ?? 'none'; }"
+    }
+   ]
+  },
+  {
+   "type": "thought",
+   "signature": "EqEDCp4DAWkUfRPXPs04BKVOBYOS8PysnX0ReMbWgg2CjZIzSltSvsBUBWyx5obGZDsINVgKQX50D19xp6dJ5X7E/wioBrlj62cd88rpYvHFJhHc40ThQHYOqjyKGhWWe3VNUTJ7J7hackX2GtnhLaHct3umomRIwj2oYkoM+Vkby6GQHdspuGpO9HyhyIlqZ7NKLtEbk2xMIPeswQ727e8nHVx3nkpQS8mnNo8i/HivQpB82uydUhIXk5rQNpew9nhC85W2NNvkkzzOUL5UMi4cvszCO/c5QexrPOtCzjXQe4cPmwugA5RqEiM0eq/hiTdhxgzEaxL0BCpJ5y/6D2mT1+4HFfygy/39fZ7cBiG+K8kf3VYSmJEh8qh+mSFWAddrotyokOgNfWzFta9K1cQoh7toLQqgwylSUdgpzncmPruKjHIJKCgHkyjElhM9ukA+3dxfmrJpsKyt7dYruOupL3gEd5u0wBdEFb9SjaL5gZX/H4HZyAPYqrHqEVMqesAJRLprLw9z1ilYHCN6J8vznHnAd5+J6xckWQKi6LvoJSri"
+  },
+  {
+   "id": "call_9838125867146949982",
+   "type": "function_call",
+   "name": "read_file",
+   "arguments": {
+    "path": "src/intent.ts"
+   }
+  },
+  {
+   "type": "function_result",
+   "name": "read_file",
+   "call_id": "call_9838125867146949982",
+   "result": [
+    {
+     "type": "text",
+     "text": "export interface Intent { goal: string; plan: string }\n\nexport function parseIntent(body: string): Intent | null {\n  const m = body.match(/<!-- review-intent v1 -->([\\s\\S]*?)<!-- \\/review-intent -->/);\n  if (!m) return null;\n  return { goal: field(m[1], 'Goal'), plan: field(m[1], 'Plan') };\n}\n\nfunction field(block: string, label: string): string {\n  const m = block.match(new RegExp('\\\\*\\\\*' + label + ':\\\\*\\\\* (.*)'));\n  return m ? m[1].trim() : '';\n}\n"
+    }
+   ]
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "name": "search_text",
+   "description": "Search the repository for a literal string. Returns matching lines as path:line: text.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "query"
+    ]
+   }
+  },
+  {
+   "type": "function",
+   "name": "read_file",
+   "description": "Read one file of the repository.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "path"
+    ]
+   }
+  }
+ ],
+ "system_instruction": "You answer questions about a code repository. You have no knowledge of it. Use the tools to search and to read files before answering. Read a file before describing it."
+}

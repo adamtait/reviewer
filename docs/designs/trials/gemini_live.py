@@ -15,7 +15,11 @@ whether the provider's reasoning data must be sent back, and the token counts.
         old-drop   the same, with thought signatures left out
 
 Set PACE_SECONDS to wait before each call when the key has a low rate limit.
-The key is read from the environment and never printed. Standard library only.
+Set RECORD_DIR to keep, for each call, the request body and the response body
+exactly as received, as call-N.request.json and call-N.response.txt. The
+service's adapter tests replay responses recorded this way.
+The key is read from the environment and never printed or recorded. Standard
+library only.
 """
 
 import json
@@ -27,6 +31,18 @@ import urllib.request
 
 KEY = os.environ.get("GEMINI_API_KEY", "")
 PACE = float(os.environ.get("PACE_SECONDS", "0"))  # seconds to wait before each call, for low rate limits
+RECORD = os.environ.get("RECORD_DIR", "")
+CALLS = [0]
+
+
+def record(suffix, text):
+    """Keep one body of the current call, when recording."""
+    if RECORD:
+        os.makedirs(RECORD, exist_ok=True)
+        with open(os.path.join(RECORD, f"call-{CALLS[0]}.{suffix}"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+
 BASE = "https://generativelanguage.googleapis.com/v1beta"
 REPO = {"src/intent.ts": "export interface Intent { goal: string; plan: string }\n\nexport function parseIntent(body: string): Intent | null {\n  const m = body.match(/<!-- review-intent v1 -->([\\s\\S]*?)<!-- \\/review-intent -->/);\n  if (!m) return null;\n  return { goal: field(m[1], 'Goal'), plan: field(m[1], 'Plan') };\n}\n\nfunction field(block: string, label: string): string {\n  const m = block.match(new RegExp('\\\\*\\\\*' + label + ':\\\\*\\\\* (.*)'));\n  return m ? m[1].trim() : '';\n}\n",
         "src/view.ts": "import { parseIntent } from './intent';\nexport function render(body: string) { return parseIntent(body)?.goal ?? 'none'; }\n"}
@@ -43,18 +59,24 @@ def run_tool(name, args):
 def post(url, body, stream):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"x-goog-api-key": KEY, "Content-Type": "application/json"})
     time.sleep(PACE)
+    CALLS[0] += 1
+    record("request.json", json.dumps(body, indent=1, ensure_ascii=False) + "\n")
     t0 = time.monotonic()
     try:
         resp = urllib.request.urlopen(req, timeout=120)
     except urllib.error.HTTPError as e:
         hdr = {k.lower(): v for k, v in e.headers.items()}
         print("   error headers:", {k: hdr[k] for k in hdr if k in ("retry-after", "content-type") or k.startswith("x-ratelimit")})
-        return e.code, e.read().decode(errors="replace"), dict(e.headers), None
+        failed = e.read().decode(errors="replace")
+        record("response.txt", f"HTTP {e.code}\n" + "".join(f"{k}: {hdr[k]}\n" for k in ("retry-after", "content-type") if k in hdr) + "\n" + failed)
+        return e.code, failed, dict(e.headers), None
     if not stream:
         return resp.status, resp.read().decode(), dict(resp.headers), None
     events, first = [], None
     name = None
+    kept = []
     for raw in resp:
+        kept.append(raw.decode())
         line = raw.decode().rstrip("\n")
         if line.startswith("event:"): name = line[6:].strip()
         elif line.startswith("data:"):
@@ -62,6 +84,7 @@ def post(url, body, stream):
             if first is None: first = time.monotonic() - t0
             if data != "[DONE]":
                 events.append((name, json.loads(data)))
+    record("response.txt", "".join(kept))
     return resp.status, events, dict(resp.headers), first
 
 # ---- A: Interactions API, stateless, streaming -----------------------------

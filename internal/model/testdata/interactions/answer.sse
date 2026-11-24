@@ -1,0 +1,36 @@
+event: interaction.created
+data: {"interaction":{"object":"interaction","model":"gemini-3-flash-preview"},"event_type":"interaction.created"}
+
+event: interaction.status_update
+data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+event: step.start
+data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":0,"delta":{"signature":"EtoGCtcGAWkUfROPFN794DNs/JX+LGGgYpuR2XN6kmY3/1axMagx8r73NtKNB1NC9MHGhRhhHDFqg8G7yW9rxn4LlhtMzXYYW3UurvzqxA5bhapd1XnW94BiKx6OrQgUrf86WH5NHW6j9m6qAG6abO/M4r4gXrM29EIM/OLqRLUZweOhR+SXzY43QVRpjN+GWRMzFniOGAz53ZqPjMq/U8cCx8bQyxPvbZom4ydLAKLG7IpVf8/mBIfLXWcfWhhtIR8REEdeQFpYgBNWTBL7oQxwcqRAFKmlUDroDXpwjlumTyGDgUl/QmJx7P39FtIIY0QO9dRN5KZg/O0lrJUM9Rhv/oEbIVbIYSjK2oukOm6QTFUSH3Cj5+wzS3HK5OhzurLjFknCLcDukuuufxIFB86I3jtHCIzpmnskRa4/565DU3BXHrBPRh4/BilowhMAd4QYmPYOVMu5NolQv7/FLotievdrkU55virMvuSunGWyUpZt91+thsQv96pSbyvDLW8+Z6HnZwjffk5UqLaq+6HT5/706EVAwoXlPVwvvI8nPWR0vpKmH68BRt9QYFGbp0GPszevQ2lOFn7nnOUcOhCG17q3S5D+GEptQj6LqtD0dY+iR7kNYrMPduOyb/DxMWUrm5gcHrc7e9su3vYppOdyxv5a2vRn+tvQwXywsvCAIcvcaAbFUdTA2wEgVyLZOOdIXyHYgvwYe6bR8Cx5n7WcFCQjHTlFX/b6lkIGhxjjDtaNrjCKd9wkZrZWZAxTg+zft6ymGQA/RbwPGD2UKgAszDZyn4TSDhO1Utbp5JW8Dz0wmkM4qPwzKEfKpqfQqC+5Cc++Cn1wT7Dp6/CnDCdgUbzK9MxzNAHGeUVgMl+69102ne2YIDGzkoFzHWzzoZi7+H3c2o9DRs9jEfgrb0ZhKxxpHha+3BMM/6M08UYdGCNs4WE6eG9rtuJ8h+482iPgT6qSVqHsWwlAovXPkBzo8RJ/u2Dwo0f0ZTfT9w6bQrLvcAvStVwQX5X2qTywol7x0Ohlczo5nTMfiQTivjxwxw+/G6hlLoAjL2RX8hcFE59BkO4GHerMhiugPTItCaNHWjUYHwglFGEY8SjC5CUa0Uc6sRS428hXjdcMnqLc2eCzYzjCFZw9/aJ/","type":"thought_signature"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":0,"event_type":"step.stop"}
+
+event: step.start
+data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":1,"delta":{"text":"`parseIntent` is defined in **`src/intent.ts`**.\n\nWhen the description","type":"text"},"event_type":"step.delta"}
+
+event: step.delta
+data: {"index":1,"delta":{"text":" has no intent block (i.e., it does not contain the `<!-- review-intent v1 --> ... <!-- /review-intent -->","type":"text"},"event_type":"step.delta"}
+
+event: step.delta
+data: {"index":1,"delta":{"text":"` markers), the function returns **`null`**.","type":"text"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":1,"event_type":"step.stop"}
+
+event: interaction.completed
+data: {"interaction":{"status":"completed","usage":{"total_tokens":763,"total_input_tokens":530,"input_tokens_by_modality":[{"modality":"text","tokens":530}],"total_cached_tokens":0,"total_output_tokens":60,"total_tool_use_tokens":0,"total_thought_tokens":173,"initial_input_tokens":530},"created":"2026-11-24T02:36:51Z","updated":"2026-11-24T02:36:51Z","service_tier":"standard","object":"interaction","model":"gemini-3-flash-preview"},"event_type":"interaction.completed"}
+
+event: done
+data: [DONE]
+

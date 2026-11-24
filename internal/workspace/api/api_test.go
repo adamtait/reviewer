@@ -18,6 +18,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
+	"github.com/adamtait/reviewer/internal/workspace/navigation"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/testgithub"
@@ -70,15 +71,19 @@ func newWorldWith(t *testing.T, limits source.Limits, fetchTimeout time.Duration
 	}
 	var log bytes.Buffer
 	cache := source.NewCache(1<<22, fetchTimeout)
+	store := source.NewStore(cache, limits)
 	server := New(Deps{
 		Log:     obs.New(&log, obs.NewRedactor()),
 		Version: "test-version",
 		Identity: &identity.TokenMethod{
 			NewClient: gh.Client, Access: checker, SessionLength: time.Hour,
 		},
-		Cookies:    cookies,
-		Access:     checker,
-		Source:     source.NewStore(cache, limits),
+		Cookies: cookies,
+		Access:  checker,
+		Source:  store,
+		Navigation: navigation.NewService(navigation.Config{
+			WorkflowFile: "review-index.yml", ArtifactName: "review-index", IndexBytes: 1 << 20,
+		}, cache, store),
 		WebBaseURL: "https://github.example",
 	})
 	return &world{t: t, gh: gh, server: server, cache: cache, log: &log}
@@ -466,6 +471,7 @@ func TestTheRouteTableMarksWhatNeedsASession(t *testing.T) {
 	want := map[string]bool{
 		"health": false, "sign_in": false, "sign_out": false, "me": true,
 		"pull_list": true, "pull_view": true, "tree": true, "file": true, "search": true,
+		"index_state": true, "definition": true, "references": true, "navigation_report": true,
 	}
 	for _, route := range w.server.Routes() {
 		needs, known := want[route.Name]

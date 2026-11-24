@@ -1,0 +1,16 @@
+{
+  "label": "index",
+  "targets": [
+    {
+      "path": "src/money.ts",
+      "line": 12,
+      "character": 16,
+      "endLine": 12,
+      "endCharacter": 19
+    }
+  ],
+  "package": "",
+  "version": "",
+  "matches": [],
+  "truncated": false
+}

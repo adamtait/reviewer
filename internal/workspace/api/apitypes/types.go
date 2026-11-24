@@ -169,3 +169,89 @@ type SearchResult struct {
 	Matches   []Match `json:"matches"`
 	Truncated bool    `json:"truncated"`
 }
+
+// The states of a commit's navigation index.
+const (
+	IndexNone    = "none"
+	IndexRunning = "running"
+	IndexFailed  = "failed"
+	IndexReady   = "ready"
+)
+
+// IndexState says whether a commit has a navigation index.
+type IndexState struct {
+	State string `json:"state"`
+	// Reason says why there is no index although the index job succeeded.
+	Reason string `json:"reason"`
+	// RunURL is the workflow run on GitHub that the state rests on: the one
+	// that built the index, is building it, or failed. Empty when there is none.
+	RunURL string `json:"runUrl"`
+	// ToolVersion and Documents describe a loaded index.
+	ToolVersion string `json:"toolVersion"`
+	Documents   int    `json:"documents"`
+}
+
+// Location is a span in a file at the commit asked about. Lines count from 0,
+// the end is exclusive, and characters are UTF-16 code units.
+type Location struct {
+	Path         string `json:"path"`
+	Line         int    `json:"line"`
+	Character    int    `json:"character"`
+	EndLine      int    `json:"endLine"`
+	EndCharacter int    `json:"endCharacter"`
+}
+
+// Where a navigation result came from. A label names the source. It does not
+// say the result is correct: the index cannot be verified.
+const (
+	LabelIndex      = "index"
+	LabelTextSearch = "text_search"
+	LabelExternal   = "external"
+	LabelNone       = "none"
+)
+
+// Definition answers "where is this defined".
+type Definition struct {
+	Label string `json:"label"`
+	// Targets is filled when Label is "index".
+	Targets []Location `json:"targets"`
+	// Package and Version are filled when Label is "external".
+	Package string `json:"package"`
+	Version string `json:"version"`
+	// Matches is filled when Label is "text_search".
+	Matches []Match `json:"matches"`
+	// Truncated says the text search stopped at its limit.
+	Truncated bool `json:"truncated"`
+}
+
+// References answers "where is this used". The text matches are always given
+// beside the index's list, because an index can cover part of a repository.
+type References struct {
+	Label      string     `json:"label"`
+	References []Location `json:"references"`
+	// Truncated says the index held more references than are listed.
+	Truncated bool    `json:"truncated"`
+	Matches   []Match `json:"matches"`
+	// MatchesTruncated says the text search stopped at its limit.
+	MatchesTruncated bool `json:"matchesTruncated"`
+}
+
+// The kinds of lookup a report can be about.
+const (
+	KindDefinition = "definition"
+	KindReferences = "references"
+)
+
+// Report is a user saying a navigation result was wrong. It names the lookup
+// and carries no text: it is written to the log, and the log holds nothing a
+// user typed.
+type Report struct {
+	SHA       string `json:"sha"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Character int    `json:"character"`
+	// Kind is "definition" or "references".
+	Kind string `json:"kind"`
+	// Label is the label the wrong result carried.
+	Label string `json:"label"`
+}

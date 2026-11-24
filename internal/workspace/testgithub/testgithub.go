@@ -10,6 +10,7 @@ package testgithub
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
@@ -56,6 +57,31 @@ type Pull struct {
 	ChangedFiles int
 }
 
+// Run is one run of a workflow, with what it saved.
+type Run struct {
+	ID      int64
+	HeadSHA string
+	// Event is what started it. Empty means "push".
+	Event string
+	// Workflow is the workflow's file name, under .github/workflows/.
+	Workflow string
+	// Status is "completed", "in_progress" or "queued". Empty means "completed".
+	Status string
+	// Conclusion is "success", "failure" and so on, for a completed run.
+	Conclusion string
+	Created    time.Time
+	Artifacts  []Artifact
+}
+
+// Artifact is a file a run saved.
+type Artifact struct {
+	ID      int64
+	Name    string
+	Expired bool
+	// Zip is the artifact's content, as GitHub serves it: a zip archive.
+	Zip []byte
+}
+
 // File is one file a pull request changes, in GitHub's words.
 type File struct {
 	Filename string `json:"filename"`
@@ -77,6 +103,7 @@ type Server struct {
 	repos    map[string]Repo          // "owner/name", lower-cased
 	pulls    map[string]map[int]Pull  // by repository
 	archives map[string][]byte        // "owner/name@sha" -> gzip tar
+	runs     map[string][]Run         // by repository
 	failing  map[string]int           // path prefix -> status
 	slow     map[string]chan struct{} // path prefix -> closed to let it answer
 	calls    []string
@@ -88,7 +115,7 @@ func New(t *testing.T) *Server {
 	t.Helper()
 	s := &Server{
 		tokens: map[string]string{}, repos: map[string]Repo{},
-		pulls: map[string]map[int]Pull{}, archives: map[string][]byte{},
+		pulls: map[string]map[int]Pull{}, archives: map[string][]byte{}, runs: map[string][]Run{},
 		failing: map[string]int{}, slow: map[string]chan struct{}{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -107,6 +134,20 @@ func (s *Server) AddPull(owner, name string, p Pull) {
 		s.pulls[key] = map[int]Pull{}
 	}
 	s.pulls[key][p.Number] = p
+}
+
+// AddRun adds a workflow run, or replaces the one with the same identifier.
+func (s *Server) AddRun(owner, name string, run Run) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strings.ToLower(owner + "/" + name)
+	for i, have := range s.runs[key] {
+		if have.ID == run.ID {
+			s.runs[key][i] = run
+			return
+		}
+	}
+	s.runs[key] = append(s.runs[key], run)
 }
 
 // SetArchive sets what the archive call returns for a commit.
@@ -302,6 +343,65 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"merge_base_commit": map[string]string{"sha": mergeBase}})
 
+	case len(rest) == 4 && rest[0] == "actions" && rest[1] == "workflows" && rest[3] == "runs":
+		query := r.URL.Query()
+		s.mu.Lock()
+		runs := []map[string]any{}
+		for _, run := range s.runs[key] {
+			event := run.Event
+			if event == "" {
+				event = "push"
+			}
+			if run.Workflow != rest[2] || run.HeadSHA != query.Get("head_sha") || event != query.Get("event") {
+				continue
+			}
+			status := run.Status
+			if status == "" {
+				status = "completed"
+			}
+			var conclusion any
+			if status == "completed" {
+				conclusion = run.Conclusion
+			}
+			runs = append(runs, map[string]any{
+				"id": run.ID, "head_sha": run.HeadSHA, "event": event, "path": ".github/workflows/" + run.Workflow,
+				"status": status, "conclusion": conclusion, "created_at": run.Created.UTC().Format(time.RFC3339),
+				"html_url": NotTheLink,
+			})
+		}
+		s.mu.Unlock()
+		// A list wrapped in an object, as GitHub's Actions lists are.
+		writeJSON(w, http.StatusOK, map[string]any{"total_count": len(runs), "workflow_runs": runs})
+
+	case len(rest) == 4 && rest[0] == "actions" && rest[1] == "runs" && rest[3] == "artifacts":
+		id, _ := strconv.ParseInt(rest[2], 10, 64)
+		s.mu.Lock()
+		artifacts := []map[string]any{}
+		for _, run := range s.runs[key] {
+			if run.ID != id {
+				continue
+			}
+			for _, artifact := range run.Artifacts {
+				if name := r.URL.Query().Get("name"); name != "" && artifact.Name != name {
+					continue
+				}
+				artifacts = append(artifacts, map[string]any{
+					"id": artifact.ID, "name": artifact.Name, "size_in_bytes": len(artifact.Zip), "expired": artifact.Expired,
+				})
+			}
+		}
+		s.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"total_count": len(artifacts), "artifacts": artifacts})
+
+	case len(rest) == 4 && rest[0] == "actions" && rest[1] == "artifacts" && rest[3] == "zip":
+		id, _ := strconv.ParseInt(rest[2], 10, 64)
+		if _, found := s.artifact(key, id); !found {
+			notFound()
+			return
+		}
+		w.Header().Set("Location", fmt.Sprintf("%s/signed/artifact/%s/%d?signature=do-not-print-this", s.downloads.URL, key, id))
+		w.WriteHeader(http.StatusFound)
+
 	case len(rest) == 2 && rest[0] == "tarball":
 		s.mu.Lock()
 		_, found := s.archives[key+"@"+rest[1]]
@@ -318,6 +418,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		notFound()
 	}
+}
+
+// artifact finds a live artifact of a repository by its identifier.
+func (s *Server) artifact(key string, id int64) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, run := range s.runs[key] {
+		for _, artifact := range run.Artifacts {
+			if artifact.ID == id && !artifact.Expired {
+				return artifact.Zip, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // rules returns the gate and the forced status for a path, if any.
@@ -398,6 +512,13 @@ func (s *Server) serveDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	body, found := s.archives[strings.TrimPrefix(r.URL.Path, "/signed/")]
 	s.mu.Unlock()
+	if rest, isArtifact := strings.CutPrefix(r.URL.Path, "/signed/artifact/"); isArtifact {
+		// "owner/name/id"
+		if at := strings.LastIndexByte(rest, '/'); at > 0 {
+			id, _ := strconv.ParseInt(rest[at+1:], 10, 64)
+			body, found = s.artifact(rest[:at], id)
+		}
+	}
 
 	if gate, _ := s.rules(r.URL.Path); gate != nil {
 		select {
@@ -410,7 +531,7 @@ func (s *Server) serveDownload(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/x-gzip")
+	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = w.Write(body)
 }
 
@@ -462,5 +583,30 @@ func Archive(t *testing.T, files map[string]string) []byte {
 	}
 	check(tw.Close())
 	check(zw.Close())
+	return buf.Bytes()
+}
+
+// Zip builds a zip archive of files, as an artifact's content is.
+func Zip(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(files[name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return buf.Bytes()
 }

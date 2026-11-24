@@ -11,6 +11,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
+	"github.com/adamtait/reviewer/internal/workspace/navigation"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 )
@@ -50,6 +51,8 @@ type Deps struct {
 	Access *access.Checker
 	// Source holds commits' files in memory.
 	Source *source.Store
+	// Navigation finds and holds commits' indexes.
+	Navigation *navigation.Service
 	// WebBaseURL is GitHub's web address, which links to GitHub are built on.
 	WebBaseURL string
 	// Web serves the web application: its page for every address that is not
@@ -78,6 +81,10 @@ func New(deps Deps) *Server {
 	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/tree", Name: "tree", Repo: true, Handler: s.tree})
 	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/file", Name: "file", Repo: true, Handler: s.file})
 	s.Add(Route{Method: http.MethodPost, Pattern: repo + "/commits/{sha}/search", Name: "search", Repo: true, Handler: s.search})
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/index", Name: "index_state", Repo: true, Handler: s.indexState})
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/definition", Name: "definition", Repo: true, Handler: s.definition})
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/references", Name: "references", Repo: true, Handler: s.references})
+	s.Add(Route{Method: http.MethodPost, Pattern: repo + "/navigation/reports", Name: "navigation_report", Repo: true, Handler: s.report})
 	return s
 }
 

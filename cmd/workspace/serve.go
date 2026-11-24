@@ -19,6 +19,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
+	"github.com/adamtait/reviewer/internal/workspace/navigation"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/web"
@@ -159,9 +160,14 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 			Access:        checker,
 			SessionLength: time.Duration(cfg.SessionDays) * 24 * time.Hour,
 		},
-		Cookies:    cookies,
-		Access:     checker,
-		Source:     store,
+		Cookies: cookies,
+		Access:  checker,
+		Source:  store,
+		Navigation: navigation.NewService(navigation.Config{
+			WorkflowFile: cfg.IndexWorkflowFile,
+			ArtifactName: cfg.IndexArtifactName,
+			IndexBytes:   limits.IndexBytes,
+		}, cache, store),
 		WebBaseURL: cfg.GitHub.WebBaseURL,
 		Web:        web.Handler(),
 	}).Handler(), nil

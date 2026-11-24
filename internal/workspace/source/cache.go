@@ -107,27 +107,37 @@ func (p Permanent) Unwrap() error { return p.Err }
 // A caller whose own ctx ends stops waiting and gets ctx's error; the load
 // carries on and its result is kept for the next request. A failed load is not
 // remembered unless its error is a Permanent.
+//
+// A load is made with the credentials of whoever started it. A caller that was
+// only waiting on someone else's load, and saw it fail, therefore tries once
+// more with its own: the failure may have been the other user's alone, such as
+// a token GitHub stopped accepting, and must not be reported as this caller's.
 func (c *Cache) Get(ctx context.Context, key Key, load func(context.Context) (Sized, error)) (Sized, error) {
-	c.mu.Lock()
-	if el, ok := c.items[key]; ok {
-		c.order.MoveToFront(el)
-		it := el.Value.(*item)
+	for attempt := 0; ; attempt++ {
+		c.mu.Lock()
+		if el, ok := c.items[key]; ok {
+			c.order.MoveToFront(el)
+			it := el.Value.(*item)
+			c.mu.Unlock()
+			return it.value, it.err
+		}
+		f, running := c.flights[key]
+		if !running {
+			f = &flight{done: make(chan struct{})}
+			c.flights[key] = f
+			go c.run(key, f, load)
+		}
 		c.mu.Unlock()
-		return it.value, it.err
-	}
-	f, running := c.flights[key]
-	if !running {
-		f = &flight{done: make(chan struct{})}
-		c.flights[key] = f
-		go c.run(key, f, load)
-	}
-	c.mu.Unlock()
 
-	select {
-	case <-f.done:
-		return f.value, f.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
+		select {
+		case <-f.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		mine := !running
+		if f.err == nil || mine || attempt > 0 || isPermanent(f.err) {
+			return f.value, f.err
+		}
 	}
 }
 

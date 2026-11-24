@@ -634,3 +634,69 @@ func TestPeekDoesNotLoad(t *testing.T) {
 		t.Error("Peek returned a remembered failure as a value")
 	}
 }
+
+// Two users ask for one commit. The first one's token stops working while the
+// archive is being fetched. The second must not be told that theirs did.
+func TestAWaiterDoesNotInheritAnotherUsersFailure(t *testing.T) {
+	store := NewStore(NewCache(1<<20, time.Minute), roomy)
+	first := &fetcher{err: ghclient.ErrUnauthorized, release: make(chan struct{}), started: make(chan struct{}, 1)}
+	second := &fetcher{body: archive(t, entry{name: "a.txt", body: "hello"})}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := store.Commit(context.Background(), first, "acme", "app", shaA)
+		firstDone <- err
+	}()
+	<-first.started
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := store.Commit(context.Background(), second, "acme", "app", shaA)
+		secondDone <- err
+	}()
+	time.Sleep(20 * time.Millisecond) // the second is now waiting on the first's fetch
+	close(first.release)
+
+	if err := <-firstDone; !errors.Is(err, ghclient.ErrUnauthorized) {
+		t.Errorf("the user whose token was rejected got %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Errorf("the other user got %v: they inherited a failure that was not theirs", err)
+	}
+	if second.count() != 1 {
+		t.Errorf("the other user's own fetch was made %d times, want 1", second.count())
+	}
+}
+
+// The retry is one try, not a loop: when GitHub is down for everyone, each
+// waiter fails after its own attempt.
+func TestAWaiterRetriesOnlyOnce(t *testing.T) {
+	store := NewStore(NewCache(1<<20, time.Minute), roomy)
+	down := errors.New("GitHub is down")
+	first := &fetcher{err: down, release: make(chan struct{}), started: make(chan struct{}, 1)}
+	second := &fetcher{err: down}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := store.Commit(context.Background(), first, "acme", "app", shaA)
+		firstDone <- err
+	}()
+	<-first.started
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := store.Commit(context.Background(), second, "acme", "app", shaA)
+		secondDone <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	close(first.release)
+
+	if err := <-firstDone; err == nil {
+		t.Error("the first caller got no error")
+	}
+	if err := <-secondDone; err == nil {
+		t.Error("the second caller got no error")
+	}
+	if second.count() != 1 {
+		t.Errorf("the second caller fetched %d times, want exactly one try of its own", second.count())
+	}
+}

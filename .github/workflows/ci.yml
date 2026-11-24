@@ -202,6 +202,46 @@ jobs:
           done
           docker logs workspace
           exit 1
+      # The image builds the web application itself. This shows it got in: a
+      # page that names a script, the script served as a script, and the policy
+      # header on both.
+      - name: The image serves the web application
+        run: |
+          page="$(curl --silent --fail -D headers.txt http://127.0.0.1:8080/some/address)"
+          grep -qi "^content-security-policy: default-src 'none'" headers.txt
+          script="$(printf '%s' "$page" | grep -o '/assets/[^"]*\.js' | head -n 1)"
+          [ -n "$script" ] || { echo "the page names no script:"; echo "$page"; exit 1; }
+          curl --silent --fail -o /dev/null -D asset.txt "http://127.0.0.1:8080$script"
+          grep -qi '^content-type: .*javascript' asset.txt
+
+  # The review workspace's web application (web/, docs/workspace.md).
+  #
+  # Lint, type-check and unit tests, then the journeys in a real browser at a
+  # desktop size and at a phone's width. The journeys are served the responses
+  # the service's own tests record, so a field the service changed fails here
+  # until the application is brought into line.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # Exactly what the lockfile says, and no package's install script is run:
+      # the same install the image's build makes.
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Install the browser the journeys run in
+        run: npx playwright install --with-deps chromium
+      - run: npm run e2e -- --trace off
 
   # One job to name as the required check. The matrix's job names contain their
   # parameters, so requiring them by name means editing branch protection every
@@ -211,7 +251,7 @@ jobs:
     name: ci
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, lint, adrs, plugin, secrets, provenance, workspace-image]
+    needs: [test, lint, adrs, plugin, secrets, provenance, workspace-image, web]
     steps:
       - name: Fail unless every job succeeded
         # Explicitly not `!failure()`: a cancelled or skipped dependency would

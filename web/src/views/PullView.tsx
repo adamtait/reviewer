@@ -1,0 +1,342 @@
+// SPDX-License-Identifier: MIT
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { ApiFailure, api, isNotFound } from '../api/client';
+import type { ChangedFile, PullView as Pull } from '../api/types';
+import { ActionSheet, type SheetAction } from '../components/ActionSheet';
+import type { LineRef, PaneHandle } from '../components/CodePane';
+import { Description } from '../components/Description';
+import { FileDiff, sources } from '../components/DiffView';
+import { Link } from '../components/Link';
+import { SearchPanel } from '../components/SearchPanel';
+import { ShortcutHelp } from '../components/ShortcutHelp';
+import { commentUrl, openOnGitHub } from '../github/links';
+import type { Action } from '../keys/keymap';
+import { useHotkeys } from '../keys/useHotkeys';
+import { href, navigate } from '../router';
+import { useNarrow } from '../useNarrow';
+import { NotFound } from './NotFound';
+
+type State = { phase: 'loading' } | { phase: 'ready'; pull: Pull } | { phase: 'notfound' } | { phase: 'failed'; message: string };
+
+export interface PullViewProps {
+  owner: string;
+  repo: string;
+  number: number;
+  /** From the address: a file to scroll to, and a line in it, counted from 1. */
+  file?: string | undefined;
+  line?: number | undefined;
+}
+
+const available: ReadonlySet<Action> = new Set<Action>([
+  'nextChange', 'prevChange', 'nextFile', 'prevFile', 'search', 'toggleDiff', 'comment', 'switchPull', 'back', 'help',
+]);
+
+export function PullView({ owner, repo, number, file, line }: PullViewProps) {
+  const [state, setState] = useState<State>({ phase: 'loading' });
+  const [mode, setMode] = useState<'diff' | 'new'>('diff');
+  const [panel, setPanel] = useState<'none' | 'search' | 'help'>('none');
+  const [sheet, setSheet] = useState<{ file: ChangedFile; at: LineRef } | null>(null);
+  const [active, setActive] = useState(0);
+  const narrow = useNarrow();
+  const panes = useRef(new Map<string, PaneHandle>());
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState({ phase: 'loading' });
+    api
+      .pull(owner, repo, number, controller.signal)
+      .then((pull) => {
+        setState({ phase: 'ready', pull });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        if (isNotFound(error)) setState({ phase: 'notfound' });
+        else setState({ phase: 'failed', message: error instanceof ApiFailure ? error.message : 'The pull request could not be read.' });
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [owner, repo, number]);
+
+  const pull = state.phase === 'ready' ? state.pull : null;
+  const files = useMemo(() => pull?.files ?? [], [pull]);
+
+  const scrollTo = useCallback((path: string) => {
+    document.querySelector(`[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start' });
+  }, []);
+
+  // The address can name a file. Go to it once the list is known.
+  useEffect(() => {
+    if (!file || files.length === 0) return;
+    const index = files.findIndex((f) => f.path === file);
+    if (index < 0) return;
+    setActive(index);
+    scrollTo(file);
+  }, [file, files, scrollTo]);
+
+  const goToFile = useCallback(
+    (index: number) => {
+      const target = files[index];
+      if (!target) return;
+      setActive(index);
+      navigate(href({ view: 'pull', owner, repo, number, file: target.path }), { replace: true });
+      scrollTo(target.path);
+      panes.current.get(target.path)?.focus();
+    },
+    [files, owner, repo, number, scrollTo],
+  );
+
+  const moveChange = useCallback(
+    (direction: 1 | -1) => {
+      const here = files[active];
+      if (here && panes.current.get(here.path)?.moveChange(direction, 'cursor')) return;
+      // No further change in this file: go on to the next file that has one,
+      // or failing that, to the next file.
+      for (let i = active + direction; i >= 0 && i < files.length; i += direction) {
+        const next = files[i];
+        if (!next) break;
+        if (panes.current.get(next.path)?.moveChange(direction, 'edge')) {
+          setActive(i);
+          return;
+        }
+      }
+      goToFile(active + direction);
+    },
+    [files, active, goToFile],
+  );
+
+  const comment = useCallback(
+    (target: ChangedFile, at: LineRef) => {
+      if (!pull) return;
+      const path = at.side === 'old' ? target.previousPath || target.path : target.path;
+      void commentUrl(pull.webUrl, path, at.line, at.side).then(openOnGitHub);
+    },
+    [pull],
+  );
+
+  useHotkeys(
+    pull
+      ? {
+          nextChange: () => {
+            moveChange(1);
+          },
+          prevChange: () => {
+            moveChange(-1);
+          },
+          nextFile: () => {
+            goToFile(Math.min(active + 1, files.length - 1));
+          },
+          prevFile: () => {
+            goToFile(Math.max(active - 1, 0));
+          },
+          search: () => {
+            setPanel('search');
+          },
+          toggleDiff: () => {
+            setMode((m) => (m === 'diff' ? 'new' : 'diff'));
+          },
+          comment: () => {
+            const target = files[active];
+            const at = target ? panes.current.get(target.path)?.cursor() : null;
+            if (target && at) comment(target, at);
+          },
+          switchPull: () => {
+            navigate('/');
+          },
+          back: () => {
+            setPanel('none');
+            setSheet(null);
+          },
+          help: () => {
+            setPanel('help');
+          },
+        }
+      : {},
+  );
+
+  if (state.phase === 'loading') return <main className="pad muted">Reading the pull request from GitHub…</main>;
+  if (state.phase === 'notfound') return <NotFound />;
+  if (state.phase === 'failed') return <main className="pad error">{state.message}</main>;
+
+  const current = state.pull;
+  const targetLine = line === undefined ? undefined : line - 1;
+
+  const sheetActions = (target: ChangedFile, at: LineRef): SheetAction[] => {
+    const { before, after } = sources(current, target);
+    const source = at.side === 'old' ? before : after;
+    const actions: SheetAction[] = [
+      {
+        label: 'Comment on GitHub',
+        hint: 'c',
+        run: () => {
+          comment(target, at);
+        },
+      },
+    ];
+    if (source) {
+      actions.push({
+        label: 'Open this file',
+        run: () => {
+          navigate(href({ view: 'code', owner, repo, sha: source.sha, path: source.path, line: at.line + 1, pull: number }));
+        },
+      });
+    }
+    return actions;
+  };
+
+  return (
+    <div className={`pull-view${panel === 'search' ? ' with-panel' : ''}`}>
+      <main>
+        <header className="pull-header">
+          <h1>
+            {current.title} <span className="muted">#{current.number}</span>
+          </h1>
+          <p className="muted">
+            {current.draft ? <span className="badge">Draft</span> : null}
+            {current.state !== 'open' ? <span className="badge">Closed</span> : null} {current.author} wants to merge into{' '}
+            <code>{current.baseRef}</code>.{' '}
+            <a href={current.webUrl} target="_blank" rel="noopener noreferrer">
+              Open on GitHub
+            </a>
+          </p>
+          <div className="toolbar">
+            <button
+              type="button"
+              aria-pressed={mode === 'new'}
+              onClick={() => {
+                setMode((m) => (m === 'diff' ? 'new' : 'diff'));
+              }}
+            >
+              {mode === 'diff' ? 'Show new code only' : 'Show the diff'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPanel('search');
+              }}
+            >
+              Search code
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPanel('help');
+              }}
+            >
+              Shortcuts
+            </button>
+          </div>
+        </header>
+
+        <Description body={current.body} />
+
+        <nav className="file-list" aria-label="Changed files">
+          <h2>
+            {files.length} changed {files.length === 1 ? 'file' : 'files'}
+          </h2>
+          {current.filesTruncated ? (
+            <p className="muted">
+              This pull request changes more files than GitHub lists. The rest are on{' '}
+              <a href={`${current.webUrl}/files`} target="_blank" rel="noopener noreferrer">
+                GitHub
+              </a>
+              .
+            </p>
+          ) : null}
+          <ol>
+            {files.map((f, i) => (
+              <li key={f.path} className={i === active ? 'active' : undefined}>
+                <a
+                  href={href({ view: 'pull', owner, repo, number, file: f.path })}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    goToFile(i);
+                  }}
+                >
+                  <span className={`status status-${f.status}`}>{f.status}</span> {f.path}
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
+
+        <div className="diffs">
+          {files.map((f, i) => (
+            <FileDiff
+              key={f.path}
+              owner={owner}
+              repo={repo}
+              pull={current}
+              file={f}
+              mode={mode}
+              layout={narrow ? 'unified' : 'split'}
+              line={file === f.path ? targetLine : undefined}
+              eager={i < 3 || file === f.path}
+              onLineAction={(target, at) => {
+                setActive(i);
+                setSheet({ file: target, at });
+              }}
+              ref={(handle) => {
+                if (handle) panes.current.set(f.path, handle);
+                else panes.current.delete(f.path);
+              }}
+            />
+          ))}
+        </div>
+
+        <nav className="bottom-bar" aria-label="Move through the changes">
+          <button
+            type="button"
+            onClick={() => {
+              moveChange(-1);
+            }}
+          >
+            Previous change
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              moveChange(1);
+            }}
+          >
+            Next change
+          </button>
+          <Link to="/">Pull requests</Link>
+        </nav>
+      </main>
+
+      {panel === 'search' ? (
+        <aside className="side-panel">
+          <SearchPanel
+            owner={owner}
+            repo={repo}
+            sha={current.headSha}
+            pull={number}
+            onClose={() => {
+              setPanel('none');
+            }}
+          />
+        </aside>
+      ) : null}
+      {panel === 'help' ? (
+        <ShortcutHelp
+          available={available}
+          onClose={() => {
+            setPanel('none');
+          }}
+        />
+      ) : null}
+      {sheet ? (
+        <ActionSheet
+          title={`${sheet.at.side === 'old' ? sheet.file.previousPath || sheet.file.path : sheet.file.path}, line ${sheet.at.line + 1}${sheet.at.side === 'old' ? ' (before)' : ''}`}
+          actions={sheetActions(sheet.file, sheet.at)}
+          onClose={() => {
+            setSheet(null);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}

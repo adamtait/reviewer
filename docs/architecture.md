@@ -100,7 +100,7 @@ never run with a token that can write (ADR-0018).
 
 ## This repository's own CI
 
-Eight jobs, of which one matters to branch protection.
+Nine jobs, of which one matters to branch protection.
 
 - **test** — the full suite, over the two most recent Go releases × ubuntu and
   macos. It installs gitleaks, opengrep and osv-scanner via
@@ -113,6 +113,9 @@ Eight jobs, of which one matters to branch protection.
   test suite; a full-history secret scan.
 - **workspace-image** — builds the review workspace's container image, checks that it holds
   the service and nothing else that can run, and starts it. See "The review workspace" below.
+- **web** — the review workspace's web application: lint, type-check, unit tests, and the
+  user journeys in a real browser at a desktop size and at a phone's width, under the same
+  content security policy the service sends.
 - **provenance** — `tools/audithistory` over what a branch adds, and over the whole
   history on `main`. Publishing a repository publishes its history, so this reads
   git objects rather than the working tree.
@@ -151,4 +154,10 @@ in memory under a byte limit (ADR-0030).
 | `source` | Unpacks a commit's archive into memory; the cache; text search. |
 | `catalog` | Lists and describes pull requests. |
 | `api`, `api/apitypes` | The route table, the middleware every request passes through, the handlers, and the request and response bodies. |
+| `web` | Embeds the built web application and serves it under a content security policy. |
 | `testgithub` | A stand-in for GitHub's API, for the tests. |
+
+The web application is in `web/`, outside the Go module's packages: React, with CodeMirror for
+code and diffs. It holds no data of its own. Everything it shows it asks the service's API for, so
+the page itself can be served to anyone. Its types mirror `api/apitypes` by hand, and the recorded
+responses under `internal/workspace/api/testdata/examples/` are checked by both sides' tests.

@@ -21,6 +21,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 	"github.com/adamtait/reviewer/internal/workspace/source"
+	"github.com/adamtait/reviewer/internal/workspace/web"
 	"github.com/adamtait/reviewer/internal/workspace/wsconfig"
 )
 
@@ -162,5 +163,6 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 		Access:     checker,
 		Source:     store,
 		WebBaseURL: cfg.GitHub.WebBaseURL,
+		Web:        web.Handler(),
 	}).Handler(), nil
 }

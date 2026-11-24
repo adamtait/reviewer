@@ -18,9 +18,10 @@ PKGS = $(shell go list ./... | grep -v '/node_modules/')
 # config a user copies into their own repository.
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
                   -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**' \
-                  -ignore '**/node_modules/**' -ignore '**/dist/**'
+                  -ignore '**/node_modules/**' -ignore '**/dist/**' \
+                  -ignore 'web/test-results/**' -ignore 'web/playwright-report/**'
 
-.PHONY: check build plugin plugin-test vet fmt-check test staticcheck license-check adrs licenses tools hooks secrets
+.PHONY: check build plugin plugin-test vet fmt-check test staticcheck license-check adrs licenses tools hooks secrets web web-test web-e2e
 
 check: build plugin vet fmt-check test staticcheck license-check adrs licenses
 
@@ -40,6 +41,31 @@ plugin:
 
 plugin-test:
 	npm --prefix plugins/typescript test
+
+# The review workspace's web application. None of these is part of `check`:
+# the service compiles and its tests pass without the application built, and
+# CI builds and tests it in a job of its own.
+#
+# `web` builds it and copies it to where the service embeds it, so the next
+# `go build ./cmd/workspace` carries it.
+web:
+	@if [ ! -d web/node_modules ]; then \
+		echo "web: node_modules missing; run 'npm --prefix web ci'" >&2; exit 1; \
+	fi
+	npm --prefix web run build
+	find internal/workspace/web/dist -mindepth 1 ! -name placeholder.txt -delete
+	cp -R web/dist/. internal/workspace/web/dist/
+
+web-test:
+	npm --prefix web run lint
+	npm --prefix web run typecheck
+	npm --prefix web test
+
+# The journeys, in a real browser. `npx --prefix web playwright install chromium`
+# fetches one; WORKSPACE_E2E_CHROMIUM names one that is already installed.
+web-e2e:
+	npm --prefix web run build
+	npm --prefix web run e2e -- --trace off
 
 vet:
 	go vet $(PKGS)

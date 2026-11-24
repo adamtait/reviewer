@@ -173,6 +173,7 @@ func TestTreeFileAndSearch(t *testing.T) {
 
 	// The renamed file's old version is read at its old path on the merge base.
 	rec = w.do(http.MethodGet, alpha+"/commits/"+baseSHA+"/file?path=src/total.ts", nil, alice, false)
+	example(t, "file_merge_base", rec)
 	if file := decode[apitypes.File](t, rec.Body.Bytes()); !strings.Contains(file.Text, "function total") {
 		t.Errorf("the merge base's src/total.ts: status %d, text %q", rec.Code, file.Text)
 	}

@@ -6,10 +6,10 @@ navigation and an AI assistant to a pull request, and leaves commenting, approvi
 GitHub. Its design is [`designs/review-workspace.md`](designs/review-workspace.md).
 
 This guide is for the person who deploys and configures it. It grows with each pull request of the
-design's plan. **So far the service signs users in and answers, over its API, with a repository's
-open pull requests, one pull request's description and changed files, the files of a commit, and
-text search at a commit. It has no web page yet: every step below is an API call until the web
-application arrives.**
+design's plan. **So far a user can sign in, see the open pull requests of the repositories they can
+read, read a pull request's description and diff, open any file at its commit, search the whole
+repository at that commit, and jump to GitHub to comment. Code navigation and the assistant are
+not built yet.**
 
 ## What it is
 
@@ -23,6 +23,7 @@ exits 0 whatever happens, it refuses to start with a configuration it cannot ser
 ## Run it locally
 
 ```
+npm --prefix web ci && make web     # build the web application into the service
 go build -o workspace ./cmd/workspace
 
 WORKSPACE_COOKIE_KEY="$(head -c 32 /dev/urandom | base64)" \
@@ -32,7 +33,14 @@ WORKSPACE_MODEL_KEY_EXAMPLE=your-provider-key \
 curl http://localhost:8080/healthz
 ```
 
-`./workspace version` prints the version.
+`./workspace version` prints the version. Then open `http://localhost:8080/`.
+
+Without the first line the service still builds and its API works; the page says the web
+application is not in the build.
+
+To work on the web application, run the service as above and `npm --prefix web run dev` beside
+it. The development server serves the page with live reload and passes `/api` and `/auth` on to the
+service at `http://localhost:8080`, or wherever `WORKSPACE_SERVICE` says.
 
 If the configuration has problems, the service prints all of them at once and exits with status 1.
 
@@ -111,7 +119,8 @@ A token is accepted only if all three hold:
 The service cannot check which permissions a token carries. It makes no write call to GitHub,
 whatever the token allows.
 
-Until the web application exists, sign in with:
+The sign-in page lists these steps and explains each refusal. The same sign-in can be made
+without a browser:
 
 ```
 curl -i -c cookies.txt -H 'X-Workspace-Request: 1' \
@@ -187,7 +196,7 @@ For your own repositories, read it from the log. Every fetch writes one line:
 `took_ms` is the transfer and the unpacking together. `cache_bytes` against `limits.cacheBytes`
 shows how full memory is. A fetch that fails writes `archive_fetch_failed` with the reason.
 
-### Trying it without the web application
+### Calling the API directly
 
 ```
 BASE=http://localhost:8080/api/v1/repos/<owner>/<repo>
@@ -216,12 +225,57 @@ at most 200 lines. The list of pull requests shows at most 300, most recently up
 | 502 `github_failed` | GitHub could not be asked, or refused. A refusal usually means the token lacks one of the four read permissions; the log line's `outcome` is then `github_forbidden`. |
 | 504 `github_timeout` | A fetch passed `limits.fetchSeconds`. |
 
+## The web application
+
+One page, served by the service at every address that is not under `/api/`, `/auth/` or
+`/healthz`. The page holds nothing of any repository: what it shows, it asks the API for, with the
+session cookie. So the page is the same for everyone, signed in or not.
+
+| Address | What it shows |
+| --- | --- |
+| `/` | The open pull requests of the connected repositories the user can read. |
+| `/signin` | Sign-in. Any address shows it when there is no session, and signing in continues to that address. |
+| `/{owner}/{repo}/pull/{number}` | A pull request: title, description, changed files, diff. `#file={path}&line={n}` selects a place. |
+| `/{owner}/{repo}/blob/{sha}/{path}` | One file at a commit. `#L{n}` selects a line. |
+
+The two repository addresses mirror GitHub's own, so a GitHub address becomes a workspace address
+by changing the host.
+
+What a user should know:
+
+- **The description is shown as plain text.** It is its author's text and is not trusted, so
+  nothing in it is drawn as a link, an image or formatting.
+- **The diff is drawn between the pull request's head and its merge base**, in two columns on a
+  wide screen and one on a narrow one. Each file is read when it nears the screen.
+- **Commenting happens on GitHub.** Clicking or tapping a line number offers "Comment on GitHub",
+  which opens GitHub's "Files changed" page at that line. On a narrow screen a removed line has no
+  line number of its own, so this is offered for lines of the new file only.
+- **Search covers the whole repository at the pull request's head commit**, not only the changed
+  files, and matches text exactly.
+- **`?` lists the keyboard shortcuts**, each with the way to do the same by touch.
+
+### The content security policy
+
+The page is sent with this header, and the browser enforces it:
+
+```text
+default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;
+font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+```
+
+Scripts run only if they came from the service itself, and the page can send requests only to the
+service. A script that reached the page inside a description would not run, and nothing on the page
+can send what it shows elsewhere. If you put a proxy in front of the service, it must not remove
+or loosen this header. The browser tests run under it.
+
 ## Deploying on Cloud Run
 
 The service is designed for one container on Cloud Run.
 
 Build the image from a checkout with `docker build -t workspace .` and push it to a registry your
-project can read. No image is published by this repository.
+project can read. No image is published by this repository. The build needs nothing installed but
+Docker: it builds the web application in a stage of its own, from the lockfile, and none of that
+stage but the built page reaches the image.
 
 | Cloud Run setting | Value | Why |
 | --- | --- | --- |

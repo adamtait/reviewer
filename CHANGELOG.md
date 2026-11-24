@@ -51,6 +51,13 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   of a commit, and literal text search at a commit. A commit's files come from
   GitHub as one archive and are held in memory, bounded by configured limits
   and keyed by repository and commit together (ADR-0030).
+- The workspace's web application, in `web/` and embedded in the service: sign-in,
+  the list of open pull requests, a pull request's description and diff in two
+  columns or one, a code view for any file at a commit, text search, keyboard
+  shortcuts with a touch route for each, and links to GitHub for commenting. It
+  is served under a content security policy that allows scripts and requests
+  from the service alone. `THIRD_PARTY_LICENSES.md` gains its packages, and
+  `tools/checklicenses` reads them from the web application's lockfile.
 
 - `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
   into a repository with a root `tsconfig.json`. On every push it builds a

@@ -19,6 +19,28 @@ npm --prefix plugins/typescript ci
 npm --prefix plugins/typescript test
 ```
 
+So has the review workspace's web application, in `web/`. It is not part of
+`make check`: the service compiles and passes its tests without it.
+
+```
+npm --prefix web ci
+make web-test  # lint, type-check and unit tests
+make web       # build it, and copy it to where the service embeds it
+make web-e2e   # the journeys, in a real browser, at a desktop size and a phone's
+```
+
+`make web-e2e` needs a Chromium. `npx --prefix web playwright install chromium`
+fetches the one Playwright expects; `WORKSPACE_E2E_CHROMIUM=/path/to/chrome`
+uses one that is already installed.
+
+The web application's types in `web/src/api/types.ts` mirror the service's in
+`internal/workspace/api/apitypes` by hand. What keeps them the same is the
+recorded responses in `internal/workspace/api/testdata/examples/`: the Go tests
+must produce them, and the web application's tests are checked against them. To
+change a response, change the Go type, run
+`go test ./internal/workspace/api/ -update`, then change `types.ts` until
+`make web-test` passes.
+
 Optional, and worth doing once:
 
 ```
@@ -93,6 +115,11 @@ change's description, an entry in `THIRD_PARTY_LICENSES.md`, and a licence
 
 An external binary spawned as a process is not a dependency in that sense, which is
 how Opengrep (LGPL-2.1) is usable at all. That boundary is asserted by a test.
+
+The web application's packages are built into a page that is served to its users,
+so every one of them is inventoried, at any depth, under "Web application
+packages". `tools/checklicenses` reads them from `web/package-lock.json`, with no
+install, and also refuses one whose own declared licence is copyleft.
 
 ## Publishing safety
 

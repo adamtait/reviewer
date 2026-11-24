@@ -49,6 +49,9 @@ func (s *Server) wrap(route Route) http.Handler {
 
 		rec := &recorder{ResponseWriter: w}
 		rec.Header().Set(HeaderRequestID, id)
+		// No response is to be read as anything but what it says it is. JSON
+		// that holds a file's text must never be taken for a page.
+		rec.Header().Set("X-Content-Type-Options", "nosniff")
 
 		defer func() {
 			if recovered := recover(); recovered != nil {

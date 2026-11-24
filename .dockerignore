@@ -1,5 +1,6 @@
-# The image is built from cmd/, internal/ and pkg/ alone. Everything else is
-# kept out of the build context so that a change to it does not rebuild the image.
+# The image is built from cmd/, internal/, pkg/ and web/ alone. Everything else
+# is kept out of the build context so that a change to it does not rebuild the
+# image. A locally built web application is kept out too: the image builds its own.
 .git
 .github
 docs
@@ -9,3 +10,6 @@ testdata
 tools
 **/node_modules
 **/dist
+web/e2e
+web/test-results
+web/playwright-report

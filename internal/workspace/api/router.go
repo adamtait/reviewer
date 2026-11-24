@@ -6,6 +6,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/adamtait/reviewer/internal/workspace/access"
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
@@ -51,6 +52,9 @@ type Deps struct {
 	Source *source.Store
 	// WebBaseURL is GitHub's web address, which links to GitHub are built on.
 	WebBaseURL string
+	// Web serves the web application: its page for every address that is not
+	// the API's, and its assets. Nil means the service has no page.
+	Web http.Handler
 }
 
 // Server holds the route table.
@@ -89,11 +93,38 @@ func (s *Server) Handler() http.Handler {
 	for _, r := range s.routes {
 		mux.Handle(r.Method+" "+r.Pattern, s.wrap(r))
 	}
-	// Everything the table does not name. The same body as "a repository you
-	// cannot read", deliberately: an address that does not exist and an address
-	// that is not yours to see must not look different.
-	mux.Handle("/", s.wrap(Route{Name: "unmatched", Handler: notFound}))
+	// Everything the table does not name. Under the API's own prefixes that is
+	// "not found", with the same body as "a repository you cannot read",
+	// deliberately: an address that does not exist and an address that is not
+	// yours to see must not look different.
+	unmatched := s.wrap(Route{Name: "unmatched", Handler: notFound})
+	if s.Web == nil {
+		mux.Handle("/", unmatched)
+		return mux
+	}
+	// Anywhere else is the web application's: it does its own routing, so the
+	// service answers every such address with the application's page. The page
+	// holds nothing of any repository; what it shows it asks the API for.
+	page := s.wrap(Route{Name: "web", Handler: s.Web.ServeHTTP})
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAPIPath(r.URL.Path) {
+			unmatched.ServeHTTP(w, r)
+			return
+		}
+		page.ServeHTTP(w, r)
+	}))
 	return mux
+}
+
+// isAPIPath reports whether a path belongs to the service and not to the web
+// application.
+func isAPIPath(path string) bool {
+	for _, prefix := range []string{"/api/", "/auth/", "/healthz"} {
+		if strings.HasPrefix(path, prefix) || path == strings.TrimSuffix(prefix, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 // health reports that the process is up. It says nothing about GitHub or a model

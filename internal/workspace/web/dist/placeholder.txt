@@ -1,0 +1,5 @@
+The built web application goes in this directory. `make web` puts it here.
+
+This file is tracked so that the package compiles on a checkout where the web
+application has not been built. Until it is built, the service answers page
+requests by saying so.

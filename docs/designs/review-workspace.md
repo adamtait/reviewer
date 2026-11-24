@@ -979,9 +979,9 @@ Every npm package a pull request adds is listed in `THIRD_PARTY_LICENSES.md` in 
 | `react`, `react-dom` | PR-51 | Web application | MIT | "Web application packages": these two and `scheduler` |
 | `@codemirror/state`, `@codemirror/view`, `@codemirror/merge`, `@codemirror/language`, `@codemirror/lang-javascript` | PR-51 | Code and diff display. Files in other languages are shown without colouring | MIT | The same section: these five and the 11 packages they bring, all MIT |
 | `markdown-it` | PR-54 | Drawing the description and answers, with raw HTML off | MIT | The same section: it and the 6 packages it brings. Five are MIT or BSD-2-Clause, and `argparse` is PSF-2.0 |
-| `typescript`, `vite`, `@vitejs/plugin-react`, `vitest`, `jsdom`, `@testing-library/react`, `eslint`, `typescript-eslint`, `@types/react`, `@types/react-dom`, `@playwright/test` | PR-51 | Build, type-check, lint and test only | MIT, Apache-2.0 | "Web application development dependencies", direct ones only |
+| `typescript`, `vite`, `@vitejs/plugin-react`, `vitest`, `jsdom`, `@testing-library/react`, `eslint`, `typescript-eslint`, `@types/react`, `@types/react-dom`, `@types/node`, `@playwright/test` | PR-51 | Build, type-check, lint and test only. `@types/node` was added while building: the build and test configuration runs in Node | MIT, Apache-2.0 | "Web application development dependencies", direct ones only |
 
-These lists were resolved on 2026-11-23 against the package registry: 26 distributed packages, none under a licence the check refuses. The build tool brings `lightningcss`, which is under MPL-2.0. It is not distributed, and ADR-0028 inventories only direct development dependencies. Until PR-54, the description is shown as plain text.
+These lists were resolved on 2026-11-23 against the package registry: 26 distributed packages, none under a licence the check refuses. As installed for PR-51 on 2026-11-24, before `markdown-it`, there are 19, all MIT. The build tool brings `lightningcss`, which is under MPL-2.0. It is not distributed, and ADR-0028 inventories only direct development dependencies. Until PR-54, the description is shown as plain text.
 
 `gitleaks` is a program in the container image and is already listed under "External binaries".
 
@@ -1078,6 +1078,17 @@ Measured through the service's own code against this repository on 2026-11-24: 3
 | `tools/checklicenses/main.go`, `main_test.go` | Modify | Read `web/package-lock.json` directly, with no install: every non-development package for the section "Web application packages", and the direct development dependencies for "Web application development dependencies". Key inventory rows by section and name. Pass both web sets to the copyleft check and the boundary check, and add `web/package.json` to the manifests the boundary check reads. Tests: one name in two sections; a web row under a refused licence fails; a development-only lockfile entry is left out. |
 | `THIRD_PARTY_LICENSES.md` | Modify | The two new sections. |
 | `docs/architecture.md`, `docs/workspace.md`, `CONTRIBUTING.md` | Modify | The web application, how to build and test it, and the count of CI jobs from eight to nine. |
+
+**As built.** PR-51 follows the table above with these differences:
+
+*   **More files.** `web/src/components/Link.tsx`, `web/src/views/NotFound.tsx` and `web/src/useNarrow.ts`; tests for the addresses (`router.test.ts`) and the hotkey hook (`useHotkeys.test.tsx`); and `web/src/api/examples.test.ts`, which checks every recorded response against its type in both directions, so a field added on either side fails a test.
+*   **The journeys run under the content security policy.** The preview server that serves the built page to the browser tests sends the service's policy, a Go test fails if the two texts differ, and a journey fails if the browser reports anything the policy refused. The journeys were also run once against the real service binary.
+*   **Each changed file is read when it nears the screen,** not all at once. A pull request with hundreds of files would otherwise ask for two files per changed file on opening.
+*   **The pull request view does not ask for the file list of either commit.** It asks for each changed file, and the first such request fetches the commit's archive. The tree route is unused by this version of the page.
+*   **On a narrow screen, "Comment on GitHub" is offered for lines of the new file only.** The single-column diff draws a removed line without a line number of its own to tap. The two-column diff offers it on both sides.
+*   **A click on a line number opens the action list at every screen size,** not only on narrow ones. It is the same list either way.
+*   **`g d`, `g r` and `a` are in the shortcut table and do nothing yet.** The help marks them "not on this page" until navigation and the assistant arrive.
+*   **The `web` CI job installs with `npm ci --ignore-scripts`,** as the image's build does, so no package's install script runs in either.
 
 #### 6. PR-52: navigation
 

@@ -478,3 +478,55 @@ func TestTheRouteTableMarksWhatNeedsASession(t *testing.T) {
 		}
 	}
 }
+
+// With a web application, every address outside the API's own prefixes gets
+// the application's page, signed in or not. The page holds nothing of any
+// repository, so serving it to anyone gives nothing away; what it shows it has
+// to ask the API for.
+func TestAddressesOutsideTheAPIGetTheWebApplication(t *testing.T) {
+	w := newWorld(t)
+	w.server.Web = http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = rw.Write([]byte("<!doctype html><title>the page</title>"))
+	})
+
+	for _, address := range []string{"/", "/signin", "/example/alpha/pull/12", "/example/hidden/pull/1", "/apiary", "/authors"} {
+		rec := w.do(http.MethodGet, address, nil, nil, false)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "the page") {
+			t.Errorf("%s: status %d, body %q; want the page", address, rec.Code, rec.Body.String())
+		}
+	}
+	// The API's prefixes keep their own "not found", in the API's own format.
+	for _, address := range []string{"/api/v1/nothing/here", "/api/", "/api", "/auth/nothing", "/healthz/extra"} {
+		rec := w.do(http.MethodGet, address, nil, nil, false)
+		if rec.Code != http.StatusNotFound || errorCode(t, rec) != apitypes.CodeNotFound {
+			t.Errorf("%s: status %d, body %q; want the API's 404", address, rec.Code, rec.Body.String())
+		}
+	}
+	// And the routes themselves are untouched.
+	if rec := w.do(http.MethodGet, "/healthz", nil, nil, false); rec.Code != http.StatusOK {
+		t.Errorf("/healthz: status %d", rec.Code)
+	}
+	if rec := w.do(http.MethodGet, "/api/v1/me", nil, nil, false); rec.Code != http.StatusUnauthorized {
+		t.Errorf("/api/v1/me with no session: status %d, want 401", rec.Code)
+	}
+
+	lines := logLines(t, w.log)
+	if lines[0]["route"] != "web" {
+		t.Errorf("a page request is logged as %v, want route \"web\"", lines[0]["route"])
+	}
+	for _, line := range lines {
+		if _, has := line["path"]; has {
+			t.Error("a request's path reached the log: it can name a repository, a file and a line")
+		}
+	}
+}
+
+func TestEveryResponseForbidsContentSniffing(t *testing.T) {
+	w := newWorld(t)
+	for _, address := range []string{"/healthz", "/api/v1/me", "/api/v1/nothing"} {
+		if got := w.do(http.MethodGet, address, nil, nil, false).Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options %q", address, got)
+		}
+	}
+}

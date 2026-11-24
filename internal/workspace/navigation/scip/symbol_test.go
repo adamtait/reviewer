@@ -39,7 +39,7 @@ func TestParseSymbolReadsEveryKindOfDescriptor(t *testing.T) {
 		{"s m p 1 a-b/c+d#$e_1.", "p", "1", []string{"a-b", "c+d", "$e_1"}},
 	} {
 		got := ParseSymbol(tc.symbol)
-		if got.Local || got.Package != tc.pkg || got.Version != tc.version || !reflect.DeepEqual(got.Names, tc.names) {
+		if got.IsLocal || got.Package != tc.pkg || got.Version != tc.version || !reflect.DeepEqual(got.Names, tc.names) {
 			t.Errorf("ParseSymbol(%q)\n  = %+v\n  want package %q, version %q, names %q", tc.symbol, got, tc.pkg, tc.version, tc.names)
 		}
 	}
@@ -47,12 +47,12 @@ func TestParseSymbolReadsEveryKindOfDescriptor(t *testing.T) {
 
 func TestParseSymbolLocal(t *testing.T) {
 	got := ParseSymbol("local 42")
-	if !got.Local || got.Package != "" || len(got.Names) != 0 || got.LastName() != "" {
+	if !got.IsLocal || got.Package != "" || len(got.Names) != 0 || got.LastName() != "" {
 		t.Errorf("a local symbol = %+v", got)
 	}
 	// Only the exact prefix: a package's symbol that happens to start with the
 	// letters is not local.
-	if ParseSymbol("localscheme npm p 1 a.").Local {
+	if ParseSymbol("localscheme npm p 1 a.").IsLocal {
 		t.Error("a scheme named localscheme was read as a local symbol")
 	}
 }
@@ -93,7 +93,7 @@ func TestParseSymbolDoesNotFailOnWhatItCannotRead(t *testing.T) {
 		"s m p 1 a/b#!!!",     // suffixes with no names
 	} {
 		got := ParseSymbol(symbol) // must not panic
-		if got.Local {
+		if got.IsLocal {
 			t.Errorf("ParseSymbol(%q) is local", symbol)
 		}
 	}

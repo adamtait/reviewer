@@ -164,12 +164,12 @@ func FindDefinition(ix *Index, commit *source.Commit, path string, line, charact
 			// "constructor" and not "Cart".
 			built, isConstructor := symbol.Constructs()
 			constructor := isConstructor && readable && found == "constructor" && asked == built
-			sameWord := readable && found != "" && (found == asked || (!symbol.Local && found == symbol.LastName()))
+			sameWord := readable && found != "" && (found == asked || (!symbol.IsLocal && found == symbol.LastName()))
 			if wholeFile || constructor || sameWord {
 				kept = appendUnique(kept, target)
 			}
 		}
-		if len(targets) == 0 && !symbol.Local && symbol.Package != "" && !ix.own[symbol.Package] && pkg == "" {
+		if len(targets) == 0 && !symbol.IsLocal && symbol.Package != "" && !ix.own[symbol.Package] && pkg == "" {
 			pkg, ver = symbol.Package, symbol.Version
 		}
 	}

@@ -2,7 +2,7 @@
 
 import { type Page, expect, test } from '@playwright/test';
 
-import { fakeApi, pullView } from './fake-api';
+import { fakeApi, indexReady, pullView } from './fake-api';
 
 // The journeys the design names for the first version of the web application,
 // each run at a desktop size and at 390 points wide (see playwright.config.ts).
@@ -121,7 +121,279 @@ test.describe('journey 1: read the description, then the diff', () => {
   });
 });
 
+/**
+ * Clicks or taps a word in the code: the nth occurrence of `word` on a line of
+ * one editor. The point is found from the text itself, so it does not depend
+ * on how the editor splits a line into coloured spans.
+ */
+async function pressWord(
+  page: Page,
+  editor: string,
+  line: number,
+  word: string,
+  how: 'click' | 'alt-click' | 'tap' = 'click',
+): Promise<void> {
+  const lineText = page.locator(`${editor} .cm-content .cm-line`).filter({ hasText: word });
+  await lineText.first().waitFor();
+  const point = await page.evaluate(
+    ([selector, lineNumber, text]) => {
+      // Lines the editor has drawn, matched to their numbers by the gutter.
+      const root = document.querySelector(selector);
+      if (!root) return null;
+      // The gutter's first element is a hidden one the editor sizes itself by.
+      const numbers = Array.from(root.querySelectorAll('.cm-lineNumbers .cm-gutterElement'))
+        .filter((e) => getComputedStyle(e).visibility !== 'hidden')
+        .map((e) => e.textContent)
+        .filter((n) => n !== '' && !Number.isNaN(Number(n)));
+      const lines = Array.from(root.querySelectorAll('.cm-content .cm-line'));
+      const wanted = numbers.indexOf(String(lineNumber));
+      // The numbered line and no other: a word can be on several lines.
+      const target = lines.find((l, i) => i === wanted && l.textContent.includes(text));
+      if (!target) return null;
+      // To the middle of the screen, clear of the bar fixed to its bottom edge.
+      target.scrollIntoView({ block: 'center' });
+      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+      let offset = target.textContent.indexOf(text);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const length = node.textContent?.length ?? 0;
+        if (offset < length) {
+          const range = document.createRange();
+          range.setStart(node, offset);
+          range.setEnd(node, Math.min(length, offset + 2));
+          const box = range.getBoundingClientRect();
+          return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+        }
+        offset -= length;
+      }
+      return null;
+    },
+    [editor, line, word] as const,
+  );
+  if (!point) throw new Error(`"${word}" is not on line ${line} of ${editor}`);
+  if (how === 'tap') {
+    await page.touchscreen.tap(point.x, point.y);
+  } else if (how === 'alt-click') {
+    await page.keyboard.down('Alt');
+    await page.mouse.click(point.x, point.y);
+    await page.keyboard.up('Alt');
+  } else {
+    await page.mouse.click(point.x, point.y);
+  }
+}
+
+const round = `/example/alpha/blob/${pullView.headSha}/src/round.ts?pull=${pullView.number}#L1`;
+const taxEditor = '[data-path="src/tax.ts"]';
+
+test.describe('journey 2: follow a symbol into unchanged code and return', () => {
+  test('go to definition lands outside the change, says where the result came from, and one action returns', async ({ page }) => {
+    const world = await fakeApi(page);
+    await page.goto(pull);
+    await expect(page.getByTestId('index-status')).toContainText('Navigation uses the index CI built for this commit');
+    await page.locator(taxEditor).scrollIntoViewIfNeeded();
+
+    // `round(...)` on line 4 of the added file src/tax.ts.
+    if (narrow(page)) {
+      await pressWord(page, taxEditor, 4, 'round(cents', 'tap');
+      const sheet = page.getByRole('dialog', { name: 'src/tax.ts, line 4' });
+      await sheet.getByRole('button', { name: /Definition/ }).tap();
+    } else {
+      await pressWord(page, taxEditor, 4, 'round(cents');
+      await page.keyboard.press('g');
+      await page.keyboard.press('d');
+    }
+
+    await expect(page).toHaveURL(round);
+    // The lookup was made where the reader pointed: on `round`, line 4, at the head commit.
+    expect(world.lookups).toEqual([
+      expect.objectContaining({ kind: 'definition', sha: pullView.headSha, path: 'src/tax.ts', line: 3, word: 'round' }),
+    ]);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('src/round.ts');
+    await expect(page.getByText('Outside this pull request’s changes')).toBeVisible();
+    const arrival = page.getByTestId('arrival');
+    await expect(arrival).toContainText('From the CI-built index');
+    await expect(arrival).toContainText('It is not checked.');
+    await expect(page.locator('.cm-target-line')).toContainText('export function round');
+
+    // One action, back to the same file and line of the diff.
+    await page.getByRole('link', { name: /Back to where you were/ }).click();
+    await expect(page).toHaveURL(`${pull}#file=src%2Ftax.ts&line=4`);
+    await expect(page.getByRole('navigation', { name: 'Changed files' }).locator('li.active')).toContainText('src/tax.ts');
+    await expect(page.locator(`${taxEditor} .cm-target-line`)).toContainText('withTax');
+
+    // And forward again: the page still knows how it was reached.
+    await page.goForward();
+    await expect(page.getByTestId('arrival')).toContainText('From the CI-built index');
+  });
+
+  test('a click with Alt held goes straight to the definition', async ({ page }) => {
+    test.skip(narrow(page), 'a mouse');
+    await fakeApi(page);
+    await page.goto(pull);
+    await page.locator(taxEditor).scrollIntoViewIfNeeded();
+    await pressWord(page, taxEditor, 4, 'round(cents', 'alt-click');
+    await expect(page).toHaveURL(round);
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(`${pull}#file=src%2Ftax.ts&line=4`);
+  });
+
+  test('a result can be reported as wrong, and the report names the lookup and nothing else', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    const world = await fakeApi(page);
+    await page.goto(pull);
+    await page.locator(taxEditor).scrollIntoViewIfNeeded();
+    await pressWord(page, taxEditor, 4, 'round(cents', 'alt-click');
+    await expect(page).toHaveURL(round);
+
+    await page.getByRole('button', { name: 'This was wrong' }).click();
+    await expect(page.getByText('Reported.')).toBeVisible();
+    expect(world.reports).toHaveLength(1);
+    const [report] = world.reports;
+    expect(report).toMatchObject({ sha: pullView.headSha, path: 'src/tax.ts', line: 3, kind: 'definition', label: 'index' });
+    expect(Object.keys(report ?? {}).sort()).toEqual(['character', 'kind', 'label', 'line', 'path', 'sha']);
+  });
+
+  test('references are listed from the index beside the text matches', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    const world = await fakeApi(page);
+    await page.goto(pull);
+    await page.locator(taxEditor).scrollIntoViewIfNeeded();
+    await pressWord(page, taxEditor, 4, 'round(cents');
+    await page.keyboard.press('g');
+    await page.keyboard.press('r');
+
+    const panel = page.getByRole('region', { name: 'References' });
+    const fromIndex = panel.getByRole('region', { name: 'From the CI-built index' });
+    const fromSearch = panel.getByRole('region', { name: 'From text search' });
+    await expect(panel).toBeVisible();
+    expect(world.lookups).toEqual([expect.objectContaining({ kind: 'references', path: 'src/tax.ts', line: 3, word: 'round' })]);
+    await expect(fromIndex.getByRole('listitem')).toHaveCount(3);
+    await expect(fromSearch.getByRole('listitem')).not.toHaveCount(0);
+    await expect(fromSearch).toContainText('whatever the index says');
+    // The address has not changed: a list is shown, not followed.
+    await expect(page).toHaveURL(new RegExp(`${pull}($|#)`));
+
+    await fromIndex.getByRole('link', { name: /src\/round\.ts:1/ }).click();
+    await expect(page).toHaveURL(round);
+    await expect(page.getByTestId('arrival')).toContainText('From the CI-built index');
+  });
+});
+
+test.describe('journey 3: a lookup the index could not resolve', () => {
+  test.beforeEach(({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+  });
+
+  const lookUp = async (page: Page, editor: string, line: number, word: string) => {
+    await pressWord(page, editor, line, word);
+    await page.keyboard.press('g');
+    await page.keyboard.press('d');
+  };
+
+  test('a symbol from a dependency is named as outside the repository, with nothing to jump to', async ({ page }) => {
+    const world = await fakeApi(page);
+    const address = `/example/alpha/blob/${pullView.headSha}/src/round.ts`;
+    await page.goto(address);
+    await lookUp(page, '.code-view', 2, 'Math');
+    await expect(page.getByRole('region', { name: 'Definition' })).toBeVisible();
+    expect(world.lookups).toEqual([expect.objectContaining({ path: 'src/round.ts', line: 1, word: 'Math' })]);
+
+    const panel = page.getByRole('region', { name: 'Definition' });
+    await expect(panel.getByRole('region', { name: 'Defined outside the repository' })).toContainText('typescript');
+    await expect(panel).toContainText('there is nothing to open');
+    await expect(panel.getByRole('link')).toHaveCount(0);
+    await expect(page).toHaveURL(address);
+  });
+
+  test('text search results are labelled as such and never as a definition', async ({ page }) => {
+    const world = await fakeApi(page);
+    await page.goto(pull);
+    await page.locator(taxEditor).scrollIntoViewIfNeeded();
+    await lookUp(page, taxEditor, 3, 'rate');
+    await expect(page.getByRole('region', { name: 'Definition' })).toBeVisible();
+    expect(world.lookups).toEqual([expect.objectContaining({ kind: 'definition', path: 'src/tax.ts', line: 2, word: 'rate' })]);
+
+    const panel = page.getByRole('region', { name: 'Definition' });
+    const search = panel.getByRole('region', { name: 'From text search' });
+    await expect(search).toContainText('they are not known to define it');
+    await expect(search.getByRole('listitem')).not.toHaveCount(0);
+    await expect(panel.getByText('From the CI-built index')).toHaveCount(0);
+    // Nothing was followed.
+    await expect(page).toHaveURL(new RegExp(`${pull}($|#)`));
+
+    // Choosing a line goes there under the text-search label.
+    await search.getByRole('link').first().click();
+    await expect(page.getByTestId('arrival')).toContainText('From text search');
+  });
+
+  test('nothing found says so', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(`/example/alpha/blob/${pullView.headSha}/src/round.ts`);
+    await lookUp(page, '.code-view', 1, 'number');
+    const panel = page.getByRole('region', { name: 'Definition' });
+    await expect(panel.getByRole('region', { name: 'Not found' })).toContainText('Nothing was found');
+    await expect(panel.getByRole('link')).toHaveCount(0);
+  });
+
+  test('a lookup from a removed line is made at the merge base', async ({ page }) => {
+    const world = await fakeApi(page);
+    await page.goto(pull);
+    const cart = '[data-path="src/cart.ts"]';
+    await expect(page.locator(`${cart} .cm-mergeView .cm-editor`)).toHaveCount(2);
+    // `total` on the old side, which the pull request removes.
+    await lookUp(page, `${cart} .cm-mergeView .cm-editor:first-child`, 4, 'total(prices)');
+    await expect(page.getByRole('region', { name: 'Definition' })).toBeVisible();
+    // Asked at the merge base, at the old file's path, on the word that was removed.
+    expect(world.lookups).toEqual([
+      expect.objectContaining({ kind: 'definition', sha: pullView.mergeBaseSha, path: 'src/cart.ts', line: 3, word: 'total' }),
+    ]);
+  });
+});
+
 test.describe('journey 4: the diff and search need no index', () => {
+  test('the page says CI is still building the index, and picks it up without a reload', async ({ page }) => {
+    const running = { state: 'running', reason: '', runUrl: 'https://github.example/example/alpha/actions/runs/7001', toolVersion: '', documents: 0 } as const;
+    const world = await fakeApi(page, { index: running });
+    await page.clock.install();
+    await page.goto(pull);
+
+    const status = page.getByTestId('index-status');
+    await expect(status).toContainText('CI is still building the index for this commit');
+    await expect(status.getByRole('link', { name: 'the run on GitHub' })).toHaveAttribute('href', running.runUrl);
+    // The diff is there all the same: it comes from the commit's source.
+    await expect(page.locator('[data-path="src/cart.ts"]')).toContainText('return sum(prices);');
+
+    // Nothing is answered from an index that is not there: a lookup is a text search.
+    if (!narrow(page)) {
+      await page.locator(taxEditor).scrollIntoViewIfNeeded();
+      await pressWord(page, taxEditor, 4, 'round(cents');
+      await page.keyboard.press('g');
+      await page.keyboard.press('d');
+      const panel = page.getByRole('region', { name: 'Definition' });
+      await expect(panel.getByRole('region', { name: 'From text search' })).toBeVisible();
+      await expect(panel.getByText('From the CI-built index')).toHaveCount(0);
+    }
+
+    // The job finishes. The page asks again within 15 seconds.
+    world.index = indexReady;
+    await page.clock.fastForward(16_000);
+    await expect(status).toContainText('Navigation uses the index CI built for this commit');
+    expect(world.requests.filter((r) => r.endsWith(`/commits/${pullView.headSha}/index`)).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('a failed index job and a missing index are each said plainly', async ({ page }) => {
+    const world = await fakeApi(page, {
+      index: { state: 'failed', reason: '', runUrl: 'https://github.example/example/alpha/actions/runs/7002', toolVersion: '', documents: 0 },
+    });
+    await page.goto(pull);
+    const status = page.getByTestId('index-status');
+    await expect(status).toContainText('The index job failed for this commit');
+    await expect(status.getByRole('link')).toHaveAttribute('href', /actions\/runs\/7002$/);
+
+    world.index = { state: 'none', reason: 'the index has expired on GitHub', runUrl: '', toolVersion: '', documents: 0 };
+    await page.reload();
+    await expect(status).toContainText('No index for this commit. Lookups use text search. The index has expired on GitHub.');
+  });
+
   test('search finds a caller in a file the pull request does not change', async ({ page }) => {
     const world = await fakeApi(page);
     await page.goto(pull);

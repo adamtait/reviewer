@@ -4,14 +4,18 @@ import { describe, expect, it } from 'vitest';
 
 import errorNotFound from '../../../internal/workspace/api/testdata/examples/error_not_found.json';
 import errorSignedOut from '../../../internal/workspace/api/testdata/examples/error_signed_out.json';
+import definition from '../../../internal/workspace/api/testdata/examples/definition.json';
 import file from '../../../internal/workspace/api/testdata/examples/file.json';
+import fileMergeBase from '../../../internal/workspace/api/testdata/examples/file_merge_base.json';
 import health from '../../../internal/workspace/api/testdata/examples/health.json';
+import indexState from '../../../internal/workspace/api/testdata/examples/index_state.json';
 import me from '../../../internal/workspace/api/testdata/examples/me.json';
 import pullList from '../../../internal/workspace/api/testdata/examples/pull_list.json';
 import pullView from '../../../internal/workspace/api/testdata/examples/pull_view.json';
+import references from '../../../internal/workspace/api/testdata/examples/references.json';
 import searchResult from '../../../internal/workspace/api/testdata/examples/search_result.json';
 import tree from '../../../internal/workspace/api/testdata/examples/tree.json';
-import type { ApiError, File, Health, Me, PullList, PullView, SearchResult, Tree } from './types';
+import type { ApiError, Definition, File, Health, IndexState, Me, PullList, PullView, References, SearchResult, Tree } from './types';
 
 // The service's handler tests must produce these files exactly. Here each is
 // checked against the type this application reads it as, in both directions:
@@ -87,6 +91,31 @@ describe('the recorded responses match the types', () => {
   it('a file', () => {
     const typed = file as File;
     exactly(typed, ['path', 'kind', 'text']);
+    exactly(fileMergeBase, ['path', 'kind', 'text']);
+  });
+
+  it('the index state', () => {
+    const typed = indexState as IndexState;
+    exactly(typed, ['state', 'reason', 'runUrl', 'toolVersion', 'documents']);
+    expect(['none', 'running', 'failed', 'ready']).toContain(typed.state);
+  });
+
+  const location = (prefix: string) => ['path', 'line', 'character', 'endLine', 'endCharacter'].map((field) => `${prefix}[].${field}`);
+
+  it('a definition', () => {
+    const typed = definition as Definition;
+    // The recorded answer has targets and no matches, so only the targets'
+    // fields are present to be checked; a match has the search result's shape.
+    exactly(typed, ['label', 'targets', ...location('targets'), 'package', 'version', 'matches', 'truncated']);
+    expect(['index', 'text_search', 'external', 'none']).toContain(typed.label);
+  });
+
+  it('references', () => {
+    const typed = references as References;
+    exactly(typed, [
+      'label', 'references', ...location('references'), 'truncated',
+      'matches', 'matches[].path', 'matches[].line', 'matches[].text', 'matchesTruncated',
+    ]);
   });
 
   it('a search result', () => {

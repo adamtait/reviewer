@@ -102,12 +102,17 @@ export function href(place: Place): string {
 
 const changed = 'workspace:navigate';
 
-/** Goes to an address on this site, as a new entry in the browser's history unless replacing. */
-export function navigate(to: string, options: { replace?: boolean } = {}): void {
+/**
+ * Goes to an address on this site, as a new entry in the browser's history
+ * unless replacing. `state` travels with the history entry and not in the
+ * address: it is how the page a lookup lands on knows how it was reached.
+ */
+export function navigate(to: string, options: { replace?: boolean; state?: unknown } = {}): void {
+  const state = options.state ?? null;
   if (options.replace) {
-    window.history.replaceState(null, '', to);
+    window.history.replaceState(state, '', to);
   } else {
-    window.history.pushState(null, '', to);
+    window.history.pushState(state, '', to);
   }
   window.dispatchEvent(new Event(changed));
 }

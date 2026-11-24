@@ -418,6 +418,85 @@ main {
   text-overflow: ellipsis;
 }
 
+/* Navigation: every result says where it came from */
+
+.index-status {
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.notice {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  margin: 0.5rem 0;
+  background: var(--panel);
+}
+
+.label {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  margin: 0;
+}
+
+.label-index {
+  border-color: var(--link);
+  color: var(--link);
+}
+
+.label-text_search,
+.label-external {
+  border-color: var(--modified);
+  color: var(--modified);
+}
+
+.label-none {
+  color: var(--muted);
+}
+
+.arrival {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.arrival .report,
+.lookup-results .report {
+  margin: 0.4rem 0 0;
+}
+
+.lookup-results .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.lookup-results h2 {
+  margin: 0;
+}
+
+.lookup-results section {
+  margin-top: 0.75rem;
+}
+
+.lookup-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.lookup-list li a {
+  display: block;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
+  text-decoration: none;
+}
+
 /* Sheets: a line's actions, and the shortcut help */
 
 .sheet-backdrop {

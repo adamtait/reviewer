@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: MIT
 
-import type { ApiError, File, Me, PullList, PullView, Search, SearchResult, Tree } from './types';
+import type {
+  ApiError,
+  Definition,
+  File,
+  IndexState,
+  Me,
+  PullList,
+  PullView,
+  References,
+  Report,
+  Search,
+  SearchResult,
+  Tree,
+} from './types';
 
 /** A response that was not a success. */
 export class ApiFailure extends Error {
@@ -95,6 +108,22 @@ export const api = {
   // The query travels in the body, so what was searched for is not in an address.
   search: (owner: string, name: string, sha: string, query: Search, signal?: AbortSignal) =>
     call<SearchResult>('POST', `${repo(owner, name)}/commits/${sha}/search`, query, signal),
+
+  indexState: (owner: string, name: string, sha: string, signal?: AbortSignal) =>
+    call<IndexState>('GET', `${repo(owner, name)}/commits/${sha}/index`, undefined, signal),
+
+  definition: (owner: string, name: string, sha: string, path: string, line: number, character: number, signal?: AbortSignal) =>
+    call<Definition>('GET', `${repo(owner, name)}/commits/${sha}/definition?${position(path, line, character)}`, undefined, signal),
+
+  references: (owner: string, name: string, sha: string, path: string, line: number, character: number, signal?: AbortSignal) =>
+    call<References>('GET', `${repo(owner, name)}/commits/${sha}/references?${position(path, line, character)}`, undefined, signal),
+
+  report: (owner: string, name: string, report: Report) =>
+    call<undefined>('POST', `${repo(owner, name)}/navigation/reports`, report),
 };
+
+function position(path: string, line: number, character: number): string {
+  return new URLSearchParams({ path, line: String(line), character: String(character) }).toString();
+}
 
 export type Api = typeof api;

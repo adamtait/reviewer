@@ -8,8 +8,8 @@ GitHub. Its design is [`designs/review-workspace.md`](designs/review-workspace.m
 This guide is for the person who deploys and configures it. It grows with each pull request of the
 design's plan. **So far a user can sign in, see the open pull requests of the repositories they can
 read, read a pull request's description and diff, open any file at its commit, search the whole
-repository at that commit, and jump to GitHub to comment. Code navigation and the assistant are
-not built yet.**
+repository at that commit, go to a definition and find references in TypeScript, and jump to GitHub
+to comment. The assistant is not built yet.**
 
 ## What it is
 
@@ -222,8 +222,139 @@ at most 200 lines. The list of pull requests shows at most 300, most recently up
 | 401 `signed_out` | No session, an expired one, or a token GitHub no longer accepts. |
 | 404 `not_found` | An address, repository, pull request, commit or file that does not exist, or that this user cannot read. The response does not say which. |
 | 413 `too_large` | The commit passes `limits.archiveBytes`. |
-| 502 `github_failed` | GitHub could not be asked, or refused. A refusal usually means the token lacks one of the four read permissions; the log line's `outcome` is then `github_forbidden`. |
+| 502 `github_failed` | GitHub could not be asked, or refused. A refusal usually means the token lacks one of the four read permissions; the log line's `outcome` is then `github_forbidden`. A token without the Actions permission fails this way on the index and on every lookup. |
 | 504 `github_timeout` | A fetch passed `limits.fetchSeconds`. |
+
+## Navigation
+
+Go-to-definition and find-references use an index that the repository's own CI builds: the
+`review-index.yml` workflow that `reviewer init` writes, which runs `scip-typescript` on every push
+and saves the result as an artifact named `review-index`. A repository without that workflow has no
+index, and every lookup in it is a text search.
+
+### The four states
+
+When a commit is opened, the service asks GitHub, as the user, for the index workflow's runs for
+that commit. The first rule that applies decides:
+
+| GitHub reports | The page says | What happens |
+| --- | --- | --- |
+| A run that succeeded | Navigation uses the index CI built for this commit | The newest such run's artifact is downloaded, checked and held in memory. |
+| Otherwise, a run that has not finished | CI is still building the index | The page asks again every 15 seconds. Lookups use text search until then. |
+| Otherwise, a finished run | The index job failed, with a link to the run | Lookups use text search. |
+| No run | No index for this commit | Lookups use text search. |
+
+A run counts only if GitHub reports it as a push run of the index workflow file for that exact
+commit. A run a pull request started, a run of another workflow and a run for another commit are
+ignored.
+
+A successful run can still give no index. The page then says "No index for this commit" with the
+reason: the job saved no artifact, the artifact has expired (GitHub keeps one for 90 days unless the
+workflow says otherwise), it is larger than `limits.indexBytes`, it is not a zip holding exactly
+one file named `index.scip`, it cannot be read, or it describes no file of the commit.
+
+### What the index is trusted with
+
+Nothing it cannot be checked for. A pull request's author controls the job that builds the index,
+so the service cannot know an index is honest. It bounds what a false one can do:
+
+- A file the index describes must be a text file of the commit, and every position must lie inside
+  that file's text. What does not is dropped.
+- A definition is followed only if the text at the target is the same word that was asked about.
+  An index cannot send a reader from one name to unrelated code.
+- Every result is labelled with where it came from, and the label never says the result is right.
+
+| Label | Meaning |
+| --- | --- |
+| From the CI-built index | The index gave this place, and the word there matches. Not otherwise checked. |
+| From text search | Lines of the commit that contain the word. Not known to be its definition, or all of its uses. |
+| Defined outside the repository | The index places it in a named package and version that is not part of the repository. Nothing to open. |
+| Not found | Neither the index nor a search found anything. |
+
+A false or partial index can mislead navigation for that commit. It cannot change the diff, the
+source shown, or what text search finds. Find-references always shows the text matches beside the
+index's list, because an index can cover only part of a repository.
+
+`limits.indexBytes` bounds the artifact, the file inside it and the index built from it. Indexes
+share `limits.cacheBytes` with the commits' files.
+
+### Reports that a result was wrong
+
+A result reached from the index carries a "This was wrong" button. Pressing it writes one log line
+and nothing else: the service has nowhere to keep it. The line names the lookup, so that whoever
+reads the log can repeat it. It carries no text from the user.
+
+```json
+{"level":"WARN","msg":"navigation_reported_wrong","owner":"…","repo":"…","sha":"…",
+ "path":"src/cart.ts","line":14,"character":12,"kind":"definition","label":"index"}
+```
+
+To look into one, open `/{owner}/{repo}/blob/{sha}/{path}#L{line + 1}` and repeat the lookup.
+
+### The navigation week's measures
+
+The design's first feedback week is measured from the log. These queries are for Cloud Logging's
+Log Analytics, where the service's lines are rows of a view and each line's fields are under
+`json_payload`. Replace `VIEW` with your log view and set the week. **They have not been run
+against a deployment: there is none yet. Check each against a known day before relying on it.**
+
+Engineers who opened at least one pull request, and how many different pull requests were opened:
+
+```sql
+SELECT
+  COUNT(DISTINCT JSON_VALUE(json_payload.user)) AS engineers,
+  COUNT(DISTINCT CONCAT(JSON_VALUE(json_payload.owner), '/', JSON_VALUE(json_payload.repo), '#',
+                        JSON_VALUE(json_payload.pull))) AS pull_requests
+FROM `VIEW`
+WHERE timestamp BETWEEN TIMESTAMP('2027-01-11') AND TIMESTAMP('2027-01-16')
+  AND JSON_VALUE(json_payload.msg) = 'request'
+  AND JSON_VALUE(json_payload.route) = 'pull_view'
+  AND JSON_VALUE(json_payload.status) = '200'
+```
+
+Lookups for each pull request view, as a median. A lookup's line carries the commit and not the
+pull request, so the two are joined on the commit. Lookups from removed lines are made at the merge
+base and are not counted by this:
+
+```sql
+WITH lines AS (
+  SELECT JSON_VALUE(json_payload.route) AS route, JSON_VALUE(json_payload.user) AS user,
+         JSON_VALUE(json_payload.sha) AS sha
+  FROM `VIEW`
+  WHERE timestamp BETWEEN TIMESTAMP('2027-01-11') AND TIMESTAMP('2027-01-16')
+    AND JSON_VALUE(json_payload.msg) = 'request' AND JSON_VALUE(json_payload.status) = '200'
+),
+views AS (SELECT user, sha, COUNT(*) AS views FROM lines WHERE route = 'pull_view' GROUP BY user, sha),
+lookups AS (SELECT user, sha, COUNT(*) AS lookups FROM lines
+            WHERE route IN ('definition', 'references') GROUP BY user, sha)
+SELECT APPROX_QUANTILES(IFNULL(lookups, 0) / views, 2)[OFFSET(1)] AS median_lookups_per_view
+FROM views LEFT JOIN lookups USING (user, sha)
+```
+
+Reports for every hundred lookups answered from the index:
+
+```sql
+SELECT
+  COUNTIF(JSON_VALUE(json_payload.msg) = 'navigation_reported_wrong') AS reports,
+  COUNTIF(JSON_VALUE(json_payload.msg) = 'request'
+          AND JSON_VALUE(json_payload.route) IN ('definition', 'references')
+          AND JSON_VALUE(json_payload.label) = 'index') AS lookups_from_the_index
+FROM `VIEW`
+WHERE timestamp BETWEEN TIMESTAMP('2027-01-11') AND TIMESTAMP('2027-01-16')
+```
+
+How lookups were answered, by label, which shows how often the index had nothing to say:
+
+```sql
+SELECT JSON_VALUE(json_payload.label) AS label, COUNT(*) AS lookups
+FROM `VIEW`
+WHERE timestamp BETWEEN TIMESTAMP('2027-01-11') AND TIMESTAMP('2027-01-16')
+  AND JSON_VALUE(json_payload.msg) = 'request'
+  AND JSON_VALUE(json_payload.route) IN ('definition', 'references')
+GROUP BY label ORDER BY lookups DESC
+```
+
+The fifth measure is a question the design owner asks the team, and is not in the log.
 
 ## The web application
 
@@ -252,6 +383,10 @@ What a user should know:
   line number of its own, so this is offered for lines of the new file only.
 - **Search covers the whole repository at the pull request's head commit**, not only the changed
   files, and matches text exactly.
+- **Go to definition is `g` then `d`, find references `g` then `r`,** with the cursor on a name.
+  A click on a name with Alt, Ctrl or Cmd held goes to its definition. On a narrow screen, a tap on
+  a name lists both. A lookup from a removed line is made at the merge base, and any other at the
+  head commit.
 - **`?` lists the keyboard shortcuts**, each with the way to do the same by touch.
 
 ### The content security policy
@@ -325,8 +460,10 @@ Be plain with the team about this:
 
 - **The cookie key.** It opens every session cookie, and so every GitHub token presented while the
   key is in use.
-- **The log.** It records who opened which pull request and which commit, and that they searched.
-  It does not record what they searched for, or which file they read.
+- **The log.** It records who opened which pull request and which commit, and that they searched or
+  looked something up. It does not record what they searched for, which file they read, or where
+  in a file a lookup was made. A "this was wrong" report is the exception: its line names the file
+  and position, so that the result can be looked into.
 - **Memory.** While a commit is held, its text is in the process's memory. Anyone who can read the
   process's memory can read it.
 

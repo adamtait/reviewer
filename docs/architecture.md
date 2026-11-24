@@ -153,6 +153,7 @@ in memory under a byte limit (ADR-0030).
 | `identity`, `access` | Sign-in, and "can this user read this repository", which is GitHub's answer. |
 | `source` | Unpacks a commit's archive into memory; the cache; text search. |
 | `catalog` | Lists and describes pull requests. |
+| `navigation`, `navigation/scip` | Finds a commit's CI-built index, decodes it, checks it against the commit's files, and answers definition and reference lookups by the design's five rules. |
 | `api`, `api/apitypes` | The route table, the middleware every request passes through, the handlers, and the request and response bodies. |
 | `web` | Embeds the built web application and serves it under a content security policy. |
 | `testgithub` | A stand-in for GitHub's API, for the tests. |

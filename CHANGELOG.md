@@ -58,6 +58,14 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   is served under a content security policy that allows scripts and requests
   from the service alone. `THIRD_PARTY_LICENSES.md` gains its packages, and
   `tools/checklicenses` reads them from the web application's lockfile.
+- Go-to-definition and find-references in the workspace, for TypeScript, from
+  the index the `review-index.yml` workflow builds. The service decodes the
+  index itself, checks it against the commit's files, and follows a definition
+  only where the text at the target is the same word. Every result is labelled
+  with where it came from: the CI-built index, text search, a package outside
+  the repository, or not found. A commit with no index, or one whose index job
+  is still running or failed, falls back to text search and says so. A result
+  can be reported as wrong, which writes a log line.
 
 - `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
   into a repository with a root `tsconfig.json`. On every push it builds a

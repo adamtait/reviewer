@@ -13,8 +13,8 @@ import "strings"
 //
 //	scip-typescript npm rxjs 7.8.2 src/internal/`Observable.ts`/Observable#subscribe().
 type Symbol struct {
-	// Local marks a symbol scoped to its document. The other fields are empty.
-	Local bool
+	// IsLocal marks a symbol scoped to its document. The other fields are empty.
+	IsLocal bool
 	// Package and Version are the package the symbol belongs to. The format
 	// writes "." for none, which is returned here as "".
 	Package string
@@ -50,7 +50,7 @@ func (s Symbol) Constructs() (string, bool) {
 // be understood.
 func ParseSymbol(symbol string) Symbol {
 	if strings.HasPrefix(symbol, "local ") {
-		return Symbol{Local: true}
+		return Symbol{IsLocal: true}
 	}
 
 	// Scheme, manager, package name and version are separated by single

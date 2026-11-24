@@ -3,17 +3,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiFailure, api, isNotFound } from '../api/client';
-import type { ChangedFile, PullView as Pull } from '../api/types';
+import type { ChangedFile, LookupKind, PullView as Pull } from '../api/types';
 import { ActionSheet, type SheetAction } from '../components/ActionSheet';
 import type { LineRef, PaneHandle } from '../components/CodePane';
 import { Description } from '../components/Description';
 import { FileDiff, sources } from '../components/DiffView';
+import { IndexStatus } from '../components/IndexStatus';
 import { Link } from '../components/Link';
+import { type LookupResult, LookupResults } from '../components/References';
 import { SearchPanel } from '../components/SearchPanel';
 import { ShortcutHelp } from '../components/ShortcutHelp';
 import { commentUrl, openOnGitHub } from '../github/links';
 import type { Action } from '../keys/keymap';
 import { useHotkeys } from '../keys/useHotkeys';
+import {
+  type Context,
+  type Origin,
+  definitionOutcome,
+  findDefinition,
+  findReferences,
+  goTo,
+  lookupCommit,
+} from '../nav/navigation';
 import { href, navigate } from '../router';
 import { useNarrow } from '../useNarrow';
 import { NotFound } from './NotFound';
@@ -30,14 +41,24 @@ export interface PullViewProps {
 }
 
 const available: ReadonlySet<Action> = new Set<Action>([
-  'nextChange', 'prevChange', 'nextFile', 'prevFile', 'search', 'toggleDiff', 'comment', 'switchPull', 'back', 'help',
+  'nextChange', 'prevChange', 'nextFile', 'prevFile', 'definition', 'references', 'search', 'toggleDiff', 'comment',
+  'switchPull', 'back', 'help',
 ]);
+
+/** A lookup whose answer is being shown and not followed. */
+interface Shown {
+  context: Context;
+  origin: Origin;
+  lookup: LookupResult;
+}
 
 export function PullView({ owner, repo, number, file, line }: PullViewProps) {
   const [state, setState] = useState<State>({ phase: 'loading' });
   const [mode, setMode] = useState<'diff' | 'new'>('diff');
-  const [panel, setPanel] = useState<'none' | 'search' | 'help'>('none');
+  const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup'>('none');
   const [sheet, setSheet] = useState<{ file: ChangedFile; at: LineRef } | null>(null);
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [notice, setNotice] = useState('');
   const [active, setActive] = useState(0);
   const narrow = useNarrow();
   const panes = useRef(new Map<string, PaneHandle>());
@@ -116,9 +137,69 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
     [pull],
   );
 
+  // One lookup: where is this defined, or where is it used.
+  const look = useCallback(
+    (kind: LookupKind, target: ChangedFile, at: LineRef) => {
+      if (!pull || at.character === undefined) return;
+      // A removed line is looked up in the old version of its file, at the
+      // merge base; anything else at the head commit.
+      const context: Context = { owner, repo, sha: lookupCommit(pull, at.side), pull: number };
+      const origin: Origin = {
+        side: at.side,
+        path: at.side === 'old' ? target.previousPath || target.path : target.path,
+        line: at.line,
+        character: at.character,
+      };
+      setNotice(kind === 'definition' ? 'Looking for the definition…' : 'Looking for references…');
+      const found =
+        kind === 'definition'
+          ? findDefinition(context, origin).then((result): LookupResult => ({ kind, result }))
+          : findReferences(context, origin).then((result): LookupResult => ({ kind, result }));
+      found
+        .then((lookup) => {
+          setNotice('');
+          if (lookup.kind === 'definition') {
+            const outcome = definitionOutcome(lookup.result);
+            if (outcome.action === 'jump') {
+              // Leave this place in the history first, so that going back
+              // returns to this file and line of the diff.
+              navigate(href({ view: 'pull', owner, repo, number, file: target.path, line: at.line + 1 }), { replace: true });
+              goTo(context, outcome.target, {
+                label: lookup.result.label,
+                kind,
+                origin: { sha: context.sha, path: origin.path, line: origin.line, character: origin.character },
+              });
+              return;
+            }
+          }
+          setShown({ context, origin, lookup });
+          setPanel('lookup');
+        })
+        .catch((error: unknown) => {
+          setNotice(error instanceof ApiFailure ? error.message : 'The lookup failed.');
+        });
+    },
+    [pull, owner, repo, number],
+  );
+
+  const lookAtCursor = useCallback(
+    (kind: LookupKind) => {
+      const target = files[active];
+      const at = target ? panes.current.get(target.path)?.cursor() : null;
+      if (target && at) look(kind, target, at);
+    },
+    [files, active, look],
+  );
+
   useHotkeys(
     pull
       ? {
+          definition: () => {
+            lookAtCursor('definition');
+          },
+          references: () => {
+            lookAtCursor('references');
+          },
           nextChange: () => {
             moveChange(1);
           },
@@ -148,6 +229,7 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
           back: () => {
             setPanel('none');
             setSheet(null);
+            setNotice('');
           },
           help: () => {
             setPanel('help');
@@ -166,15 +248,33 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
   const sheetActions = (target: ChangedFile, at: LineRef): SheetAction[] => {
     const { before, after } = sources(current, target);
     const source = at.side === 'old' ? before : after;
-    const actions: SheetAction[] = [
-      {
-        label: 'Comment on GitHub',
-        hint: 'c',
-        run: () => {
-          comment(target, at);
+    const actions: SheetAction[] = [];
+    // A position in the code, and not a whole line, can be looked up.
+    if (at.character !== undefined) {
+      actions.push(
+        {
+          label: 'Definition',
+          hint: 'g d',
+          run: () => {
+            look('definition', target, at);
+          },
         },
+        {
+          label: 'References',
+          hint: 'g r',
+          run: () => {
+            look('references', target, at);
+          },
+        },
+      );
+    }
+    actions.push({
+      label: 'Comment on GitHub',
+      hint: 'c',
+      run: () => {
+        comment(target, at);
       },
-    ];
+    });
     if (source) {
       actions.push({
         label: 'Open this file',
@@ -187,7 +287,7 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
   };
 
   return (
-    <div className={`pull-view${panel === 'search' ? ' with-panel' : ''}`}>
+    <div className={`pull-view${panel === 'search' || panel === 'lookup' ? ' with-panel' : ''}`}>
       <main>
         <header className="pull-header">
           <h1>
@@ -229,6 +329,13 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
             </button>
           </div>
         </header>
+
+        <IndexStatus owner={owner} repo={repo} sha={current.headSha} />
+        {notice ? (
+          <p className="notice" role="status">
+            {notice}
+          </p>
+        ) : null}
 
         <Description body={current.body} />
 
@@ -278,6 +385,15 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
                 setActive(i);
                 setSheet({ file: target, at });
               }}
+              tapMenu={narrow}
+              onActivate={() => {
+                setActive(i);
+              }}
+              onSymbolAction={(target, at, intent) => {
+                setActive(i);
+                if (intent === 'definition') look('definition', target, at);
+                else setSheet({ file: target, at });
+              }}
               ref={(handle) => {
                 if (handle) panes.current.set(f.path, handle);
                 else panes.current.delete(f.path);
@@ -314,6 +430,18 @@ export function PullView({ owner, repo, number, file, line }: PullViewProps) {
             repo={repo}
             sha={current.headSha}
             pull={number}
+            onClose={() => {
+              setPanel('none');
+            }}
+          />
+        </aside>
+      ) : null}
+      {panel === 'lookup' && shown ? (
+        <aside className="side-panel">
+          <LookupResults
+            context={shown.context}
+            origin={shown.origin}
+            lookup={shown.lookup}
             onClose={() => {
               setPanel('none');
             }}

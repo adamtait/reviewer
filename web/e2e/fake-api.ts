@@ -6,7 +6,22 @@ import { fileURLToPath } from 'node:url';
 
 import type { Page, Route } from '@playwright/test';
 
-import type { ApiError, File, Me, PullList, PullView, Search, SearchResult, Tree } from '../src/api/types';
+import type {
+  ApiError,
+  Definition,
+  File,
+  IndexState,
+  Location,
+  Match,
+  Me,
+  PullList,
+  PullView,
+  References,
+  Report,
+  Search,
+  SearchResult,
+  Tree,
+} from '../src/api/types';
 
 // A stand-in for the service, inside the browser. It answers with the
 // responses recorded under internal/workspace/api/testdata/examples, which the
@@ -30,6 +45,7 @@ const notFound = example('error_not_found') as ApiError;
 const signedOut = example('error_signed_out') as ApiError;
 const recordedHead = example('file') as File;
 const recordedBase = example('file_merge_base') as File;
+export const indexReady = example('index_state') as IndexState;
 
 const text = (path: string, body: string): File => ({ path, kind: 'text', text: body });
 
@@ -43,7 +59,12 @@ const head: Record<string, File> = {
     'src/cart.ts',
     "import { sum } from './sum';\n\nexport function cartTotal(prices: number[]): number {\n  return sum(prices);\n}\n",
   ),
-  'src/tax.ts': text('src/tax.ts', 'export const rate = 0.2;\n'),
+  // An added file that calls into a file the pull request does not touch.
+  'src/tax.ts': text(
+    'src/tax.ts',
+    "import { round } from './round';\n\nexport const rate = 0.2;\nexport const withTax = (cents: number) => round(cents * (1 + rate));\n",
+  ),
+  'src/round.ts': text('src/round.ts', 'export function round(n: number): number {\n  return Math.round(n);\n}\n'),
   'src/receipt.ts': text(
     'src/receipt.ts',
     "import { sum } from './sum';\n\nexport const receipt = (prices: number[]) => `Total: ${sum(prices)}`;\n",
@@ -54,6 +75,7 @@ const mergeBase: Record<string, File> = {
   [recordedBase.path]: recordedBase,
   'README.md': text('README.md', '# Alpha\n\nA shop.\n'),
   'docs/old.md': text('docs/old.md', 'Notes nobody reads.\n'),
+  'src/round.ts': text('src/round.ts', 'export function round(n: number): number {\n  return Math.round(n);\n}\n'),
   'src/cart.ts': text(
     'src/cart.ts',
     "import { total } from './total';\n\nexport function cartTotal(prices: number[]): number {\n  return total(prices);\n}\n",
@@ -73,6 +95,70 @@ export interface World {
   requests: string[];
   /** The body of every search, to check what was asked. */
   searches: Search[];
+  /** What the index route answers for the head commit. A test may change it while the page is open. */
+  index: IndexState;
+  /** Every "this was wrong" report received. */
+  reports: Report[];
+  /** Every lookup asked for, with the word found at its position. */
+  lookups: { kind: string; sha: string; path: string; line: number; character: number; word: string }[];
+}
+
+const span = (path: string, line: number, character: number, length: number): Location => ({
+  path,
+  line,
+  character,
+  endLine: line,
+  endCharacter: character + length,
+});
+
+/** The identifier under a position, as the service finds one when the index has nothing there. */
+function wordAt(file: File | undefined, line: number, character: number): string {
+  const text = file?.text.split('\n')[line] ?? '';
+  let start = character;
+  let end = character;
+  while (start > 0 && /[\w$]/.test(text.charAt(start - 1))) start--;
+  while (end < text.length && /[\w$]/.test(text.charAt(end))) end++;
+  return text.slice(start, end);
+}
+
+/** Lines of a commit that contain a word on its own: what the service's text search returns. */
+function wholeWord(files: Record<string, File>, word: string): Match[] {
+  const pattern = new RegExp(`(^|[^\\w$])${word.replace(/[$]/g, '\\$')}($|[^\\w$])`);
+  return Object.values(files)
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .flatMap((file) =>
+      file.text
+        .split('\n')
+        .map((line, n): Match => ({ path: file.path, line: n, text: line }))
+        .filter((match) => pattern.test(match.text)),
+    );
+}
+
+// What the stand-in's index knows. `round` is defined in a file the pull
+// request does not touch; `Math` belongs to a package outside the repository;
+// `number` is in no index and on too many lines to be worth searching for.
+// Any other word falls back to a text search, as it does in the service.
+function definitionOf(files: Record<string, File>, path: string, line: number, character: number): Definition {
+  const none: Definition = { label: 'none', targets: [], package: '', version: '', matches: [], truncated: false };
+  const word = wordAt(files[path], line, character);
+  if (word === 'round') return { ...none, label: 'index', targets: [span('src/round.ts', 0, 16, 5)] };
+  if (word === 'Math') return { ...none, label: 'external', package: 'typescript', version: '6.0.3' };
+  if (word === '' || word === 'number') return none;
+  const matches = wholeWord(files, word);
+  return matches.length === 0 ? none : { ...none, label: 'text_search', matches };
+}
+
+function referencesOf(files: Record<string, File>, path: string, line: number, character: number): References {
+  const word = wordAt(files[path], line, character);
+  const matches = word === '' ? [] : wholeWord(files, word);
+  const references = word === 'round' ? [span('src/round.ts', 0, 16, 5), span('src/tax.ts', 0, 9, 5), span('src/tax.ts', 3, 40, 5)] : [];
+  return {
+    label: references.length > 0 ? 'index' : matches.length > 0 ? 'text_search' : 'none',
+    references,
+    truncated: false,
+    matches,
+    matchesTruncated: false,
+  };
 }
 
 const json = (route: Route, status: number, body: unknown) =>
@@ -85,6 +171,9 @@ export async function fakeApi(page: Page, initial: Partial<World> = {}): Promise
     readable: new Set(me.repositories.map((r) => `${r.owner}/${r.name}`)),
     requests: [],
     searches: [],
+    index: indexReady,
+    reports: [],
+    lookups: [],
     ...initial,
   };
 
@@ -127,8 +216,12 @@ export async function fakeApi(page: Page, initial: Partial<World> = {}): Promise
 
     if (rest === 'pulls') return json(route, 200, pullList);
     if (rest === `pulls/${pullView.number}`) return json(route, 200, pullView);
+    if (rest === 'navigation/reports') {
+      world.reports.push(request.postDataJSON() as Report);
+      return route.fulfill({ status: 204 });
+    }
 
-    const commit = /^commits\/([0-9a-f]{40})\/(tree|file|search)$/.exec(rest ?? '');
+    const commit = /^commits\/([0-9a-f]{40})\/(tree|file|search|index|definition|references)$/.exec(rest ?? '');
     if (!commit) return json(route, 404, notFound);
     const files = commit[1] === pullView.headSha ? head : commit[1] === pullView.mergeBaseSha ? mergeBase : null;
     if (!files) return json(route, 404, notFound);
@@ -139,6 +232,33 @@ export async function fakeApi(page: Page, initial: Partial<World> = {}): Promise
       case 'file': {
         const found = files[url.searchParams.get('path') ?? ''];
         return found ? json(route, 200, found) : json(route, 404, notFound);
+      }
+      case 'index':
+        // Only the head commit has an index. The merge base was never the tip of a push.
+        return json(
+          route,
+          200,
+          commit[1] === pullView.headSha ? world.index : { state: 'none', reason: '', runUrl: '', toolVersion: '', documents: 0 },
+        );
+      case 'definition':
+      case 'references': {
+        const path = url.searchParams.get('path') ?? '';
+        const line = Number(url.searchParams.get('line'));
+        const character = Number(url.searchParams.get('character'));
+        // With no index, every lookup is a text search.
+        const indexed = commit[1] === pullView.headSha && world.index.state === 'ready';
+        const word = wordAt(files[path], line, character);
+        world.lookups.push({ kind: commit[2], sha: commit[1] ?? '', path, line, character, word });
+        if (commit[2] === 'definition') {
+          const found = definitionOf(files, path, line, character);
+          if (!indexed && (found.label === 'index' || found.label === 'external')) {
+            const matches = wholeWord(files, word);
+            return json(route, 200, { label: matches.length ? 'text_search' : 'none', targets: [], package: '', version: '', matches, truncated: false });
+          }
+          return json(route, 200, found);
+        }
+        const found = referencesOf(files, path, line, character);
+        return json(route, 200, indexed ? found : { ...found, references: [], label: found.matches.length ? 'text_search' : 'none' });
       }
       default: {
         const search = request.postDataJSON() as Search;

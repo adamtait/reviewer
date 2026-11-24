@@ -750,7 +750,7 @@ repositories:
 
 Environment variables: `WORKSPACE_COOKIE_KEY`, 32 random bytes in base64, and one variable per repository's `apiKeyEnv`.
 
-A zero in `sessionDays`, `accessCacheSeconds` or `limits` is a configuration error, so the service chooses no value that costs money or bounds memory. `sessionDays` is at most 366, and `accessCacheSeconds` at most 3600, so that a mistyped value cannot quietly stop the workspace mirroring GitHub's access. A repository's four model settings are all set or all left out: with none, it has navigation and search and no assistant. An unknown key in the file is an error. `examples/workspace.config.yaml` suggests values. Fixed in code, because the API's shape depends on them: 200 search matches, 500 references, a 15-second interval for asking about a running index job, a 500-character limit on a report's note, and the five-minute line between a rate limit and an exhausted quota.
+A zero in `sessionDays`, `accessCacheSeconds` or `limits` is a configuration error, so the service chooses no value that costs money or bounds memory. `sessionDays` is at most 366, and `accessCacheSeconds` at most 3600, so that a mistyped value cannot quietly stop the workspace mirroring GitHub's access. A repository's four model settings are all set or all left out: with none, it has navigation and search and no assistant. An unknown key in the file is an error. `examples/workspace.config.yaml` suggests values. Fixed in code, because the API's shape depends on them: 200 search matches, 500 references, a 15-second interval for asking about a running index job, and the five-minute line between a rate limit and an exhausted quota.
 
 #### Index workflow
 
@@ -859,11 +859,11 @@ Search        = { query, pathPrefix, caseSensitive }
 SearchResult  = { matches: [Match], truncated }
 IndexState    = { state, reason, runUrl, toolVersion, documents }   # state: none | running | failed | ready
 Location      = { path, line, character, endLine, endCharacter }
-Definition    = { label, targets: [Location], package, version, matches: [Match] }
+Definition    = { label, targets: [Location], package, version, matches: [Match], truncated }
                 # label: index | text_search | external | none
-References    = { label, references: [Location], truncated, matches: [Match] }
+References    = { label, references: [Location], truncated, matches: [Match], matchesTruncated }
                 # label: index | text_search | none
-Report        = { sha, path, line, character, kind, label, note }  # kind: definition | references
+Report        = { sha, path, line, character, kind, label }  # kind: definition | references
 Ask           = { text, pullNumber, history: [{ role, text }],
                   selection: { sha, path, startLine, endLine } | null }
 ```
@@ -1102,6 +1102,18 @@ Measured through the service's own code against this repository on 2026-11-24: 3
 | `web/src/nav/navigation.ts`, `navigation.test.ts`, `web/src/components/References.tsx`, `IndexStatus.tsx` | Create | Lookup calls, the rule for which commit a lookup uses, history entries, the two lists side by side, the four index states and the 15-second re-check. |
 | `web/src/components/CodePane.tsx`, `ActionSheet.tsx`, `web/src/keys/keymap.ts`, `web/src/api/client.ts`, `web/e2e/journeys.spec.ts`, `fake-api.ts` | Modify | Wire navigation in; journeys 2 and 3, and the index part of journey 4. |
 | `docs/workspace.md` | Modify | The saved log queries for the navigation week's measures. |
+
+**As built.** PR-52 follows the table above with these differences:
+
+*   **A report carries no note.** The design gave a report a free-text note. A report is a log line, and the log holds nothing a user typed, so the note is left out. A report names the lookup, which is enough to repeat it.
+*   **The fixture has eight files, not ten,** and its golden files are written by a `golden` mode added to `trials/scip_lookup.py`. Scored against the TypeScript compiler on 66 identifiers: 56 resolved to where the compiler says, 7 placed outside the repository as the compiler places them, 3 unresolved and left to text search, none wrong.
+*   **`navigation/fetch.go` holds the four-state rule and the service, and `load.go` the checks against the commit.** There is also `fetch_test.go`. Lookups are functions over an index that may be absent, so a commit with no index goes through the same code as one with.
+*   **One more test than planned:** an index built to point a name at unrelated code, which the lookup does not follow.
+*   **A state other than "ready" is believed for ten seconds, and an unusable artifact for sixty,** before GitHub is asked again. Without this, every lookup in a commit with no index would list the workflow's runs.
+*   **Text search gained a whole-word option,** which the fall-back uses: a lookup on `add` does not list `address`.
+*   **The link to a workflow run is built from configuration and the run's number,** as the link to a pull request is, and not passed on from GitHub's response.
+*   **In the web application,** a click on a name with Alt, Ctrl or Cmd held goes to its definition; a plain click does not, so that it stays free for selecting text. How a page was reached by a lookup travels in the browser's history entry and not in the address. `References.tsx` shows every result that is listed and not followed, for both kinds of lookup.
+*   **Both decoders were fuzzed** for panics, about three million inputs between them.
 
 #### 7. PR-53: conversation interface, scan and gateway
 

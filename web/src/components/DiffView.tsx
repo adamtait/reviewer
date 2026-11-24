@@ -5,7 +5,7 @@ import { type Ref, useEffect, useRef, useState } from 'react';
 import { ApiFailure, api, isNotFound } from '../api/client';
 import type { ChangedFile, File, PullView } from '../api/types';
 import { blobUrl } from '../github/links';
-import { CodePane, type LineRef, MergePane, type PaneHandle } from './CodePane';
+import { CodePane, type LineRef, MergePane, type PaneHandle, type SymbolIntent } from './CodePane';
 
 /** Where one side of a changed file is read from. */
 export interface Source {
@@ -76,11 +76,31 @@ export interface FileDiffProps {
   /** Read the file now, without waiting for it to scroll into view. */
   eager?: boolean;
   onLineAction?: (file: ChangedFile, ref: LineRef) => void;
+  /** A click on a word in the code: a lookup, or on a narrow screen the list of actions. */
+  onSymbolAction?: (file: ChangedFile, ref: LineRef, intent: SymbolIntent) => void;
+  /** Whether a plain tap on a word opens the list of actions. */
+  tapMenu?: boolean;
+  /** The reader clicked or tabbed into this file: it is now the one the keyboard acts on. */
+  onActivate?: () => void;
   ref?: Ref<PaneHandle>;
 }
 
 /** One changed file: its two versions read from the service and drawn as a diff. */
-export function FileDiff({ owner, repo, pull, file, mode, layout, line, eager, onLineAction, ref }: FileDiffProps) {
+export function FileDiff({
+  owner,
+  repo,
+  pull,
+  file,
+  mode,
+  layout,
+  line,
+  eager,
+  onLineAction,
+  onSymbolAction,
+  tapMenu,
+  onActivate,
+  ref,
+}: FileDiffProps) {
   const [state, setState] = useState<State>({ phase: 'waiting' });
   const [attempt, setAttempt] = useState(0);
   const [visible, setVisible] = useState(eager === true || typeof IntersectionObserver === 'undefined');
@@ -127,9 +147,14 @@ export function FileDiff({ owner, repo, pull, file, mode, layout, line, eager, o
         onLineAction(file, lineRef);
       }
     : undefined;
+  const symbol = onSymbolAction
+    ? (lineRef: LineRef, intent: SymbolIntent) => {
+        onSymbolAction(file, lineRef, intent);
+      }
+    : undefined;
 
   return (
-    <section className="file-diff" ref={section} data-path={file.path} aria-label={file.path}>
+    <section className="file-diff" ref={section} data-path={file.path} aria-label={file.path} onFocus={onActivate}>
       <header className="file-header">
         <span className={`status status-${file.status}`}>{file.status}</span>
         <span className="file-path">
@@ -176,11 +201,32 @@ export function FileDiff({ owner, repo, pull, file, mode, layout, line, eager, o
 
     if (newText === null && oldText !== null) {
       if (mode === 'new') return <p className="muted pad">This pull request deletes this file.</p>;
-      return <CodePane path={file.path} text={oldText} side="old" onLineAction={act} {...(ref ? { ref } : {})} />;
+      return (
+        <CodePane
+          path={file.previousPath || file.path}
+          text={oldText}
+          side="old"
+          onLineAction={act}
+          onSymbolAction={symbol}
+          tapMenu={tapMenu}
+          {...(ref ? { ref } : {})}
+        />
+      );
     }
     if (newText === null) return <p className="muted pad">Nothing to show.</p>;
     if (oldText === null || mode === 'new') {
-      return <CodePane path={file.path} text={newText} side="new" line={line} onLineAction={act} {...(ref ? { ref } : {})} />;
+      return (
+        <CodePane
+          path={file.path}
+          text={newText}
+          side="new"
+          line={line}
+          onLineAction={act}
+          onSymbolAction={symbol}
+          tapMenu={tapMenu}
+          {...(ref ? { ref } : {})}
+        />
+      );
     }
     return (
       <MergePane
@@ -190,6 +236,8 @@ export function FileDiff({ owner, repo, pull, file, mode, layout, line, eager, o
         layout={layout}
         line={line}
         onLineAction={act}
+        onSymbolAction={symbol}
+        tapMenu={tapMenu}
         {...(ref ? { ref } : {})}
       />
     );

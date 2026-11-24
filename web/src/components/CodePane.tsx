@@ -19,7 +19,16 @@ import type { Side } from '../github/links';
 export interface LineRef {
   side: Side;
   line: number;
+  /**
+   * A character in the line, counted from 0 in UTF-16 code units, when the
+   * place is a position in the code and not a whole line. It is the unit the
+   * navigation index counts in, so it is sent to the service as it is.
+   */
+  character?: number;
 }
+
+/** What a click on a word in the code asks for. */
+export type SymbolIntent = 'definition' | 'menu';
 
 /** What the page can ask of a pane. */
 export interface PaneHandle {
@@ -70,8 +79,37 @@ function language(path: string): Extension[] {
   }
 }
 
-function base(path: string, label: string, onLine: (line: number) => void): Extension[] {
+/** Reports a click on a word, with what kind of click it was. */
+type OnSymbol = (line: number, character: number, intent: SymbolIntent) => void;
+
+/**
+ * Turns a click on a word into a lookup request.
+ *
+ * With Ctrl, Cmd or Alt held, the click asks for the definition, as in an
+ * editor. A plain click asks for the list of actions only where `tapMenu` is
+ * set, which is on narrow screens: there a tap is the only pointer there is,
+ * while on a desktop a plain click has to stay free for selecting text.
+ */
+function symbolClicks(onSymbol: OnSymbol, tapMenu: () => boolean): Extension {
+  return EditorView.domEventHandlers({
+    click(event, view) {
+      const wanted = event.metaKey || event.ctrlKey || event.altKey;
+      if (!wanted && !tapMenu()) return false;
+      const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (position === null) return false;
+      const word = view.state.wordAt(position);
+      if (!word) return false;
+      const line = view.state.doc.lineAt(position);
+      view.dispatch({ selection: EditorSelection.cursor(position) });
+      onSymbol(line.number - 1, position - line.from, wanted ? 'definition' : 'menu');
+      return true;
+    },
+  });
+}
+
+function base(path: string, label: string, onLine: (line: number) => void, clicks: Extension): Extension[] {
   return [
+    clicks,
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
     lineNumbers({
@@ -105,8 +143,11 @@ function showLine(view: EditorView, line: number | undefined): Extension[] {
   return [];
 }
 
-function cursorLine(view: EditorView): number {
-  return view.state.doc.lineAt(view.state.selection.main.head).number - 1;
+/** Where the cursor is: its line, and its offset in that line in UTF-16 code units. */
+function cursorPlace(view: EditorView): { line: number; character: number } {
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  return { line: line.number - 1, character: head - line.from };
 }
 
 /**
@@ -140,16 +181,24 @@ export interface CodePaneProps {
   /** A line to mark and scroll to, counted from 0. */
   line?: number | undefined;
   onLineAction?: ((ref: LineRef) => void) | undefined;
+  /** A click on a word. See symbolClicks for which clicks count. */
+  onSymbolAction?: ((ref: LineRef, intent: SymbolIntent) => void) | undefined;
+  /** Whether a plain tap on a word opens the list of actions. */
+  tapMenu?: boolean | undefined;
   ref?: Ref<PaneHandle>;
 }
 
 /** One file's text, read-only. */
-export function CodePane({ path, text, side = 'new', line, onLineAction, ref }: CodePaneProps) {
+export function CodePane({ path, text, side = 'new', line, onLineAction, onSymbolAction, tapMenu, ref }: CodePaneProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onLine = useRef(onLineAction);
+  const onSymbol = useRef(onSymbolAction);
+  const menu = useRef(tapMenu);
   useEffect(() => {
     onLine.current = onLineAction;
+    onSymbol.current = onSymbolAction;
+    menu.current = tapMenu;
   });
 
   useEffect(() => {
@@ -166,7 +215,18 @@ export function CodePane({ path, text, side = 'new', line, onLineAction, ref }: 
       parent: host.current,
       state: EditorState.create({
         doc: text,
-        extensions: [...base(path, path, (n) => onLine.current?.({ side, line: n })), ...marked],
+        extensions: [
+          ...base(
+            path,
+            path,
+            (n) => onLine.current?.({ side, line: n }),
+            symbolClicks(
+              (n, character, intent) => onSymbol.current?.({ side, line: n, character }, intent),
+              () => menu.current === true,
+            ),
+          ),
+          ...marked,
+        ],
       }),
     });
     view.current = editor;
@@ -179,7 +239,7 @@ export function CodePane({ path, text, side = 'new', line, onLineAction, ref }: 
 
   useImperativeHandle(ref, () => ({
     moveChange: () => false,
-    cursor: () => (view.current ? { side, line: cursorLine(view.current) } : null),
+    cursor: () => (view.current ? { side, ...cursorPlace(view.current) } : null),
     focus: () => view.current?.focus(),
   }));
 
@@ -196,6 +256,8 @@ export interface MergePaneProps {
   layout: 'split' | 'unified';
   line?: number | undefined;
   onLineAction?: ((ref: LineRef) => void) | undefined;
+  onSymbolAction?: ((ref: LineRef, intent: SymbolIntent) => void) | undefined;
+  tapMenu?: boolean | undefined;
   ref?: Ref<PaneHandle>;
 }
 
@@ -203,18 +265,27 @@ export interface MergePaneProps {
 const collapse = { margin: 3, minSize: 6 };
 
 /** Two versions of one file, with what changed between them marked. */
-export function MergePane({ path, oldText, newText, layout, line, onLineAction, ref }: MergePaneProps) {
+export function MergePane({ path, oldText, newText, layout, line, onLineAction, onSymbolAction, tapMenu, ref }: MergePaneProps) {
   const host = useRef<HTMLDivElement>(null);
   const newSide = useRef<EditorView | null>(null);
   const oldSide = useRef<EditorView | null>(null);
   const onLine = useRef(onLineAction);
+  const onSymbol = useRef(onSymbolAction);
+  const menu = useRef(tapMenu);
   useEffect(() => {
     onLine.current = onLineAction;
+    onSymbol.current = onSymbolAction;
+    menu.current = tapMenu;
   });
 
   useEffect(() => {
     if (!host.current) return;
     const act = (side: Side) => (n: number) => onLine.current?.({ side, line: n });
+    const clicks = (side: Side) =>
+      symbolClicks(
+        (n, character, intent) => onSymbol.current?.({ side, line: n, character }, intent),
+        () => menu.current === true,
+      );
 
     if (layout === 'unified') {
       const editor = new EditorView({
@@ -222,7 +293,7 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
         state: EditorState.create({
           doc: newText,
           extensions: [
-            ...base(path, path, act('new')),
+            ...base(path, path, act('new'), clicks('new')),
             unifiedMergeView({ original: oldText, mergeControls: false, gutter: true, collapseUnchanged: collapse }),
           ],
         }),
@@ -237,8 +308,8 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
 
     const merge = new MergeView({
       parent: host.current,
-      a: { doc: oldText, extensions: base(path, `${path}, before`, act('old')) },
-      b: { doc: newText, extensions: base(path, `${path}, after`, act('new')) },
+      a: { doc: oldText, extensions: base(path, `${path}, before`, act('old'), clicks('old')) },
+      b: { doc: newText, extensions: base(path, `${path}, after`, act('new'), clicks('new')) },
       gutter: true,
       collapseUnchanged: collapse,
     });
@@ -256,8 +327,8 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
     moveChange: (direction, from) => (newSide.current ? moveChange(newSide.current, direction, from) : false),
     cursor: () => {
       // The side that has focus is the side the user means.
-      if (oldSide.current?.hasFocus) return { side: 'old', line: cursorLine(oldSide.current) };
-      return newSide.current ? { side: 'new', line: cursorLine(newSide.current) } : null;
+      if (oldSide.current?.hasFocus) return { side: 'old', ...cursorPlace(oldSide.current) };
+      return newSide.current ? { side: 'new', ...cursorPlace(newSide.current) } : null;
     },
     focus: () => newSide.current?.focus(),
   }));

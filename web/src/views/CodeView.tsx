@@ -1,18 +1,31 @@
 // SPDX-License-Identifier: MIT
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiFailure, api, isNotFound } from '../api/client';
-import type { File, PullView } from '../api/types';
+import type { File, LookupKind, PullView } from '../api/types';
 import { ActionSheet, type SheetAction } from '../components/ActionSheet';
-import { CodePane, type LineRef } from '../components/CodePane';
+import { CodePane, type LineRef, type PaneHandle } from '../components/CodePane';
+import { IndexStatus } from '../components/IndexStatus';
 import { Link } from '../components/Link';
+import { type LookupResult, LookupResults, ReportWrong } from '../components/References';
 import { SearchPanel } from '../components/SearchPanel';
 import { ShortcutHelp } from '../components/ShortcutHelp';
 import { blobUrl, openOnGitHub } from '../github/links';
 import type { Action } from '../keys/keymap';
 import { useHotkeys } from '../keys/useHotkeys';
+import {
+  type Context,
+  type Origin,
+  arrival,
+  definitionOutcome,
+  findDefinition,
+  findReferences,
+  goTo,
+  labelText,
+} from '../nav/navigation';
 import { href, navigate } from '../router';
+import { useNarrow } from '../useNarrow';
 import { NotFound } from './NotFound';
 
 type State = { phase: 'loading' } | { phase: 'ready'; file: File } | { phase: 'notfound' } | { phase: 'failed'; message: string };
@@ -28,7 +41,7 @@ export interface CodeViewProps {
   pull?: number | undefined;
 }
 
-const available: ReadonlySet<Action> = new Set<Action>(['search', 'switchPull', 'back', 'help']);
+const available: ReadonlySet<Action> = new Set<Action>(['definition', 'references', 'search', 'switchPull', 'back', 'help']);
 
 const whyNoText: Record<Exclude<File['kind'], 'text'>, string> = {
   binary: 'This file is not text, so it is not shown.',
@@ -40,8 +53,16 @@ const whyNoText: Record<Exclude<File['kind'], 'text'>, string> = {
 export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) {
   const [state, setState] = useState<State>({ phase: 'loading' });
   const [from, setFrom] = useState<PullView | null>(null);
-  const [panel, setPanel] = useState<'none' | 'search' | 'help'>('none');
+  const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup'>('none');
   const [sheet, setSheet] = useState<LineRef | null>(null);
+  const [shown, setShown] = useState<{ origin: Origin; lookup: LookupResult } | null>(null);
+  const [notice, setNotice] = useState('');
+  const narrow = useNarrow();
+  const pane = useRef<PaneHandle>(null);
+  // How this page was reached, if a lookup led here. It is in the history
+  // entry, so it is still known after going forward again or reloading.
+  const how = arrival(window.history.state);
+  const context: Context = { owner, repo, sha, pull };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,7 +100,49 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
 
   const back = pull ? href({ view: 'pull', owner, repo, number: pull }) : null;
 
+  const look = useCallback(
+    (kind: LookupKind, at: LineRef) => {
+      if (at.character === undefined) return;
+      const here: Context = { owner, repo, sha, pull };
+      const origin: Origin = { side: 'new', path, line: at.line, character: at.character };
+      setNotice(kind === 'definition' ? 'Looking for the definition…' : 'Looking for references…');
+      const found =
+        kind === 'definition'
+          ? findDefinition(here, origin).then((result): LookupResult => ({ kind, result }))
+          : findReferences(here, origin).then((result): LookupResult => ({ kind, result }));
+      found
+        .then((lookup) => {
+          setNotice('');
+          if (lookup.kind === 'definition') {
+            const outcome = definitionOutcome(lookup.result);
+            if (outcome.action === 'jump') {
+              goTo(here, outcome.target, {
+                label: lookup.result.label,
+                kind,
+                origin: { sha, path, line: origin.line, character: origin.character },
+              });
+              return;
+            }
+          }
+          setShown({ origin, lookup });
+          setPanel('lookup');
+        })
+        .catch((error: unknown) => {
+          setNotice(error instanceof ApiFailure ? error.message : 'The lookup failed.');
+        });
+    },
+    [owner, repo, sha, pull, path],
+  );
+
   useHotkeys({
+    definition: () => {
+      const at = pane.current?.cursor();
+      if (at) look('definition', at);
+    },
+    references: () => {
+      const at = pane.current?.cursor();
+      if (at) look('references', at);
+    },
     search: () => {
       setPanel('search');
     },
@@ -90,6 +153,9 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
       if (panel !== 'none' || sheet) {
         setPanel('none');
         setSheet(null);
+      } else if (how) {
+        // Reached by a lookup: go back to exactly where it was made.
+        window.history.back();
       } else if (back) {
         navigate(back);
       }
@@ -103,23 +169,54 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
 
   const inChange = from?.files.some((f) => (sha === from.headSha ? f.path === path : (f.previousPath || f.path) === path)) ?? null;
 
-  const actions = (at: LineRef): SheetAction[] =>
-    from
-      ? [
-          {
-            label: 'Open on GitHub',
-            run: () => {
-              openOnGitHub(blobUrl(from.webUrl, sha, path, at.line));
-            },
+  const actions = (at: LineRef): SheetAction[] => {
+    const list: SheetAction[] = [];
+    if (at.character !== undefined) {
+      list.push(
+        {
+          label: 'Definition',
+          hint: 'g d',
+          run: () => {
+            look('definition', at);
           },
-        ]
-      : [];
+        },
+        {
+          label: 'References',
+          hint: 'g r',
+          run: () => {
+            look('references', at);
+          },
+        },
+      );
+    }
+    if (from) {
+      list.push({
+        label: 'Open on GitHub',
+        run: () => {
+          openOnGitHub(blobUrl(from.webUrl, sha, path, at.line));
+        },
+      });
+    }
+    return list;
+  };
 
   return (
-    <div className={`code-view${panel === 'search' ? ' with-panel' : ''}`}>
+    <div className={`code-view${panel === 'search' || panel === 'lookup' ? ' with-panel' : ''}`}>
       <main>
         <header className="code-header">
-          {back ? (
+          {how ? (
+            // One action back to the same place: the history entry the lookup left.
+            <a
+              href={back ?? '/'}
+              className="back"
+              onClick={(event) => {
+                event.preventDefault();
+                window.history.back();
+              }}
+            >
+              ← Back to where you were
+            </a>
+          ) : back ? (
             <Link to={back} className="back">
               ← Back to diff
             </Link>
@@ -130,6 +227,23 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
             {inChange === false ? <span className="badge outside"> Outside this pull request’s changes</span> : null}
             {from && sha === from.mergeBaseSha ? <span className="badge"> Before the change</span> : null}
           </p>
+          {how ? (
+            <div className="arrival" data-testid="arrival">
+              <span className={`label label-${how.label}`}>{labelText[how.label]}</span>
+              <span className="muted">
+                {' '}
+                The index says this is the {how.kind === 'definition' ? 'definition' : 'use'} you asked about. It is not
+                checked.
+              </span>
+              <ReportWrong context={context} how={how} />
+            </div>
+          ) : null}
+          <IndexStatus owner={owner} repo={repo} sha={sha} />
+          {notice ? (
+            <p className="notice" role="status">
+              {notice}
+            </p>
+          ) : null}
           <div className="toolbar">
             <button
               type="button"
@@ -155,11 +269,17 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
         {state.phase === 'ready' && state.file.kind !== 'text' ? <p className="muted pad">{whyNoText[state.file.kind]}</p> : null}
         {state.phase === 'ready' && state.file.kind === 'text' ? (
           <CodePane
+            ref={pane}
             path={path}
             text={state.file.text}
             line={line === undefined ? undefined : line - 1}
             onLineAction={(at) => {
               if (from) setSheet(at);
+            }}
+            tapMenu={narrow}
+            onSymbolAction={(at, intent) => {
+              if (intent === 'definition') look('definition', at);
+              else setSheet(at);
             }}
           />
         ) : null}
@@ -172,6 +292,18 @@ export function CodeView({ owner, repo, sha, path, line, pull }: CodeViewProps) 
             repo={repo}
             sha={sha}
             pull={pull}
+            onClose={() => {
+              setPanel('none');
+            }}
+          />
+        </aside>
+      ) : null}
+      {panel === 'lookup' && shown ? (
+        <aside className="side-panel">
+          <LookupResults
+            context={context}
+            origin={shown.origin}
+            lookup={shown.lookup}
             onClose={() => {
               setPanel('none');
             }}

@@ -115,3 +115,63 @@ export interface SearchResult {
   matches: Match[];
   truncated: boolean;
 }
+
+export type IndexStateName = 'none' | 'running' | 'failed' | 'ready';
+
+export interface IndexState {
+  state: IndexStateName;
+  /** Why there is no index although the index job succeeded. Empty otherwise. */
+  reason: string;
+  /** The workflow run on GitHub the state rests on. Empty when there is none. */
+  runUrl: string;
+  toolVersion: string;
+  documents: number;
+}
+
+/** A span in a file. Lines count from 0, the end is exclusive, characters are UTF-16 code units. */
+export interface Location {
+  path: string;
+  line: number;
+  character: number;
+  endLine: number;
+  endCharacter: number;
+}
+
+/**
+ * Where a navigation result came from. A label names the source. It does not
+ * say the result is correct: the index is built by CI and cannot be verified.
+ */
+export type Label = 'index' | 'text_search' | 'external' | 'none';
+
+export interface Definition {
+  label: Label;
+  /** Filled when the label is "index". */
+  targets: Location[];
+  /** Filled when the label is "external". */
+  package: string;
+  version: string;
+  /** Filled when the label is "text_search". */
+  matches: Match[];
+  truncated: boolean;
+}
+
+export interface References {
+  label: Label;
+  references: Location[];
+  truncated: boolean;
+  /** Always given beside the index's list: an index can cover part of a repository. */
+  matches: Match[];
+  matchesTruncated: boolean;
+}
+
+export type LookupKind = 'definition' | 'references';
+
+/** A user saying a navigation result was wrong. It names the lookup and carries no text. */
+export interface Report {
+  sha: string;
+  path: string;
+  line: number;
+  character: number;
+  kind: LookupKind;
+  label: Label;
+}

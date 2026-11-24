@@ -27,6 +27,10 @@ type Query struct {
 	PathPrefix string
 	// CaseSensitive matches case exactly. The default folds case.
 	CaseSensitive bool
+	// WholeWord matches the text only where it is not part of a longer word:
+	// "add" in "add(a, b)" and not in "address". It is how a lookup that falls
+	// back to text search looks for an identifier.
+	WholeWord bool
 }
 
 // Search returns the lines of the commit's text files that contain the query,
@@ -61,7 +65,7 @@ func (c *Commit) Search(q Query) (matches []Match, truncated bool) {
 			if !q.CaseSensitive {
 				candidate = strings.ToLower(line)
 			}
-			if !strings.Contains(candidate, needle) {
+			if !strings.Contains(candidate, needle) || (q.WholeWord && !containsWord(candidate, needle)) {
 				continue
 			}
 			if len(matches) == MaxMatches {
@@ -86,3 +90,27 @@ func clip(line string) string {
 }
 
 func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }
+
+// containsWord reports whether needle appears in line with no word character
+// on either side of it.
+func containsWord(line, needle string) bool {
+	for from := 0; from <= len(line)-len(needle); {
+		at := strings.Index(line[from:], needle)
+		if at < 0 {
+			return false
+		}
+		start, end := from+at, from+at+len(needle)
+		if (start == 0 || !wordByte(line[start-1])) && (end == len(line) || !wordByte(line[end])) {
+			return true
+		}
+		from = start + 1
+	}
+	return false
+}
+
+// wordByte reports whether b can be part of an identifier. Bytes of a
+// multi-byte character count, so that a word next to a letter outside ASCII is
+// not taken for a whole word.
+func wordByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '$' || b >= 0x80
+}

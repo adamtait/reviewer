@@ -1,0 +1,110 @@
+{"character": 9, "label": "index", "line": 0, "path": "src/cart.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 16, "label": "index", "line": 0, "path": "src/cart.ts", "targets": [["src/money.ts", 12, 16]]}
+{"character": 27, "label": "index", "line": 0, "path": "src/cart.ts", "targets": [["src/money.ts", 0, 0]]}
+{"character": 12, "label": "text_search", "line": 1, "path": "src/cart.ts", "targets": []}
+{"character": 21, "label": "index", "line": 1, "path": "src/cart.ts", "targets": [["src/tax.ts", 0, 0]]}
+{"character": 9, "label": "index", "line": 2, "path": "src/cart.ts", "targets": [["src/util/strings.ts", 0, 16]]}
+{"character": 20, "label": "index", "line": 2, "path": "src/cart.ts", "targets": [["src/util/strings.ts", 0, 0]]}
+{"character": 13, "label": "definition", "line": 4, "path": "src/cart.ts", "targets": [["src/cart.ts", 4, 13]]}
+{"character": 19, "label": "definition", "line": 5, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 26, "label": "index", "line": 5, "path": "src/cart.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 2, "label": "definition", "line": 7, "path": "src/cart.ts", "targets": [["src/cart.ts", 7, 2]]}
+{"character": 14, "label": "definition", "line": 7, "path": "src/cart.ts", "targets": [["src/cart.ts", 7, 14]]}
+{"character": 21, "label": "index", "line": 7, "path": "src/cart.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 9, "label": "index", "line": 8, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 17, "label": "index", "line": 8, "path": "src/cart.ts", "targets": [["src/cart.ts", 7, 14]]}
+{"character": 2, "label": "definition", "line": 11, "path": "src/cart.ts", "targets": [["src/cart.ts", 11, 2]]}
+{"character": 11, "label": "index", "line": 11, "path": "src/cart.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 8, "label": "definition", "line": 12, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 14, "label": "index", "line": 12, "path": "src/cart.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 20, "label": "text_search", "line": 12, "path": "src/cart.ts", "targets": []}
+{"character": 15, "label": "definition", "line": 13, "path": "src/cart.ts", "targets": [["src/cart.ts", 13, 15]]}
+{"character": 28, "label": "index", "line": 13, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 6, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 12, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/money.ts", 12, 16]]}
+{"character": 16, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 21, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/cart.ts", 13, 15]]}
+{"character": 11, "label": "text_search", "line": 16, "path": "src/cart.ts", "targets": []}
+{"character": 15, "label": "index", "line": 16, "path": "src/cart.ts", "targets": [["src/tax.ts", 4, 16]]}
+{"character": 23, "label": "index", "line": 16, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 2, "label": "definition", "line": 19, "path": "src/cart.ts", "targets": [["src/cart.ts", 19, 2]]}
+{"character": 11, "label": "index", "line": 20, "path": "src/cart.ts", "targets": [["src/util/strings.ts", 0, 16]]}
+{"character": 15, "label": "external", "line": 20, "package": "typescript 6.0.3", "path": "src/cart.ts", "targets": []}
+{"character": 27, "label": "index", "line": 20, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 33, "label": "external", "line": 20, "package": "typescript 6.0.3", "path": "src/cart.ts", "targets": []}
+{"character": 9, "label": "index", "line": 0, "path": "src/index.ts", "targets": [["src/cart.ts", 4, 13]]}
+{"character": 21, "label": "index", "line": 0, "path": "src/index.ts", "targets": [["src/cart.ts", 0, 0]]}
+{"character": 9, "label": "index", "line": 1, "path": "src/index.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 16, "label": "index", "line": 1, "path": "src/index.ts", "targets": [["src/money.ts", 12, 16]]}
+{"character": 27, "label": "index", "line": 1, "path": "src/index.ts", "targets": [["src/money.ts", 0, 0]]}
+{"character": 9, "label": "index", "line": 2, "path": "src/index.ts", "targets": [["src/receipt.ts", 4, 16]]}
+{"character": 24, "label": "index", "line": 2, "path": "src/index.ts", "targets": [["src/receipt.ts", 0, 0]]}
+{"character": 17, "label": "definition", "line": 1, "path": "src/money.ts", "targets": [["src/money.ts", 1, 17]]}
+{"character": 2, "label": "definition", "line": 2, "path": "src/money.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 2, "label": "definition", "line": 3, "path": "src/money.ts", "targets": [["src/money.ts", 3, 2]]}
+{"character": 13, "label": "definition", "line": 6, "path": "src/money.ts", "targets": [["src/money.ts", 6, 13]]}
+{"character": 2, "label": "definition", "line": 7, "path": "src/money.ts", "targets": [["src/money.ts", 7, 2]]}
+{"character": 7, "label": "definition", "line": 7, "path": "src/money.ts", "targets": [["src/money.ts", 7, 7]]}
+{"character": 26, "label": "index", "line": 7, "path": "src/money.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 13, "label": "index", "line": 8, "path": "src/money.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 23, "label": "index", "line": 8, "path": "src/money.ts", "targets": [["src/money.ts", 3, 2], ["src/money.ts", 7, 7]]}
+{"character": 16, "label": "definition", "line": 12, "path": "src/money.ts", "targets": [["src/money.ts", 12, 16]]}
+{"character": 20, "label": "definition", "line": 12, "path": "src/money.ts", "targets": [["src/money.ts", 12, 20]]}
+{"character": 23, "label": "index", "line": 12, "path": "src/money.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 30, "label": "definition", "line": 12, "path": "src/money.ts", "targets": [["src/money.ts", 12, 30]]}
+{"character": 33, "label": "index", "line": 12, "path": "src/money.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 41, "label": "index", "line": 12, "path": "src/money.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 11, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 18, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 12, 20]]}
+{"character": 20, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 28, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 12, 30]]}
+{"character": 30, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 37, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 3, 2]]}
+{"character": 47, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 12, 20]]}
+{"character": 49, "label": "index", "line": 13, "path": "src/money.ts", "targets": [["src/money.ts", 3, 2]]}
+{"character": 9, "label": "external", "line": 0, "package": "tiny-format 2.1.0", "path": "src/receipt.ts", "targets": []}
+{"character": 23, "label": "external", "line": 0, "package": "tiny-format 2.1.0", "path": "src/receipt.ts", "targets": []}
+{"character": 9, "label": "index", "line": 1, "path": "src/receipt.ts", "targets": [["src/cart.ts", 4, 13]]}
+{"character": 21, "label": "index", "line": 1, "path": "src/receipt.ts", "targets": [["src/cart.ts", 0, 0]]}
+{"character": 14, "label": "index", "line": 2, "path": "src/receipt.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 27, "label": "index", "line": 2, "path": "src/receipt.ts", "targets": [["src/money.ts", 0, 0]]}
+{"character": 16, "label": "definition", "line": 4, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 4, 16]]}
+{"character": 24, "label": "definition", "line": 4, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 4, 24]]}
+{"character": 32, "label": "index", "line": 4, "path": "src/receipt.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 8, "label": "definition", "line": 5, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 5, 8]]}
+{"character": 19, "label": "index", "line": 5, "path": "src/receipt.ts", "targets": [["src/cart.ts", 7, 2]]}
+{"character": 24, "label": "index", "line": 5, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 4, 24]]}
+{"character": 8, "label": "definition", "line": 6, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 6, 8]]}
+{"character": 16, "label": "index", "line": 6, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 5, 8]]}
+{"character": 21, "label": "index", "line": 6, "path": "src/receipt.ts", "targets": [["src/cart.ts", 11, 2]]}
+{"character": 12, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 5, 8]]}
+{"character": 17, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/cart.ts", 19, 2]]}
+{"character": 28, "label": "external", "line": 7, "package": "tiny-format 2.1.0", "path": "src/receipt.ts", "targets": []}
+{"character": 35, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 6, 8]]}
+{"character": 41, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 14, "label": "index", "line": 0, "path": "src/tax.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 27, "label": "index", "line": 0, "path": "src/tax.ts", "targets": [["src/money.ts", 0, 0]]}
+{"character": 13, "label": "definition", "line": 2, "path": "src/tax.ts", "targets": [["src/tax.ts", 2, 13]]}
+{"character": 16, "label": "definition", "line": 4, "path": "src/tax.ts", "targets": [["src/tax.ts", 4, 16]]}
+{"character": 24, "label": "definition", "line": 4, "path": "src/tax.ts", "targets": [["src/tax.ts", 4, 24]]}
+{"character": 32, "label": "index", "line": 4, "path": "src/tax.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 40, "label": "index", "line": 4, "path": "src/tax.ts", "targets": [["src/money.ts", 1, 17], ["src/money.ts", 6, 13]]}
+{"character": 11, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 18, "label": "external", "line": 5, "package": "typescript 6.0.3", "path": "src/tax.ts", "targets": []}
+{"character": 23, "label": "external", "line": 5, "package": "typescript 6.0.3", "path": "src/tax.ts", "targets": []}
+{"character": 29, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/tax.ts", 4, 24]]}
+{"character": 36, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/money.ts", 2, 2]]}
+{"character": 49, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/tax.ts", 2, 13]]}
+{"character": 57, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/money.ts", 3, 2]]}
+{"character": 67, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/tax.ts", 4, 24]]}
+{"character": 74, "label": "index", "line": 5, "path": "src/tax.ts", "targets": [["src/money.ts", 3, 2]]}
+{"character": 16, "label": "definition", "line": 0, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 0, 16]]}
+{"character": 20, "label": "definition", "line": 0, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 0, 20]]}
+{"character": 34, "label": "definition", "line": 0, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 0, 34]]}
+{"character": 9, "label": "index", "line": 1, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 0, 20]]}
+{"character": 14, "label": "external", "line": 1, "package": "typescript 6.0.3", "path": "src/util/strings.ts", "targets": []}
+{"character": 23, "label": "index", "line": 1, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 0, 34]]}
+{"character": 13, "label": "definition", "line": 5, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 5, 13]]}
+{"character": 47, "label": "definition", "line": 5, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 5, 47]]}
+{"character": 55, "label": "index", "line": 5, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 0, 16]]}
+{"character": 59, "label": "index", "line": 5, "path": "src/util/strings.ts", "targets": [["src/util/strings.ts", 5, 13]]}

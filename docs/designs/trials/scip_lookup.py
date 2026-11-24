@@ -14,6 +14,11 @@ real repository before any service exists. Standard library only.
       Answer one go-to-definition as the design would. LINE and COLUMN are
       1-based, as an editor shows them.
 
+  scip_lookup.py golden INDEX PROJECT_ROOT
+      Print, as one JSON object per line, the answer the revised rules give at
+      the start of every occurrence in the index. The service's tests hold its
+      Go implementation to this output for a fixture project.
+
 This is a throwaway measuring tool, not the service's decoder.
 """
 
@@ -444,9 +449,37 @@ def lookup(index_path, root, path, line, column):
             print(f"  discarded by the name check: {t.path}:{t.range[0] + 1}:{t.range[1] + 1} holds {found!r}")
 
 
+def golden(index_path, root):
+    import json
+
+    _, documents, _ = read_index(index_path)
+    index = Index(documents, Sources(root))
+    own = own_packages(root)
+    seen = set()
+    for path in sorted(index.by_path):
+        for occ in sorted(index.by_path[path], key=lambda o: o.range):
+            spot = (path, occ.range[0], occ.range[1])
+            if spot in seen or occ.range[0] != occ.range[2] or occ.range[1] == occ.range[3]:
+                continue
+            seen.add(spot)
+            label, targets, detail = resolve_position(index, path, occ.range[0], occ.range[1], own, True)
+            row = {
+                "path": path,
+                "line": occ.range[0],
+                "character": occ.range[1],
+                "label": label,
+                "targets": sorted([list(t) for t in targets]),
+            }
+            if label == "external":
+                row["package"] = detail
+            print(json.dumps(row, ensure_ascii=False, sort_keys=True))
+
+
 def main(argv):
     if len(argv) == 4 and argv[1] == "stats":
         stats(argv[2], argv[3])
+    elif len(argv) == 4 and argv[1] == "golden":
+        golden(argv[2], argv[3])
     elif len(argv) == 7 and argv[1] == "lookup":
         lookup(argv[2], argv[3], argv[4], int(argv[5]), int(argv[6]))
     else:

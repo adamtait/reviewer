@@ -15,9 +15,11 @@ SHELL := /bin/sh
 PKGS = $(shell go list ./... | grep -v '/node_modules/')
 
 # Files that carry no SPDX header: prose, configuration, data, and the example
-# config a user copies into their own repository.
+# config a user copies into their own repository. Test data is left as it is:
+# a fixture project's files are what an index was built from, and a header
+# added to one would move every position the index records.
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
-                  -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**' \
+                  -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**' -ignore '**/testdata/**' \
                   -ignore '**/node_modules/**' -ignore '**/dist/**' \
                   -ignore 'web/test-results/**' -ignore 'web/playwright-report/**'
 

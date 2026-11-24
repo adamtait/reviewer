@@ -191,6 +191,23 @@ func (c *Cache) add(it *item) {
 	c.used += it.cost
 }
 
+// Peek returns the value held for key, if one is, without loading it. A
+// remembered failure is not a value.
+func (c *Cache) Peek(key Key) (Sized, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	it := el.Value.(*item)
+	if it.err != nil {
+		return nil, false
+	}
+	c.order.MoveToFront(el)
+	return it.value, true
+}
+
 // Stats is what the cache holds now.
 type Stats struct {
 	Entries int

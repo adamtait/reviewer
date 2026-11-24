@@ -590,3 +590,47 @@ func TestALoadThatPanicsIsAnErrorNotACrash(t *testing.T) {
 		t.Errorf("after a panic the key could not be loaded: %v", err)
 	}
 }
+
+func TestSearchForAWholeWord(t *testing.T) {
+	c := unpack(t, archive(t,
+		entry{name: "a.ts", body: "add(a, b)\naddress = 1\nreadd()\nx.add\n$add\nadd_one\n  add\nañadd add!\n"},
+	), roomy)
+	matches, _ := c.Search(Query{Text: "add", CaseSensitive: true, WholeWord: true})
+	var lines []int
+	for _, m := range matches {
+		lines = append(lines, m.Line)
+	}
+	// "add(a, b)", "x.add", "  add" and the second word of the last line.
+	want := []int{0, 3, 6, 7}
+	if len(lines) != len(want) {
+		t.Fatalf("matched lines %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("matched lines %v, want %v", lines, want)
+		}
+	}
+	if m, _ := c.Search(Query{Text: "add"}); len(m) != 8 {
+		t.Errorf("without WholeWord: %d lines, want all 8", len(m))
+	}
+}
+
+func TestPeekDoesNotLoad(t *testing.T) {
+	cache := NewCache(1<<20, time.Minute)
+	key := NewKey("a", "b", shaA, "test")
+	if _, ok := cache.Peek(key); ok {
+		t.Fatal("an empty cache held something")
+	}
+	if _, err := cache.Get(context.Background(), key, func(context.Context) (Sized, error) { return &Commit{size: 7}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := cache.Peek(key); !ok || v.Size() != 7 {
+		t.Errorf("Peek = %v, %v", v, ok)
+	}
+	// A remembered failure is not a value.
+	bad := NewKey("a", "b", shaB, "test")
+	_, _ = cache.Get(context.Background(), bad, func(context.Context) (Sized, error) { return nil, Permanent{Err: ErrTooLarge} })
+	if _, ok := cache.Peek(bad); ok {
+		t.Error("Peek returned a remembered failure as a value")
+	}
+}

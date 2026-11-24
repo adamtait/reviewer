@@ -82,7 +82,10 @@ func (c *Cookies) Seal(s Session) (string, error) {
 
 // Open returns the session inside a cookie value, or ErrNoSession.
 func (c *Cookies) Open(value string) (Session, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(value)
+	// Strict: one sealed value has one spelling. Without it, a value whose
+	// last character differs only in bits the encoding does not use would
+	// decode to the same bytes and be accepted.
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(value)
 	if err != nil || len(raw) < c.aead.NonceSize() {
 		return Session{}, ErrNoSession
 	}

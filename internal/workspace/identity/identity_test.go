@@ -5,6 +5,7 @@ package identity
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -139,21 +140,74 @@ func TestACookieRoundTrips(t *testing.T) {
 	}
 }
 
-// Four different things wrong with a cookie, and one answer for all of them.
+// Different things wrong with a cookie, and one answer for all of them.
 func TestACookieThatIsNotOursIsNoSession(t *testing.T) {
 	c := cookies(t, 1, true)
-	good, _ := c.Seal(Session{Login: "alice", Token: "t", Expires: testNow.Add(time.Hour)})
 	expired, _ := c.Seal(Session{Login: "alice", Token: "t", Expires: testNow.Add(-time.Second)})
 	otherKey, _ := cookies(t, 2, true).Seal(Session{Login: "alice", Token: "t", Expires: testNow.Add(time.Hour)})
-	altered := good[:len(good)-2] + "AA"
 
 	for name, value := range map[string]string{
-		"expired": expired, "sealed with another key": otherKey, "altered": altered,
+		"expired": expired, "sealed with another key": otherKey,
 		"empty": "", "not base64": "!!!", "too short": "AAAA",
 	} {
 		if _, err := c.Open(value); !errors.Is(err, ErrNoSession) {
 			t.Errorf("%s: want ErrNoSession, got %v", name, err)
 		}
+	}
+}
+
+// Any one bit changed anywhere in a cookie, and it is no session.
+//
+// An earlier form of this test replaced the value's last two characters with
+// "AA", which about once in a few hundred runs spelled the bytes that were
+// already there, and the test failed. Every bit is flipped here instead, so
+// each value tried differs from the sealed one.
+func TestAnAlteredCookieIsNoSession(t *testing.T) {
+	c := cookies(t, 1, true)
+	good, _ := c.Seal(Session{Login: "alice", Token: "t", Expires: testNow.Add(time.Hour)})
+	raw, err := base64.RawURLEncoding.DecodeString(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range raw {
+		for bit := range 8 {
+			changed := bytes.Clone(raw)
+			changed[i] ^= 1 << bit
+			if _, err := c.Open(base64.RawURLEncoding.EncodeToString(changed)); !errors.Is(err, ErrNoSession) {
+				t.Fatalf("byte %d, bit %d flipped: want ErrNoSession, got %v", i, bit, err)
+			}
+		}
+	}
+}
+
+// One sealed value has one spelling: the same bytes written with the unused
+// bits of the last character set are refused.
+func TestACookieSpelledAnotherWayIsNoSession(t *testing.T) {
+	c := cookies(t, 1, true)
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	tried := 0
+	// Sessions of different lengths, so that the value ends part-way through
+	// a group of four characters and its last character has bits to spare.
+	for _, login := range []string{"a", "ab", "abc"} {
+		good, _ := c.Seal(Session{Login: login, Token: "t", Expires: testNow.Add(time.Hour)})
+		if len(good)%4 == 0 {
+			continue
+		}
+		last := strings.IndexByte(alphabet, good[len(good)-1])
+		respelled := good[:len(good)-1] + string(alphabet[last|1])
+		if respelled == good {
+			respelled = good[:len(good)-1] + string(alphabet[last|2])
+		}
+		if respelled == good {
+			continue
+		}
+		tried++
+		if _, err := c.Open(respelled); !errors.Is(err, ErrNoSession) {
+			t.Errorf("login %q: a second spelling of the cookie was accepted: %v", login, err)
+		}
+	}
+	if tried == 0 {
+		t.Fatal("no value had spare bits to set, so the test proved nothing")
 	}
 }
 

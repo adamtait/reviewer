@@ -184,9 +184,36 @@ The tool's network calls were not run. Fetching another repository's archive fro
 | A model under heavy demand | HTTP 503, code `service_unavailable`. Seen on three of the newest models. |
 | A bad key, an unknown model | HTTP 401 and HTTP 404, each with a message. |
 
+### GitHub's calls, against this repository (2026-11-24)
+
+The drafting environment can reach GitHub's API for this repository, with that environment's own
+credential and not a fine-grained token. The calls the service will make were run against it:
+
+| Call | Result |
+| --- | --- |
+| A commit's archive, named by its full hash | HTTP 200 after one redirect. A gzip tar with a single top-level folder named after the owner, the repository and a short hash. 676 KB in 0.7 seconds |
+| Compare the default branch with a head commit | The merge base is returned |
+| The index workflow's push runs for a head commit | An object wrapping a list. One run, finished and successful, whose head commit matches |
+| That run's artifacts by name | An object wrapping a list. One artifact, not expired, with a digest |
+| The artifact's download | HTTP 200 after one redirect. A zip holding exactly `index.scip` |
+
+The archive and compare calls were then run again through the service's own code, once it existed:
+the client that follows the redirect without the token, and the unpacking into memory.
+
+| Step | Result |
+| --- | --- |
+| Fetch and unpack this repository's archive at one commit | 0.97 seconds. 301 entries, all kept as text, 2.2 MB |
+| The same commit asked for again | 13 microseconds, from memory |
+| A literal search over the kept text | 4 milliseconds; it stopped at its limit of 200 lines |
+| Compare, for the merge base | A full commit hash |
+
+What this leaves untested is narrow: that a fine-grained token with the four read permissions is
+accepted by the same calls on a private repository. GitHub's documentation lists those permissions
+for these calls.
+
 ### What could not be run
 
-* **The archive and compare calls with a fine-grained token.** GitHub's API is not reachable from the drafting environment.
+* **The archive and compare calls with a fine-grained token on a private repository.** Their mechanics were run against this repository; see above.
 * **GitHub's web editor.** It reads repositories through the same API from the browser, so it cannot be opened there either.
 * **Anything on a team repository:** a monorepo with several TypeScript projects, generated types, or `bun`.
 * **The Anthropic API.** No key was supplied.
@@ -200,7 +227,7 @@ Made by the drafter on the design owner's instruction. Each says what it rests o
 | --- | --- | --- | --- |
 | E1. Credential approval | Not answered. It does not block building, because the first connected repository can be a private one on the design owner's own account, where a fine-grained token needs no approval. An earlier version of this page said that repository would be this one; this repository is public, and a public repository cannot be connected. It blocks connecting an organisation's repository. | GitHub's documented rules for fine-grained tokens | Nothing; it is still to be asked |
 | E2. The indexer | Passed, with the revised rules. | A real run on GitHub's runners; 99.8% of 1,657 in-project definitions right, none wrong, on two projects; no mislabelling on a partial index | A team repository where the index is partial in a way the rules mislabel, or where the install needs something the workflow lacks |
-| E3. Reading as the user | Passed for memory, unpacking, search and finding an index by commit. Not tested for the archive call itself. | The measurements above. A 28.5 MB archive is a few seconds of transfer. | The archive call refusing a full commit hash or a fine-grained token, or taking tens of seconds. PR-50 tests this first, against the first connected repository, before anything is built on it. |
+| E3. Reading as the user | Passed for memory, unpacking, search, the archive call and finding an index by commit. Not tested with a fine-grained token on a private repository. | The measurements above. A 28.5 MB archive is a few seconds of transfer. | The archive call refusing a full commit hash or a fine-grained token, or taking tens of seconds. PR-50 tests this first, against the first connected repository, before anything is built on it. |
 | E4. Existing tools | Unmeasured. The decision to build stands on the design owner's goal of a platform the team controls. | The design owner's decision | Nothing; the comparison is no longer a gate |
 | Scanner hit rate | Low, and concentrated in tests and fixtures. Withholding single files is kept. | 0.2% and 1.6% of files on two trees | A team repository where most questions touch a flagged file |
 | Provider | Google's API, through its current stateless conversation call, is the first and only adapter in the first version. | The live run | A repository that must use another provider |

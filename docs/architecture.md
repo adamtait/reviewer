@@ -139,4 +139,16 @@ about all of them: none starts a program. The CLI's analyzers exist to start pro
 must never run code from a pull request. `internal/workspace/rules_test.go` holds the service to
 that in source, and the **workspace-image** job holds the image to it.
 
-The service is not part of a run of `reviewer`, shares no state with it, and stores nothing.
+The service is not part of a run of `reviewer`, shares no state with it, and stores nothing. A
+commit's files are read from GitHub as one archive, with the token of the user who asked, and held
+in memory under a byte limit (ADR-0030).
+
+| Package | What it does |
+| --- | --- |
+| `wsconfig` | Reads and checks the configuration and the secrets. |
+| `obs` | Writes the log, one line per request, with credentials removed. |
+| `identity`, `access` | Sign-in, and "can this user read this repository", which is GitHub's answer. |
+| `source` | Unpacks a commit's archive into memory; the cache; text search. |
+| `catalog` | Lists and describes pull requests. |
+| `api`, `api/apitypes` | The route table, the middleware every request passes through, the handlers, and the request and response bodies. |
+| `testgithub` | A stand-in for GitHub's API, for the tests. |

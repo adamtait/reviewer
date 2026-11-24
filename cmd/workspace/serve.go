@@ -20,6 +20,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/api"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
+	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/wsconfig"
 )
 
@@ -125,6 +126,28 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 		return nil, err
 	}
 
+	// One cache for everything held in memory, so one number bounds it all.
+	// The navigation index will share it.
+	limits := cfg.Limits
+	cache := source.NewCache(limits.CacheBytes, time.Duration(limits.FetchSeconds)*time.Second)
+	store := source.NewStore(cache, source.Limits{ArchiveBytes: limits.ArchiveBytes, FileBytes: limits.FileBytes})
+	store.Observe = func(f source.Fetch) {
+		// The only record of what a first open costs. It runs outside any
+		// request, so the line names the commit and not a user.
+		attrs := []slog.Attr{
+			slog.String("owner", f.Owner), slog.String("repo", f.Repo), slog.String("sha", f.SHA),
+			slog.Int64("took_ms", f.Took.Milliseconds()),
+		}
+		if f.Err != nil {
+			log.Event(ctx, slog.LevelWarn, "archive_fetch_failed", append(attrs, slog.String("error", f.Err.Error()))...)
+			return
+		}
+		held := cache.Stats()
+		log.Event(ctx, slog.LevelInfo, "archive_fetched", append(attrs,
+			slog.Int64("kept_bytes", f.Bytes), slog.Int("entries", f.Entries),
+			slog.Int64("cache_bytes", held.Bytes), slog.Int("cache_entries", held.Entries))...)
+	}
+
 	return api.New(api.Deps{
 		Log:     log,
 		Version: version,
@@ -135,7 +158,9 @@ func newHandler(ctx context.Context, cfg wsconfig.Config, cookieKey []byte, log 
 			Access:        checker,
 			SessionLength: time.Duration(cfg.SessionDays) * 24 * time.Hour,
 		},
-		Cookies: cookies,
-		Access:  checker,
+		Cookies:    cookies,
+		Access:     checker,
+		Source:     store,
+		WebBaseURL: cfg.GitHub.WebBaseURL,
 	}).Handler(), nil
 }

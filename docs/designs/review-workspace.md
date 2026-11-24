@@ -161,7 +161,7 @@ The workspace shows whatever the description holds, so it gains from an intent r
 Seven questions are open. None blocks PR-48 or PR-49.
 
 *   **The first connected repository.** An earlier revision said the first connected repository would be this one. This repository is public, and a public repository cannot be connected. The first must be a private TypeScript repository. One on the design owner's own account needs no organisation approval. Which one? PR-50 needs the answer.
-*   **A token for the archive test.** PR-50 starts by reading one commit's archive from that repository with a fine-grained token, which could not be tested from the drafting environment. It needs a read-only token for that repository. If the call fails or takes tens of seconds, files are read one at a time through GitHub's contents call, search leaves the first version, and PR-50 is planned again.
+*   **A fine-grained token on a private repository.** The archive call and the three other GitHub calls the service makes were run against this repository on 2026-11-24 and work as designed; the results are in the trials page. What has not been run is the same calls with a fine-grained token on a private repository. That is checked at the first deployment, with a token for the repository above.
 *   **Credential approval (E1).** Will an organisation owner approve fine-grained personal access tokens with read access to Contents, Pull requests, Metadata and Actions for the team's repositories? This blocks connecting an organisation's repository, not building. Two limits apply whatever the answer: one deployment serves one organisation's repositories, because a token covers one owner; and an outside collaborator cannot sign in, because GitHub does not let outside collaborators use fine-grained tokens on an organisation's repositories.
 *   **Branch views.** The concept asked for a view per branch as well as per pull request. This design covers pull requests only. The index is built for every branch push and source is read by commit, so a branch view needs one more list and one more address. It is listed as unscheduled. Is it wanted in the first version?
 *   **A paid tier for the model provider.** The key used in the tests is on a free tier that allows five requests a minute and twenty a day for the model tested. One question takes three or more requests. The operator needs a paid tier, with a spending limit, before PR-54's feedback week.
@@ -333,7 +333,7 @@ One Go binary, `cmd/workspace`, serves the API and the web application.
 ### Source in memory
 
 *   **Reading an archive.** The service asks GitHub for the commit's archive and unpacks the stream in memory. It keeps the path of every entry, and the text of every file that is valid UTF-8, holds no NUL byte, and is within the per-file size limit. Other files are kept as a path with a mark: binary, too large, or other. If the kept text passes the per-archive limit, the fetch fails with that reason.
-*   **The cache.** Archives and decoded indexes share one in-memory cache, bounded by a configured number of bytes. Every entry, and every fetch in flight, is keyed by owner, repository and commit hash together, never by the hash alone. When the cache is full, the entry used longest ago is dropped.
+*   **The cache.** Archives and decoded indexes share one in-memory cache, bounded by a configured number of bytes. Every entry, and every fetch in flight, is keyed by owner, repository and commit hash together, never by the hash alone. When the cache is full, the entry used longest ago is dropped. At most two fetches run at once, which is what bounds the memory in use while archives are unpacked. A fetch runs under its own deadline and not under the request that started it, so a request that is abandoned does not fail the others waiting on the same commit. A commit found to pass the per-archive limit is remembered as such and not fetched again.
 *   **Text search.** A search is a literal substring match over the kept text of one commit, case-insensitive unless the user asks otherwise, with an optional path prefix. It returns at most 200 matching lines and says when it stopped early. The search text travels in the request body, so it does not appear in the platform's request log.
 *   **Paths the archive lacks.** GitHub's changed-file list can name a path the archive omits. The view shows that file as not available in the archive, with a link to it on GitHub.
 
@@ -603,7 +603,7 @@ Each entry gives the reason it was not chosen, or says plainly that it was not m
 | --- | --- | --- |
 | Model spend | Estimate: about $90 to $520 a month. It assumes 500 questions a week, each at a cap of 60,000 input tokens and 4,000 output tokens with reasoning, at Google's published paid prices of $0.50 to $3.00 per million input tokens and $3.00 to $15.00 per million output tokens across four current models ([pricing](https://aistudio.google.com/docs/pricing), read on 2026-11-23). 500 a week is an assumption: ten users, ten questions each working day. One listed model's prices double on 2027-01-01. | The caps on each question. The operator sets a spending limit on the provider's side. The model call log lines give the real figure from the first week. |
 | The provider's own limits | On the free tier the tested model allows five requests a minute and twenty a day. One question takes three or more. Three of the newest models answered "heavy demand" during the tests. | A paid tier before the assistant's feedback week. Journey 6 covers waits and exhausted quota. |
-| The first open waits | The first open of a commit reads two archives from GitHub. Unpacking is sub-second; the transfer is unmeasured. | The title, description and file list show first. PR-50 measures the transfer. A proposed target of 15 seconds from a cold start to the diff. |
+| The first open waits | The first open of a commit reads two archives from GitHub. Unpacking is sub-second. The transfer was measured once, on a small repository: under a second for 2.2 MB of text. | The title, description and file list show first. The service logs the time of every fetch. A proposed target of 15 seconds from a cold start to the diff. |
 | Memory | The container holds every cached archive and index in memory, plus fetches in flight and the scanner's scratch files. Over its limit the platform stops it. | Byte limits on the cache, on each archive and on each index. The operating guide's sizing rule counts all four. |
 | Source is not content-checked | An archive is trusted as GitHub's answer for that commit hash. | None. The same trust is placed in GitHub's API for the pull request itself. |
 | Paths missing from an archive | GitHub leaves `export-ignore` paths out of archives, and a pull request could add that mark. | A changed file missing from the archive is shown as such, with a link to GitHub. |
@@ -640,7 +640,7 @@ Each entry gives the reason it was not chosen, or says plainly that it was not m
 | --- | --- | --- |
 | A text search at a commit | Under 1 second | 0.13 seconds measured over 90 MB of text |
 | A definition or reference lookup with the index in memory | Under 200 milliseconds | Not yet measured; a test in PR-52 times lookups over an index of 100,000 occurrences |
-| From a cold start to the diff | Under 15 seconds (proposed) | Unpacking is sub-second; the transfer is measured in PR-50 |
+| From a cold start to the diff | Under 15 seconds (proposed) | Unpacking is sub-second; a fetch of 2.2 MB of text took under a second; a large repository is unmeasured |
 | First words of an answer | Under 5 seconds when no wait is needed | 1.2 seconds measured to the provider's first event |
 
 ### Rollout and rollback
@@ -848,6 +848,7 @@ In every body: `line` and `startLine` count from 0, `endLine` is exclusive, and 
 Error         = { error: { code, message } }
 Me            = { login, repositories: [{ owner, name }] }
 PullSummary   = { number, title, author, draft, headSha, updatedAt }
+PullList      = { pulls: [PullSummary], truncated }  # at most 300, most recently updated first
 ChangedFile   = { path, previousPath, status }       # status: added | modified | deleted | renamed
 PullView      = { number, title, body, author, state, draft, headSha, baseRef, mergeBaseSha,
                   files: [ChangedFile], filesTruncated, webUrl }
@@ -872,7 +873,7 @@ Ask           = { text, pullNumber, history: [{ role, text }],
 | `POST /auth/token` | `{ token }` | 204 and the cookie; or 401 with code `not_fine_grained`, `rejected` or `no_repository` |
 | `POST /auth/signout` | | 204, clearing the cookie |
 | `GET /api/v1/me` | | `Me`, listing only repositories that pass the access check for this user |
-| `GET /api/v1/repos/{owner}/{repo}/pulls` | | `{ pulls: [PullSummary] }` |
+| `GET /api/v1/repos/{owner}/{repo}/pulls` | | `PullList` |
 | `GET /api/v1/repos/{owner}/{repo}/pulls/{number}` | | `PullView` |
 | `GET /api/v1/repos/{owner}/{repo}/commits/{sha}/tree` | | `Tree`. Fetches the archive if it is not in memory |
 | `GET /api/v1/repos/{owner}/{repo}/commits/{sha}/file?path=` | | `File` |
@@ -1040,18 +1041,22 @@ Each table lists every file its pull request touches. A pull request that adds a
 
 #### 4. PR-50: source and pull requests
 
-The first commit of this pull request is the test of the archive call. If it fails, the pull request stops and this document is revised.
+The archive call was tested against this repository before this pull request began, and its real layout is the test fixture below.
 
 | File | Action | What changes and why |
 | --- | --- | --- |
-| `internal/ghclient/client.go`, `stream.go`, `client_test.go` | Modify, Create | A second HTTP client with no overall timeout, used under the caller's deadline, for bodies that are streamed. A helper that follows one redirect without sending the token to the new host, and removes the redirect address from any error. `Archive`, returning a commit's archive as a stream; `Compare`, returning the merge base; the previous file name on `ChangedFile`. Tests: a body that takes longer than 30 seconds to arrive, a redirect to another host that must not receive the token, and an error that must not print the redirect address. |
-| `internal/workspace/source/archive.go`, `cache.go`, `search.go`, `source_test.go` | Create | Unpack a gzip tar stream into memory under the limits, dropping the single top-level folder; the byte-bounded cache, keyed by owner, repository and hash, with one fetch per key at a time; literal search. Tests build archives in memory: text, binary, NUL-bearing, oversized and link entries; an archive over the limit; two concurrent requests making one fetch; the same hash asked for under two repositories making two fetches and two entries; a search match in a file the pull request does not change. |
+| `internal/ghclient/client.go`, `stream.go`, `client_test.go`, `stream_test.go` | Modify, Create | A second HTTP client with no overall timeout, used under the caller's deadline, for bodies that are streamed. A helper that follows one redirect without sending the token to the new host, and removes the redirect address from any error. `Archive`, returning a commit's archive as a stream; `Compare`, returning the merge base; `ListOpenPullRequests`, which stops at a given count; the previous file name on `ChangedFile` and GitHub's count of changed files on `PullRequest`. Tests: a client with no timeout of its own, a redirect to another host that must not receive the token, and an error that must not print the redirect address. |
+| `internal/workspace/source/archive.go`, `cache.go`, `store.go`, `search.go`, `source_test.go` | Create | Unpack a gzip tar stream into memory under the limits, dropping the single top-level folder; the byte-bounded cache, keyed by owner, repository and hash, with one fetch per key at a time and two at most in all; the store that fetches a commit as the user and reports each fetch for the log; literal search. Tests build archives in memory: text, binary, NUL-bearing, oversized and link entries; a path that climbs; an archive over the limit; two concurrent requests making one fetch; an abandoned request that does not fail the others; the same hash asked for under two repositories making two fetches and two entries; a search match in a file the pull request does not change. |
 | `internal/workspace/source/testdata/archive.tar.gz`, `README.md` | Create | One small archive downloaded from GitHub's archive call for this repository, so the tests cover GitHub's real layout. The README gives the commit. |
-| `internal/workspace/catalog/pulls.go`, `catalog_test.go` | Create | List and view pull requests as the user; the merge base; changed files with status and previous path. |
-| `internal/workspace/api/pulls.go`, `source.go` | Create | Handlers for the pull request list and view, tree, file and search. |
-| `internal/workspace/api/api_test.go` | Modify | The access test: every route that carries repository data, `/api/v1/me` included, shows nothing of a repository to a user without access. The test reads the route table, so later routes are covered without editing it. |
-| `docs/workspace.md` | Modify | The archive and cache limits, and the measured time to fetch the first connected repository's archive. |
+| `internal/workspace/catalog/pulls.go`, `catalog_test.go` | Create | List and view pull requests as the user; the merge base; changed files with status and previous path. The link to GitHub is built from configuration and not passed on from GitHub's response. |
+| `internal/workspace/api/pulls.go`, `source.go`, `apitypes/types.go`, `router.go` | Create, Modify | Handlers for the pull request list and view, tree, file and search; their bodies; the five routes; one function that turns a failed read into a response. |
+| `internal/workspace/api/api_test.go`, `source_test.go`, `testdata/examples/` | Modify, Create | The access test already reads the route table, so the five routes are covered without editing it. A second test puts a commit in memory as one user and shows another user cannot reach it at either repository's address. One recorded example response for each new route. |
+| `internal/workspace/testgithub/testgithub.go` | Modify | Pull requests, changed files, compare, and archives served by a redirect to a second host that counts any request carrying a token. |
+| `cmd/workspace/serve.go` | Modify | Build the cache and the store from the limits, and log each fetch. |
+| `docs/workspace.md`, `docs/architecture.md` | Modify | The archive and cache limits, the error codes, and the measured time of a fetch. |
 | `docs/adr/0030-read-source-as-the-user.md` | Create | |
+
+Measured through the service's own code against this repository on 2026-11-24: 301 files and 2.2 MB of kept text, fetched and unpacked in 0.97 seconds; the same commit from memory in 13 microseconds.
 
 #### 5. PR-51: web application
 
@@ -1139,7 +1144,7 @@ The first commit of this pull request is the test of the archive call. If it fai
 
 Checks to run by hand, in order:
 
-1.  **First in PR-50:** fetch the first connected repository's archive by full commit hash with a fine-grained token. Pass: it arrives as a gzip tar in under 30 seconds. The time goes into the operating guide.
+1.  **At the first deployment:** sign in with a fine-grained token for the first connected repository and open one of its pull requests. Pass: the diff appears. This is the one part of the archive test not yet run; its mechanics passed against this repository, where a 676 KB archive arrived in 0.7 seconds.
 2.  **After PR-51 is deployed:** open a pull request of the first connected repository from a cold start and time it to the diff. Target: under 15 seconds. If it is over, per-file reads for the diff are planned before PR-52.
 3.  **Before the navigation week:** journey 2 on the design owner's phone. If it cannot be done, the week's poll asks desktop users only, and phones keep reading and asking.
 4.  **Before the assistant week:** journey 8 on an iPhone and an Android phone, with the keyboard open; and confirm the provider key is on a paid tier with a spending limit set.

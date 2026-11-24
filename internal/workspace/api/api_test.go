@@ -19,6 +19,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
+	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/testgithub"
 	"github.com/adamtait/reviewer/internal/workspace/wsconfig"
 )
@@ -36,11 +37,22 @@ type world struct {
 	t      *testing.T
 	gh     *testgithub.Server
 	server *Server
+	cache  *source.Cache
 	log    *bytes.Buffer
 	http   http.Handler
 }
 
+// roomy is limits no test fixture reaches.
+var roomy = source.Limits{ArchiveBytes: 1 << 20, FileBytes: 1 << 16}
+
 func newWorld(t *testing.T) *world {
+	t.Helper()
+	return newWorldWith(t, roomy, time.Minute)
+}
+
+// newWorldWith is newWorld with chosen limits on a commit's size and on how
+// long a fetch from GitHub may take.
+func newWorldWith(t *testing.T, limits source.Limits, fetchTimeout time.Duration) *world {
 	t.Helper()
 	gh := testgithub.New(t)
 	gh.SetRepo("example", "alpha", testgithub.Repo{Private: true, Readers: []string{"alice"}})
@@ -57,16 +69,19 @@ func newWorld(t *testing.T) *world {
 		t.Fatal(err)
 	}
 	var log bytes.Buffer
+	cache := source.NewCache(1<<22, fetchTimeout)
 	server := New(Deps{
 		Log:     obs.New(&log, obs.NewRedactor()),
 		Version: "test-version",
 		Identity: &identity.TokenMethod{
 			NewClient: gh.Client, Access: checker, SessionLength: time.Hour,
 		},
-		Cookies: cookies,
-		Access:  checker,
+		Cookies:    cookies,
+		Access:     checker,
+		Source:     source.NewStore(cache, limits),
+		WebBaseURL: "https://github.example",
 	})
-	return &world{t: t, gh: gh, server: server, log: &log}
+	return &world{t: t, gh: gh, server: server, cache: cache, log: &log}
 }
 
 // do sends one request. A non-GET carries the workspace's header unless bare.
@@ -448,7 +463,10 @@ func TestARepositoryRequestIsLoggedWithItsUserAndRepository(t *testing.T) {
 
 func TestTheRouteTableMarksWhatNeedsASession(t *testing.T) {
 	w := newWorld(t)
-	want := map[string]bool{"health": false, "sign_in": false, "sign_out": false, "me": true}
+	want := map[string]bool{
+		"health": false, "sign_in": false, "sign_out": false, "me": true,
+		"pull_list": true, "pull_view": true, "tree": true, "file": true, "search": true,
+	}
 	for _, route := range w.server.Routes() {
 		needs, known := want[route.Name]
 		if !known {

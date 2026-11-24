@@ -1,0 +1,32 @@
+{
+  "entries": [
+    {
+      "path": "README.md",
+      "kind": "text"
+    },
+    {
+      "path": "logo.png",
+      "kind": "binary"
+    },
+    {
+      "path": "src/cart.ts",
+      "kind": "text"
+    },
+    {
+      "path": "src/receipt.ts",
+      "kind": "text"
+    },
+    {
+      "path": "src/sum.ts",
+      "kind": "text"
+    },
+    {
+      "path": "src/tax.ts",
+      "kind": "text"
+    },
+    {
+      "path": "vendor/big.json",
+      "kind": "too_large"
+    }
+  ]
+}

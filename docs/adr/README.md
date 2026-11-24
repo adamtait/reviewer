@@ -44,5 +44,6 @@ precede any code land in PR-00.
 | [0027](0027-builtin-plugins-over-in-memory-pipes.md) | Serve built-in analyzers over in-memory pipes | Accepted | PR-10 |
 | [0028](0028-inventory-distributed-dependencies-fully.md) | Inventory distributed dependencies in full, development dependencies at depth one | Accepted | PR-14 |
 | [0029](0029-add-a-hosted-workspace-service.md) | Add a hosted, stateless workspace service beside the CLI | Proposed | PR-48 |
+| [0030](0030-read-source-as-the-user.md) | Read source from GitHub as the user and hold it in memory | Proposed | PR-50 |
 | [0032](0032-identity-behind-one-interface.md) | Sign users in with their own GitHub token, sealed in the session cookie | Proposed | PR-49 |
 | [0034](0034-scip-index-built-on-push.md) | Build a SCIP navigation index in CI on every push | Proposed | PR-47 |

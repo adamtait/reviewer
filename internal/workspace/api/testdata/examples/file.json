@@ -1,0 +1,5 @@
+{
+  "path": "src/sum.ts",
+  "kind": "text",
+  "text": "export function sum(prices: number[]): number {\n  return prices.reduce((a, b) =\u003e a + b, 0);\n}\n"
+}

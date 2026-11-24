@@ -1,0 +1,35 @@
+{
+  "number": 12,
+  "title": "Rename total to sum",
+  "body": "`total` returned a sum of line prices, not a count.\n\nCallers are updated.",
+  "author": "alice",
+  "state": "open",
+  "draft": false,
+  "headSha": "1111111111111111111111111111111111111111",
+  "baseRef": "main",
+  "mergeBaseSha": "3333333333333333333333333333333333333333",
+  "files": [
+    {
+      "path": "docs/old.md",
+      "previousPath": "",
+      "status": "deleted"
+    },
+    {
+      "path": "src/cart.ts",
+      "previousPath": "",
+      "status": "modified"
+    },
+    {
+      "path": "src/sum.ts",
+      "previousPath": "src/total.ts",
+      "status": "renamed"
+    },
+    {
+      "path": "src/tax.ts",
+      "previousPath": "",
+      "status": "added"
+    }
+  ],
+  "filesTruncated": false,
+  "webUrl": "https://github.example/example/alpha/pull/12"
+}

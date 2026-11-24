@@ -6,9 +6,10 @@ navigation and an AI assistant to a pull request, and leaves commenting, approvi
 GitHub. Its design is [`designs/review-workspace.md`](designs/review-workspace.md).
 
 This guide is for the person who deploys and configures it. It grows with each pull request of the
-design's plan. **So far the service starts, logs, signs users in, and says which connected
-repositories each can read. It shows nothing of a repository yet, and has no web page: sign-in is
-an API call until the web application arrives.**
+design's plan. **So far the service signs users in and answers, over its API, with a repository's
+open pull requests, one pull request's description and changed files, the files of a commit, and
+text search at a commit. It has no web page yet: every step below is an API call until the web
+application arrives.**
 
 ## What it is
 
@@ -142,6 +143,79 @@ If a connected repository turns out to be public, the service refuses it for eve
 `a connected repository is public and is refused for every user`. Remove it from the configuration,
 or make it private and restart.
 
+## Reading source
+
+The service holds no copy of a repository. The first time a user opens a commit, the service asks
+GitHub for that commit's archive, with that user's token, and unpacks it in memory. Later requests
+for the same commit are answered from memory until the entry is dropped to make room, or the
+container restarts.
+
+| What is kept | Rule |
+| --- | --- |
+| A file's text | The file is valid UTF-8, holds no NUL byte, and is at most `limits.fileBytes`. |
+| A path with a mark | Every other entry: `binary`, `too_large`, or `other` for a link or a submodule. |
+| Nothing | A commit whose kept text and paths pass `limits.archiveBytes`. The request is refused with `too_large`, and the refusal is remembered so the archive is not fetched again. |
+
+Four limits govern this:
+
+| Limit | What it bounds |
+| --- | --- |
+| `limits.fileBytes` | One file's text. Larger files are listed and not kept, so they cannot be read or searched. |
+| `limits.archiveBytes` | The kept text and paths of one commit. |
+| `limits.cacheBytes` | Everything held in memory together. When it is full, the entry used longest ago is dropped. |
+| `limits.fetchSeconds` | One fetch from GitHub, counted from the first request that needed it. After it, waiting requests get `github_timeout`. |
+
+Requests for the same commit of the same repository share one fetch, and at most two fetches run at
+once. A third waits.
+
+Files that GitHub leaves out of an archive are absent. A repository can mark paths `export-ignore`
+in `.gitattributes`, and those are left out.
+
+### What a first open costs
+
+Through the service's own code, this repository's archive at one commit took 0.97 seconds to fetch
+and unpack: 301 files and 2.2 MB of kept text. A request for the same commit afterwards took 13
+microseconds. That is the only measurement so far, and it is of a small repository.
+
+For your own repositories, read it from the log. Every fetch writes one line:
+
+```json
+{"level":"INFO","msg":"archive_fetched","owner":"…","repo":"…","sha":"…","took_ms":972,
+ "kept_bytes":2227815,"entries":301,"cache_bytes":2227815,"cache_entries":1}
+```
+
+`took_ms` is the transfer and the unpacking together. `cache_bytes` against `limits.cacheBytes`
+shows how full memory is. A fetch that fails writes `archive_fetch_failed` with the reason.
+
+### Trying it without the web application
+
+```
+BASE=http://localhost:8080/api/v1/repos/<owner>/<repo>
+curl -b cookies.txt $BASE/pulls
+curl -b cookies.txt $BASE/pulls/<number>
+curl -b cookies.txt $BASE/commits/<full hash>/tree
+curl -b cookies.txt "$BASE/commits/<full hash>/file?path=README.md"
+curl -b cookies.txt -H 'X-Workspace-Request: 1' \
+  -d '{"query":"TODO","pathPrefix":"src/"}' $BASE/commits/<full hash>/search
+```
+
+A commit is named by its full 40-character hash. A branch name or a short hash is refused. A pull
+request's response gives the two hashes its diff is drawn between: `headSha` and `mergeBaseSha`.
+
+Search matches the query as literal text, ignoring case unless `caseSensitive` is true, and returns
+at most 200 lines. The list of pull requests shows at most 300, most recently updated first.
+
+### Errors
+
+| Status and code | Meaning |
+| --- | --- |
+| 400 `bad_request` | A malformed request: a commit not named by its full hash, a search under 2 characters, a non-GET without the `X-Workspace-Request: 1` header. |
+| 401 `signed_out` | No session, an expired one, or a token GitHub no longer accepts. |
+| 404 `not_found` | An address, repository, pull request, commit or file that does not exist, or that this user cannot read. The response does not say which. |
+| 413 `too_large` | The commit passes `limits.archiveBytes`. |
+| 502 `github_failed` | GitHub could not be asked, or refused. A refusal usually means the token lacks one of the four read permissions; the log line's `outcome` is then `github_forbidden`. |
+| 504 `github_timeout` | A fetch passed `limits.fetchSeconds`. |
+
 ## Deploying on Cloud Run
 
 The service is designed for one container on Cloud Run.
@@ -174,6 +248,10 @@ limits.cacheBytes            everything held between requests
 With the example file's limits that is 1 GiB + 512 MiB + 128 MiB + 256 MiB, so 2 GiB. If the
 container passes its memory limit Cloud Run stops it, and every request in flight fails.
 
+The service unpacks at most two archives at once, which is what makes the second line a bound and
+not a guess. Its count of bytes is a low estimate: it counts text and paths, not the structures
+that hold them. Leave headroom rather than sizing to the exact sum.
+
 ## The log
 
 The service writes one JSON line per request to standard output, which Cloud Run sends to Cloud
@@ -193,7 +271,10 @@ Be plain with the team about this:
 
 - **The cookie key.** It opens every session cookie, and so every GitHub token presented while the
   key is in use.
-- **The log.** It records who opened which pull request and which file.
+- **The log.** It records who opened which pull request and which commit, and that they searched.
+  It does not record what they searched for, or which file they read.
+- **Memory.** While a commit is held, its text is in the process's memory. Anyone who can read the
+  process's memory can read it.
 
 The service stores nothing else.
 

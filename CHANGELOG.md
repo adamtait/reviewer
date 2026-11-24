@@ -46,6 +46,11 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 - Sign-in for the workspace service with a fine-grained personal access token,
   sealed into the session cookie and not stored, and an access check that asks
   GitHub as the user and refuses public repositories (ADR-0032).
+- The workspace service reads a repository as the signed-in user: its open pull
+  requests, one pull request with its merge base and changed files, the files
+  of a commit, and literal text search at a commit. A commit's files come from
+  GitHub as one archive and are held in memory, bounded by configured limits
+  and keyed by repository and commit together (ADR-0030).
 
 - `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
   into a repository with a root `tsconfig.json`. On every push it builds a

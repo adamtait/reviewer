@@ -53,6 +53,10 @@ type PullRequest struct {
 	User      User      `json:"user"`
 	CreatedAt time.Time `json:"created_at"`
 	HTMLURL   string    `json:"html_url"`
+	// ChangedFiles is GitHub's count of the files the pull request changes. It
+	// is present when one pull request is read and absent from a list. The
+	// files call stops at 3,000, so this is how a caller knows it was cut short.
+	ChangedFiles int `json:"changed_files"`
 }
 
 // RepoInfo is what must be known about a repository before anything of it is
@@ -110,6 +114,9 @@ type ChangedFile struct {
 	Filename string `json:"filename"`
 	Status   string `json:"status"`
 	Patch    string `json:"patch"`
+	// PreviousFilename is set for a renamed file: where its old version is to
+	// be read from.
+	PreviousFilename string `json:"previous_filename"`
 }
 
 // Client is the read surface. Writes are added in PR-18 as a separate interface,
@@ -221,6 +228,29 @@ func (c *REST) ListPullRequests(ctx context.Context, repo Repo, state string) ([
 	}
 	return paginate[PullRequest](ctx, c, fmt.Sprintf("/repos/%s/pulls?state=%s&sort=updated&direction=desc",
 		repo, url.QueryEscape(state)))
+}
+
+// ListOpenPullRequests returns up to max open pull requests, most recently
+// updated first, and whether there were more.
+//
+// It is bounded where ListPullRequests is not because it is called while a
+// person waits: a repository with thousands of open pull requests would
+// otherwise cost one round trip per hundred before anything was shown.
+func (c *REST) ListOpenPullRequests(ctx context.Context, repo Repo, max int) (pulls []PullRequest, more bool, err error) {
+	pulls, err = paginateUntil[PullRequest](ctx, c,
+		fmt.Sprintf("/repos/%s/pulls?state=open&sort=updated&direction=desc", repo),
+		func(PullRequest) bool {
+			if max <= 0 {
+				more = true
+				return true
+			}
+			max--
+			return false
+		})
+	if err != nil {
+		return nil, false, err
+	}
+	return pulls, more, nil
 }
 
 // ListPullRequestsUpdatedSince returns the pull requests touched in a window,

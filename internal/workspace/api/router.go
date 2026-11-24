@@ -11,6 +11,7 @@ import (
 	"github.com/adamtait/reviewer/internal/workspace/api/apitypes"
 	"github.com/adamtait/reviewer/internal/workspace/identity"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
+	"github.com/adamtait/reviewer/internal/workspace/source"
 )
 
 // Route is one entry in the route table.
@@ -46,6 +47,10 @@ type Deps struct {
 	Cookies  *identity.Cookies
 	// Access lists the connected repositories.
 	Access *access.Checker
+	// Source holds commits' files in memory.
+	Source *source.Store
+	// WebBaseURL is GitHub's web address, which links to GitHub are built on.
+	WebBaseURL string
 }
 
 // Server holds the route table.
@@ -62,6 +67,13 @@ func New(deps Deps) *Server {
 	s.Add(Route{Method: http.MethodPost, Pattern: "/auth/token", Name: "sign_in", Handler: s.signIn})
 	s.Add(Route{Method: http.MethodPost, Pattern: "/auth/signout", Name: "sign_out", Handler: s.signOut})
 	s.Add(Route{Method: http.MethodGet, Pattern: "/api/v1/me", Name: "me", Auth: true, Handler: s.me})
+
+	const repo = "/api/v1/repos/{owner}/{repo}"
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/pulls", Name: "pull_list", Repo: true, Handler: s.listPulls})
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/pulls/{number}", Name: "pull_view", Repo: true, Handler: s.viewPull})
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/tree", Name: "tree", Repo: true, Handler: s.tree})
+	s.Add(Route{Method: http.MethodGet, Pattern: repo + "/commits/{sha}/file", Name: "file", Repo: true, Handler: s.file})
+	s.Add(Route{Method: http.MethodPost, Pattern: repo + "/commits/{sha}/search", Name: "search", Repo: true, Handler: s.search})
 	return s
 }
 

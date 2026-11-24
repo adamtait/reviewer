@@ -1,0 +1,20 @@
+{
+  "matches": [
+    {
+      "path": "src/cart.ts",
+      "line": 3,
+      "text": "  return sum(prices);"
+    },
+    {
+      "path": "src/receipt.ts",
+      "line": 2,
+      "text": "export const receipt = (prices: number[]) =\u003e `Total: ${sum(prices)}`;"
+    },
+    {
+      "path": "src/sum.ts",
+      "line": 0,
+      "text": "export function sum(prices: number[]): number {"
+    }
+  ],
+  "truncated": false
+}

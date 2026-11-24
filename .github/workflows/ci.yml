@@ -257,9 +257,15 @@ jobs:
         # Explicitly not `!failure()`: a cancelled or skipped dependency would
         # pass that, and a required check that passes when nothing ran is worse
         # than no required check.
+        #
+        # The results reach the script through the environment. A string inside
+        # an expression must be in single quotes: a double-quoted one makes the
+        # whole file invalid, and GitHub then runs no job of it at all, on any
+        # branch. That is what this step did from the day it was added.
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          results='${{ join(needs.*.result, " ") }}'
-          echo "job results: $results"
-          for r in $results; do
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
             [ "$r" = "success" ] || { echo "a required job reported: $r"; exit 1; }
           done

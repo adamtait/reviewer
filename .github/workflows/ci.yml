@@ -185,8 +185,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t workspace:ci .
-      - name: The image holds the service and nothing else that can run
-        run: .github/scripts/check-image.sh workspace:ci usr/local/bin/workspace
+      - name: The image holds the service, its scanner, and nothing else that can run
+        run: .github/scripts/check-image.sh workspace:ci usr/local/bin/workspace usr/local/bin/gitleaks
       # A unit test cannot show that the binary starts as the image's
       # unprivileged user, reads a mounted configuration, and listens.
       - name: The service starts from the example configuration

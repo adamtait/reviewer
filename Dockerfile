@@ -37,13 +37,23 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/workspace ./cmd/workspace
 
+# The secrets scanner, which is the one program the service starts. It scans
+# what is about to be sent to a model provider. Installed by the same script,
+# at the same pinned version and checksum, as in CI and on a contributor's
+# machine, and alone: the script's other two tools have no business in this image.
+FROM build AS scanner
+COPY .github/scripts/install-tools.sh /tmp/install-tools.sh
+RUN INSTALL_TOOLS_ONLY=gitleaks bash /tmp/install-tools.sh /out
+
 # gcr.io/distroless/static-debian12:nonroot
 #
 # No shell and no package manager. The service must never run code from a pull
 # request, and the strongest form of that is an image with nothing to run code
-# with. .github/scripts/check-image.sh holds the image to it in CI.
+# with. Two programs are in it: the service, and the secrets scanner the
+# service starts. .github/scripts/check-image.sh holds the image to that in CI.
 FROM gcr.io/distroless/static-debian12@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/workspace /usr/local/bin/workspace
+COPY --from=scanner /out/gitleaks /usr/local/bin/gitleaks
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/workspace"]

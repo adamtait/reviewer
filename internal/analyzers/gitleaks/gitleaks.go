@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -40,8 +41,8 @@ var ErrUnavailable = errors.New("gitleaks could not be run")
 // path; never a compiled-in absolute path (ADR-0004).
 const Binary = "gitleaks"
 
-// report is one entry from gitleaks' JSON output.
-type report struct {
+// Report is one entry from gitleaks' JSON output.
+type Report struct {
 	RuleID      string `json:"RuleID"`
 	Description string `json:"Description"`
 	StartLine   int    `json:"StartLine"`
@@ -50,6 +51,50 @@ type report struct {
 	// Secret and Match are deliberately unused: a finding must never carry the
 	// credential it found. Posting one to a pull request would publish it to
 	// everyone with read access and to every notification email.
+}
+
+// report is the name this package's own code knows a Report by.
+type report = Report
+
+// Options say how one scan is run.
+//
+// The analyzer in this package needs only the first two. The rest exist for a
+// caller that scans content it does not trust to leave the scanner alone: text
+// that can carry an exemption comment, sit beside an ignore file, or hide a
+// credential in base64. See internal/workspace/scan.
+type Options struct {
+	// Dir is the scanner's working directory.
+	Dir string
+	// Target is the one path to scan, relative to Dir or absolute.
+	Target string
+	// Config, if set, is a rule file to use in place of the scanner's own
+	// search for one.
+	Config string
+	// IgnoreAllowComments makes the scanner report a credential even when its
+	// line carries the comment that would exempt it.
+	IgnoreAllowComments bool
+	// MaxDecodeDepth, if above zero, makes the scanner decode encoded text to
+	// that depth and scan what it finds.
+	MaxDecodeDepth int
+	// EmptyEnvironment runs the scanner with no environment variables, so that
+	// nothing in the caller's environment can configure it.
+	EmptyEnvironment bool
+}
+
+// arguments returns the scanner's command line for a scan that writes its
+// report to reportPath.
+func (o Options) arguments(reportPath string) []string {
+	args := []string{"dir", "--no-banner", "--report-format", "json", "--report-path", reportPath, "--exit-code", "1"}
+	if o.Config != "" {
+		args = append(args, "--config", o.Config)
+	}
+	if o.IgnoreAllowComments {
+		args = append(args, "--ignore-gitleaks-allow")
+	}
+	if o.MaxDecodeDepth > 0 {
+		args = append(args, "--max-decode-depth", strconv.Itoa(o.MaxDecodeDepth))
+	}
+	return append(args, o.Target)
 }
 
 // Analyze scans the changed files and returns one finding per credential.
@@ -170,6 +215,23 @@ func scanAll(ctx context.Context, binary, root string, paths []string) ([]report
 // than stdout, and exits 1 when it finds something, so neither the exit code nor
 // stdout can be used to tell a finding from a failure — only the report.
 func scan(ctx context.Context, binary, root, target string) ([]report, []string, error) {
+	// The repository root as working directory and the relative file as target,
+	// and nothing else: the command this analyzer has always run.
+	reports, err := Scan(ctx, binary, Options{Dir: root, Target: target})
+	return reports, nil, err
+}
+
+// Scan runs gitleaks over one path and returns what it reports.
+//
+// An error means the scan did not happen, which is never the same as a clean
+// scan: every error wraps ErrUnavailable, and a caller must treat it as "not
+// checked".
+func Scan(ctx context.Context, binary string, opts Options) ([]Report, error) {
+	reports, _, err := run(ctx, binary, opts)
+	return reports, err
+}
+
+func run(ctx context.Context, binary string, opts Options) ([]report, []string, error) {
 	tmp, err := os.CreateTemp("", "reviewer-gitleaks-*.json")
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -178,10 +240,12 @@ func scan(ctx context.Context, binary, root, target string) ([]report, []string,
 	_ = tmp.Close()
 	defer os.Remove(reportPath)
 
-	cmd := exec.CommandContext(ctx, binary,
-		"dir", "--no-banner", "--report-format", "json",
-		"--report-path", reportPath, "--exit-code", "1", target)
-	cmd.Dir = root
+	cmd := exec.CommandContext(ctx, binary, opts.arguments(reportPath)...)
+	cmd.Dir = opts.Dir
+	if opts.EmptyEnvironment {
+		// Not nil: a nil environment means "inherit mine".
+		cmd.Env = []string{}
+	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 

@@ -1,8 +1,11 @@
-# The image is built from cmd/, internal/, pkg/ and web/ alone. Everything else
-# is kept out of the build context so that a change to it does not rebuild the
-# image. A locally built web application is kept out too: the image builds its own.
+# The image is built from cmd/, internal/, pkg/, web/ and one script alone.
+# Everything else is kept out of the build context so that a change to it does
+# not rebuild the image. A locally built web application is kept out too: the image builds its own.
 .git
-.github
+# All of .github but the one script the image's build runs: the installer that
+# fetches the secrets scanner by pinned version and checksum.
+.github/*
+!.github/scripts
 docs
 examples
 plugins

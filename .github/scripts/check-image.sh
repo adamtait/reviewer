@@ -33,18 +33,31 @@ base_data=(
   usr/share/doc/ca-certificates/copyright
 )
 
+# Files that are not in the image at all. Docker puts them in every container
+# it creates, empty, as places to mount things, and marks each executable. The
+# listing below is of a created container, so they appear in it. They are let
+# through only while they are empty: a file by one of these names that holds
+# anything did come from the image, and is reported like any other.
+docker_placeholders=(
+  .dockerenv
+  dev/console
+  etc/hostname
+  etc/hosts
+  etc/resolv.conf
+)
+
 container=$(docker create "$image")
 trap 'docker rm -f "$container" >/dev/null' EXIT
 
-# One line per entry: permissions, then the path with any leading ./ removed.
-listing=$(docker export "$container" | tar -tv | awk '{ sub(/^\.\//, "", $6); print $1, $6 }')
+# One line per entry: permissions, size, then the path with any leading ./ removed.
+listing=$(docker export "$container" | tar -tv | awk '{ sub(/^\.\//, "", $6); print $1, $3, $6 }')
 [ -n "$listing" ] || die "the image has no files, so the check proved nothing"
 
 failed=0
 
 # Anything by one of these names, whatever its permissions.
 forbidden='(^|/)(sh|bash|dash|ash|zsh|busybox|git|curl|wget|nc|ssh|env|perl|node|deno|bun|python[0-9.]*|ruby)$'
-while read -r _ path; do
+while read -r _ _ path; do
   if [[ "$path" =~ $forbidden ]]; then
     printf 'check-image: the image contains %s, which can start or fetch other programs\n' "$path" >&2
     failed=1
@@ -53,12 +66,17 @@ done <<<"$listing"
 
 # Every regular file with an execute bit must be on a list.
 allowed=("$@" "${base_data[@]}")
-while read -r mode path; do
+while read -r mode size path; do
   [[ "$mode" == -* && "$mode" == *x* ]] || continue
   known=0
   for ok in "${allowed[@]}"; do
     [ "$path" = "$ok" ] && known=1 && break
   done
+  if [ "$size" = "0" ]; then
+    for ok in "${docker_placeholders[@]}"; do
+      [ "$path" = "$ok" ] && known=1 && break
+    done
+  fi
   if [ "$known" -eq 0 ]; then
     printf 'check-image: unexpected executable in the image: %s\n' "$path" >&2
     failed=1
@@ -67,7 +85,7 @@ done <<<"$listing"
 
 # And each program the image is meant to hold has to be there.
 for want in "$@"; do
-  if ! grep -q -E "^-[^ ]*x[^ ]* ${want}\$" <<<"$listing"; then
+  if ! grep -q -E "^-[^ ]*x[^ ]* [0-9]+ ${want}\$" <<<"$listing"; then
     printf 'check-image: expected executable is missing: %s\n' "$want" >&2
     failed=1
   fi

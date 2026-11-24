@@ -1,0 +1,53 @@
+# An example configuration for the review workspace service (cmd/workspace).
+# Every name below is a placeholder. See docs/workspace.md.
+#
+# Nothing that costs money or bounds memory has a default: leaving a limit out,
+# or at zero, stops the service from starting. The values here are suggestions
+# for a team of about ten and repositories of a few thousand files.
+
+listen: ":8080"
+
+# Where users reach the service. It must be https, because requests carry users'
+# GitHub tokens inside the session cookie.
+publicUrl: "https://workspace.example.com"
+
+github:
+  apiBaseUrl: "https://api.github.com"
+  webBaseUrl: "https://github.com"
+
+# These two must match the index workflow that `reviewer init` writes into a
+# repository: the service finds a commit's navigation index by them.
+indexWorkflowFile: "review-index.yml"
+indexArtifactName: "review-index"
+
+# How long a sign-in lasts before the user is asked for their token again.
+sessionDays: 30
+
+# How long "this user can read this repository" is believed before GitHub is
+# asked again. Access removed on GitHub takes effect within this period.
+accessCacheSeconds: 300
+
+limits:
+  archiveBytes: 268435456     # 256 MiB of kept text from one commit
+  fileBytes: 1048576          # 1 MiB from one file; larger files are listed, not kept
+  indexBytes: 134217728       # 128 MiB for one decoded navigation index
+  cacheBytes: 1073741824      # 1 GiB for every archive and index held in memory
+  fetchSeconds: 120           # one archive or artifact fetch from GitHub
+  modelCalls: 8               # model calls in one question
+  questionTokens: 60000       # input tokens, as the provider reports them, in one question
+  answerTokens: 4000          # output ceiling for one model call, reasoning included
+  callSeconds: 120            # one model call
+  waitSeconds: 30             # the longest provider-named wait the assistant sits out
+
+repositories:
+  # A repository with an assistant. All four model fields are set.
+  - owner: "example-owner"
+    name: "example-repo"
+    provider: "gemini"
+    model: "set-a-model-name"
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta"
+    apiKeyEnv: "WORKSPACE_MODEL_KEY_EXAMPLE"   # the NAME of the variable holding the key
+
+  # A repository with navigation and no assistant. No model field is set.
+  - owner: "example-owner"
+    name: "another-repo"

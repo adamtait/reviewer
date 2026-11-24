@@ -29,7 +29,20 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 
 ## [Unreleased]
 
+### Changed
+
+- **The minimum Go version is now 1.26.** Go 1.24 and 1.25 no longer receive
+  security fixes, and CI now tests the two supported releases, 1.26 and 1.27.
+  Building `reviewer` from source needs Go 1.26 or newer; the released binaries
+  are unaffected.
+  The pinned `staticcheck` moves to 2026.2.2, which supports both.
+
 ### Added
+
+- `cmd/workspace`, the skeleton of the review workspace service described in
+  `docs/designs/review-workspace.md`: configuration, logging and a health
+  address, with a container image. It does nothing for a user yet. See
+  `docs/workspace.md` (ADR-0029).
 
 - `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
   into a repository with a root `tsconfig.json`. On every push it builds a

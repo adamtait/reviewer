@@ -100,7 +100,7 @@ never run with a token that can write (ADR-0018).
 
 ## This repository's own CI
 
-Seven jobs, of which one matters to branch protection.
+Eight jobs, of which one matters to branch protection.
 
 - **test** — the full suite, over the two most recent Go releases × ubuntu and
   macos. It installs gitleaks, opengrep and osv-scanner via
@@ -111,6 +111,8 @@ Seven jobs, of which one matters to branch protection.
 - **lint**, **adrs**, **plugin**, **secrets** — staticcheck and licence headers;
   the append-only ADR check and the dependency inventory; the plugin's own Node
   test suite; a full-history secret scan.
+- **workspace-image** — builds the review workspace's container image, checks that it holds
+  the service and nothing else that can run, and starts it. See "The review workspace" below.
 - **provenance** — `tools/audithistory` over what a branch adds, and over the whole
   history on `main`. Publishing a repository publishes its history, so this reads
   git objects rather than the working tree.
@@ -124,3 +126,17 @@ third-party binary is absent, and a skipped test is indistinguishable from a
 passing one in a green job — which is how the test asserting that no diff reaches
 a model provider after a credential is found sat here having never once run on a
 runner. With the variable set, a missing binary fails instead.
+
+## The review workspace
+
+A second binary, `cmd/workspace`, lives beside the CLI: a web application used beside GitHub's
+pull request page, with code navigation and an AI assistant. It is designed in
+[`designs/review-workspace.md`](designs/review-workspace.md), operated per
+[`workspace.md`](workspace.md), and on trial: its ADRs (0029 onward) are `Proposed`.
+
+Its packages live under `internal/workspace/`, apart from the CLI's, so that one rule can be stated
+about all of them: none starts a program. The CLI's analyzers exist to start programs; the service
+must never run code from a pull request. `internal/workspace/rules_test.go` holds the service to
+that in source, and the **workspace-image** job holds the image to it.
+
+The service is not part of a run of `reviewer`, shares no state with it, and stores nothing.

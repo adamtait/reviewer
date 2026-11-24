@@ -158,12 +158,15 @@ The workspace shows whatever the description holds, so it gains from an intent r
 
 ## Open Questions
 
-Four questions remain. None blocks PR-47 to PR-52.
+Seven questions are open. None blocks PR-48 or PR-49.
 
-*   **Credential approval (E1).** Will an organisation owner approve fine-grained personal access tokens with read access to Contents, Pull requests, Metadata and Actions for the team's repositories? This blocks connecting an organisation's repository. It does not block building, because the first connected repository is this one, on the design owner's own account. Two limits apply whatever the answer: one deployment serves one organisation's repositories, because a token covers one owner; and an outside collaborator cannot sign in, because GitHub does not let outside collaborators use fine-grained tokens on an organisation's repositories.
-*   **The archive call (part of E3).** Reading one commit's archive with a fine-grained token could not be tested from the drafting environment. PR-50 tests it first, against this repository, before anything is built on it. If it fails or takes tens of seconds, files are read one at a time through GitHub's contents call, search leaves the first version, and PR-50 is planned again.
-*   **Branch views.** The concept asked for a view per branch as well as per pull request. This design covers pull requests only. The index is built for every branch push and source is read by commit, so a branch view needs one more list and one more address. It is listed as unscheduled.
-*   **A paid tier for the model provider.** The key used in the tests is on a free tier that allows five requests a minute and twenty a day for the model tested. One question takes three or more requests. The operator needs a paid tier before PR-54's feedback week.
+*   **The first connected repository.** An earlier revision said the first connected repository would be this one. This repository is public, and a public repository cannot be connected. The first must be a private TypeScript repository. One on the design owner's own account needs no organisation approval. Which one? PR-50 needs the answer.
+*   **A token for the archive test.** PR-50 starts by reading one commit's archive from that repository with a fine-grained token, which could not be tested from the drafting environment. It needs a read-only token for that repository. If the call fails or takes tens of seconds, files are read one at a time through GitHub's contents call, search leaves the first version, and PR-50 is planned again.
+*   **Credential approval (E1).** Will an organisation owner approve fine-grained personal access tokens with read access to Contents, Pull requests, Metadata and Actions for the team's repositories? This blocks connecting an organisation's repository, not building. Two limits apply whatever the answer: one deployment serves one organisation's repositories, because a token covers one owner; and an outside collaborator cannot sign in, because GitHub does not let outside collaborators use fine-grained tokens on an organisation's repositories.
+*   **Branch views.** The concept asked for a view per branch as well as per pull request. This design covers pull requests only. The index is built for every branch push and source is read by commit, so a branch view needs one more list and one more address. It is listed as unscheduled. Is it wanted in the first version?
+*   **A paid tier for the model provider.** The key used in the tests is on a free tier that allows five requests a minute and twenty a day for the model tested. One question takes three or more requests. The operator needs a paid tier, with a spending limit, before PR-54's feedback week.
+*   **A pull request for this work.** CI in this repository runs on pull requests only, so nothing on the working branch has been through CI. The image build in particular has not run anywhere: the drafting environment has no Docker daemon.
+*   **The trial copy of the index workflow** in this repository runs for branches under `claude/`. Keep it or remove it?
 
 ## Critical User Journeys (CUJs)
 
@@ -605,7 +608,7 @@ Each entry gives the reason it was not chosen, or says plainly that it was not m
 | Source is not content-checked | An archive is trusted as GitHub's answer for that commit hash. | None. The same trust is placed in GitHub's API for the pull request itself. |
 | Paths missing from an archive | GitHub leaves `export-ignore` paths out of archives, and a pull request could add that mark. | A changed file missing from the archive is shown as such, with a link to GitHub. |
 | The index cannot be verified, and can be partial | Whoever pushes a commit can build a false index for it. | Binding to the commit's own run, size limits, the five lookup rules, the source label, and text matches beside every reference list. |
-| The lookup rules were tested on two projects | Neither is one of the team's. A monorepo with several TypeScript projects, generated types and `bun` were not tested. | The first connected repository is this one. "This was wrong" reports are counted in the navigation feedback week, with a threshold. |
+| The lookup rules were tested on two projects | Neither is one of the team's. A monorepo with several TypeScript projects, generated types and `bun` were not tested. | "This was wrong" reports are counted in the navigation feedback week, with a threshold. |
 | Some commits get no index | A pull request from a fork; a commit pushed by a workflow with its own token; a merge base that was never the tip of a push; an artifact past GitHub's retention period, 90 days by default. | The view says there is no index, and lookups use text search. |
 | CI cost | The index job installs dependencies on every push to every branch. It took 57 seconds on this repository. | One repository first. |
 | Instructions hidden in code or descriptions | Such text can produce a wrong answer, or use up a question's model calls. | The tools are read-only. An answer is seen only by the user who asked. Links in answers are not clickable unless they point at the service or at GitHub. |
@@ -642,7 +645,7 @@ Each entry gives the reason it was not chosen, or says plainly that it was not m
 
 ### Rollout and rollback
 
-*   **One repository first:** this one. Others follow after the navigation feedback week, and an organisation's repositories need the answer to E1.
+*   **One repository first:** a private one still to be named. Others follow after the navigation feedback week, and an organisation's repositories need the answer to E1.
 *   **What is added to a repository:** one workflow file, which adds a CI job to every push.
 *   **Rollback** is deleting that workflow file.
 *   **The service can be switched off** without affecting GitHub, because it writes nothing there.
@@ -747,7 +750,7 @@ repositories:
 
 Environment variables: `WORKSPACE_COOKIE_KEY`, 32 random bytes in base64, and one variable per repository's `apiKeyEnv`.
 
-A zero in `sessionDays`, `accessCacheSeconds` or `limits` is a configuration error, so the service chooses no value that costs money or bounds memory. `examples/workspace.config.yaml` suggests values. Fixed in code, because the API's shape depends on them: 200 search matches, 500 references, a 15-second interval for asking about a running index job, a 500-character limit on a report's note, and the five-minute line between a rate limit and an exhausted quota.
+A zero in `sessionDays`, `accessCacheSeconds` or `limits` is a configuration error, so the service chooses no value that costs money or bounds memory. `sessionDays` is at most 366, and `accessCacheSeconds` at most 3600, so that a mistyped value cannot quietly stop the workspace mirroring GitHub's access. A repository's four model settings are all set or all left out: with none, it has navigation and search and no assistant. An unknown key in the file is an error. `examples/workspace.config.yaml` suggests values. Fixed in code, because the API's shape depends on them: 200 search matches, 500 references, a 15-second interval for asking about a running index job, a 500-character limit on a report's note, and the five-minute line between a rate limit and an exhausted quota.
 
 #### Index workflow
 
@@ -1003,8 +1006,11 @@ Each table lists every file its pull request touches. A pull request that adds a
 
 | File | Action | What changes and why |
 | --- | --- | --- |
-| `go.mod` | Modify | The `go` line becomes 1.26, the older of the two supported releases. |
-| `.github/workflows/ci.yml` | Modify | The test matrix becomes Go 1.26 and 1.27, and the step limited to the newer release follows it. Add the `workspace-image` job: build the image, list its files, and fail if the list holds a shell, `git`, or any executable other than the service and, from PR-53, the scanner. Added to `required`. |
+| `go.mod` | Modify | The `go` line becomes 1.26, the older of the two supported releases, in the two-part form the file already uses, so CI's Go setup takes the newest 1.26 patch. |
+| `.github/workflows/ci.yml` | Modify | The test matrix becomes Go 1.26 and 1.27, and the step limited to the newer release follows it. Add the `workspace-image` job: build the image, check its contents, and start it from the example configuration to see it answer its health address. Added to `required`. |
+| `.github/scripts/check-image.sh` | Create | Lists the image's files and fails if they hold a shell, `git`, an interpreter, or any executable that is not on a list: the service, from PR-53 the scanner, and four data files the base image ships with an execute bit. |
+| `Makefile`, `.github/workflows/ci.yml`, `.github/workflows/release.yml` | Modify | The static-analysis tool's pin moves to 2026.2.2. The earlier pin cannot read Go 1.27's build output. |
+| `internal/analyzers/opengrep/opengrep_test.go` | Modify | Replace a parser call deprecated since Go 1.25, which the newer tool reports now that the module's minimum is 1.26. |
 | `cmd/workspace/main.go`, `serve.go`, `main_test.go` | Create | Entry point with subcommands `serve` and `version`. A separate binary keeps the CLI free of web code. |
 | `internal/workspace/wsconfig/config.go`, `config_test.go` | Create | The configuration above, a secrets type that prints only whether each value is set and hands keys out through one method, and validation that reports every problem at once. |
 | `internal/workspace/obs/log.go`, `redact.go`, `log_test.go` | Create | The structured request log, and removal of GitHub tokens and provider keys from any text logged. The token pattern allows letters, digits and underscores after each of GitHub's prefixes, because a fine-grained token has underscores inside it. |
@@ -1042,7 +1048,7 @@ The first commit of this pull request is the test of the archive call. If it fai
 | `internal/workspace/catalog/pulls.go`, `catalog_test.go` | Create | List and view pull requests as the user; the merge base; changed files with status and previous path. |
 | `internal/workspace/api/pulls.go`, `source.go` | Create | Handlers for the pull request list and view, tree, file and search. |
 | `internal/workspace/api/api_test.go` | Modify | The access test: every route that carries repository data, `/api/v1/me` included, shows nothing of a repository to a user without access. The test reads the route table, so later routes are covered without editing it. |
-| `docs/workspace.md` | Modify | The archive and cache limits, and the measured time to fetch this repository's archive. |
+| `docs/workspace.md` | Modify | The archive and cache limits, and the measured time to fetch the first connected repository's archive. |
 | `docs/adr/0030-read-source-as-the-user.md` | Create | |
 
 #### 5. PR-51: web application
@@ -1131,8 +1137,8 @@ The first commit of this pull request is the test of the archive call. If it fai
 
 Checks to run by hand, in order:
 
-1.  **First in PR-50:** fetch this repository's archive by full commit hash with a fine-grained token. Pass: it arrives as a gzip tar in under 30 seconds. The time goes into the operating guide.
-2.  **After PR-51 is deployed:** open a pull request of this repository from a cold start and time it to the diff. Target: under 15 seconds. If it is over, per-file reads for the diff are planned before PR-52.
+1.  **First in PR-50:** fetch the first connected repository's archive by full commit hash with a fine-grained token. Pass: it arrives as a gzip tar in under 30 seconds. The time goes into the operating guide.
+2.  **After PR-51 is deployed:** open a pull request of the first connected repository from a cold start and time it to the diff. Target: under 15 seconds. If it is over, per-file reads for the diff are planned before PR-52.
 3.  **Before the navigation week:** journey 2 on the design owner's phone. If it cannot be done, the week's poll asks desktop users only, and phones keep reading and asking.
 4.  **Before the assistant week:** journey 8 on an iPhone and an Android phone, with the keyboard open; and confirm the provider key is on a paid tier with a spending limit set.
 

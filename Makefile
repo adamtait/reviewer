@@ -73,7 +73,7 @@ licenses:
 # contributor and a runner get the same versions, and "green locally" means
 # something.
 tools:
-	go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+	go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
 	go install github.com/google/addlicense@v1.1.1
 	./.github/scripts/install-tools.sh
 

@@ -1,0 +1,11 @@
+# The image is built from cmd/, internal/ and pkg/ alone. Everything else is
+# kept out of the build context so that a change to it does not rebuild the image.
+.git
+.github
+docs
+examples
+plugins
+testdata
+tools
+**/node_modules
+**/dist

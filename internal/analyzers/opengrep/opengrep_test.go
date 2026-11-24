@@ -47,23 +47,37 @@ func TestTheOnlyCouplingToOpengrepIsAProcessBoundary(t *testing.T) {
 	// And nothing in this package may import anything that could link it. Parsed
 	// rather than grepped: a grep over the source would match this package's own
 	// name in a comment and pass for the wrong reason.
-	pkgs, err := parser.ParseDir(token.NewFileSet(),
-		filepath.Join(root, "internal", "analyzers", "opengrep"), nil, parser.ImportsOnly)
+	//
+	// File by file, not parser.ParseDir: that is deprecated, and this check wants
+	// every Go file in the directory whatever its build tags say.
+	dir := filepath.Join(root, "internal", "analyzers", "opengrep")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pkg := range pkgs {
-		for name, file := range pkg.Files {
-			for _, imported := range file.Imports {
-				path := strings.Trim(imported.Path.Value, `"`)
-				if strings.HasPrefix(path, "github.com/adamtait/reviewer/") {
-					continue
-				}
-				if strings.Contains(path, "grep") || strings.Contains(path, "sgrep") {
-					t.Errorf("%s imports %q", filepath.Base(name), path)
-				}
+	fset := token.NewFileSet()
+	parsed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, entry.Name()), nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed++
+		for _, imported := range file.Imports {
+			path := strings.Trim(imported.Path.Value, `"`)
+			if strings.HasPrefix(path, "github.com/adamtait/reviewer/") {
+				continue
+			}
+			if strings.Contains(path, "grep") || strings.Contains(path, "sgrep") {
+				t.Errorf("%s imports %q", entry.Name(), path)
 			}
 		}
+	}
+	if parsed == 0 {
+		t.Fatal("no Go files were parsed, so the import check proved nothing")
 	}
 }
 

@@ -349,6 +349,21 @@ test.describe('journey 3: a lookup the index could not resolve', () => {
   });
 });
 
+/**
+ * A side panel is never taller than the window: what does not fit scrolls
+ * inside it. On a narrow screen a panel covers the window, and one that grew
+ * with its contents ran off the foot of the screen, out of reach.
+ */
+async function expectPanelWithinWindow(page: Page): Promise<void> {
+  const fits = await page.evaluate(() => {
+    const panel = document.querySelector('.side-panel');
+    if (!panel) return 'no panel is open';
+    const box = panel.getBoundingClientRect();
+    return box.top >= -1 && box.bottom <= window.innerHeight + 1 ? 'fits' : `from ${String(box.top)} to ${String(box.bottom)} in a window ${String(window.innerHeight)} tall`;
+  });
+  expect(fits).toBe('fits');
+}
+
 const model = 'the-configured-model';
 const done = { event: 'done', data: { model, inputTokens: 900, outputTokens: 40, reasoningTokens: 60, modelCalls: 2 } } as const;
 
@@ -393,10 +408,10 @@ test.describe('journey 5: ask about selected code, then follow up', () => {
 
     // Every excerpt the model was given, each a link to those lines.
     const excerpts = panel.locator('.excerpts').first();
-    await expect(excerpts).toContainText('The model was given 2 excerpts');
+    await expect(excerpts).toContainText('The model was given lines from 2 files');
     await expect(excerpts.getByRole('link', { name: 'src/tax.ts, line 4' })).toHaveAttribute(
       'href', `/example/alpha/blob/${pullView.headSha}/src/tax.ts?pull=${pullView.number}#L4`);
-    await expect(excerpts.getByRole('link', { name: 'src/round.ts, lines 1 to 3' })).toBeVisible();
+    await expect(excerpts.getByRole('link', { name: 'src/round.ts, lines 1–3' })).toBeVisible();
 
     // The question went in the body, about the head commit, with the selected lines and no history.
     expect(world.asked).toHaveLength(1);
@@ -407,6 +422,8 @@ test.describe('journey 5: ask about selected code, then follow up', () => {
         pullNumber: pullView.number,
         history: [],
         selection: { sha: pullView.headSha, path: 'src/tax.ts', startLine: 3, endLine: 4 },
+        // A pull request shows many files, so no one file is named as open.
+        path: '',
       },
     });
 
@@ -422,6 +439,7 @@ test.describe('journey 5: ask about selected code, then follow up', () => {
         { role: 'assistant', text: first },
       ],
       selection: null,
+      path: '',
     });
 
     // The conversation is still there after the panel is closed and opened again.
@@ -430,8 +448,72 @@ test.describe('journey 5: ask about selected code, then follow up', () => {
     await expect(page.getByRole('region', { name: 'Assistant' }).getByTestId('answer')).toHaveCount(2);
 
     // An excerpt leads to the code it names.
-    await page.getByRole('region', { name: 'Assistant' }).getByRole('link', { name: 'src/round.ts, lines 1 to 3' }).click();
+    await page.getByRole('region', { name: 'Assistant' }).getByRole('link', { name: 'src/round.ts, lines 1–3' }).click();
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('src/round.ts');
+
+    // Asked from a file, with nothing selected, the question says which file
+    // is open: "this file" has to mean something to the model.
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const here = page.getByRole('region', { name: 'Assistant' });
+    await here.getByLabel('Your question').fill('What does this file do?');
+    await here.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(here.getByTestId('answer')).toHaveCount(1);
+    expect(world.asked[2]).toEqual({
+      sha: pullView.headSha,
+      ask: { text: 'What does this file do?', pullNumber: pullView.number, history: [], selection: null, path: 'src/round.ts' },
+    });
+  });
+
+  test('a long list of what the model was given is put together by file, and stays out of the way', async ({ page }) => {
+    // Sixty single lines from a dozen files, as two broad searches return
+    // them, and then one file read whole.
+    const paths = Array.from({ length: 12 }, (_, i) => `src/found/file-${String(i + 1).padStart(2, '0')}.ts`);
+    const hits = Array.from({ length: 60 }, (_, i) => ({
+      event: 'excerpt' as const,
+      data: { sha: pullView.headSha, path: paths[i % 12] ?? '', startLine: 10 * Math.floor(i / 12), endLine: 10 * Math.floor(i / 12) + 1 },
+    }));
+    await fakeApi(page, {
+      answers: [
+        stream(
+          ...hits,
+          { event: 'excerpt', data: { sha: pullView.headSha, path: 'src/round.ts', startLine: 0, endLine: 3 } },
+          { event: 'delta', data: { text: `${'A long answer. '.repeat(120)}The end.` } },
+          done,
+        ),
+      ],
+    });
+    await page.goto(pull);
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Assistant' });
+    await panel.getByLabel('Your question').fill('Where is rounding done?');
+    await panel.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(panel.getByTestId('answered-by')).toBeVisible();
+
+    // Thirteen files, not sixty-one lines, and closed until asked for.
+    const excerpts = panel.locator('.excerpts');
+    await expect(excerpts.locator('summary')).toHaveText('The model was given lines from 13 files');
+    await expect(excerpts).not.toHaveAttribute('open');
+    await excerpts.locator('summary').click();
+    const rows = excerpts.getByRole('listitem');
+    await expect(rows).toHaveCount(13);
+    // The file that was read comes first, then the ones a search touched, each with its lines on one row.
+    await expect(rows.first()).toHaveText('src/round.ts 1–3');
+    await expect(rows.nth(1)).toHaveText('src/found/file-01.ts 1, 11, 21, 31, 41');
+    await expect(excerpts.getByRole('link', { name: 'src/found/file-01.ts, line 21' })).toHaveAttribute(
+      'href', `/example/alpha/blob/${pullView.headSha}/src/found/file-01.ts?pull=${pullView.number}#L21`);
+
+    // The question box is on screen below the conversation, and nothing of
+    // the conversation is underneath it: the last line of the answer's
+    // footing ends above where the box begins.
+    const box = panel.getByLabel('Your question');
+    await expect(box).toBeInViewport();
+    await panel.getByTestId('answered-by').scrollIntoViewIfNeeded();
+    const formTop = await panel.locator('.ask-form').evaluate((el) => el.getBoundingClientRect().top);
+    const lastBottom = await panel.getByTestId('answered-by').evaluate((el) => el.getBoundingClientRect().bottom);
+    expect(lastBottom).toBeLessThanOrEqual(formTop);
+    // The page behind did not grow sideways or scroll away with it.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await expectPanelWithinWindow(page);
   });
 
   test('an answer is drawn as text: nothing in it runs, loads or leads away', async ({ page }) => {
@@ -680,6 +762,7 @@ test.describe('journey 4: the diff and search need no index', () => {
     await search.getByRole('button', { name: 'Search', exact: true }).click();
 
     await expect(search).toContainText('3 matching lines, from text search.');
+    await expectPanelWithinWindow(page);
     const outside = search.getByRole('link', { name: /src\/receipt\.ts:3/ });
     await expect(outside).toBeVisible();
 

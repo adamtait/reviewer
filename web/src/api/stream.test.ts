@@ -18,7 +18,7 @@ const recorded = example('question.sse');
 const stopped = example('question_stopped.sse');
 
 const sha = '5'.repeat(40);
-const question: Ask = { text: 'What does add return?', pullNumber: 12, history: [], selection: null };
+const question: Ask = { text: 'What does add return?', pullNumber: 12, history: [], selection: null, path: '' };
 
 afterEach(() => {
   vi.unstubAllGlobals();

@@ -539,6 +539,32 @@ main {
 
 /* The assistant */
 
+/* Its panel is as tall as the window and does not scroll as a whole. The
+   conversation scrolls inside it and the question box stays below, where it
+   was when the reader last typed in it. An earlier layout floated the box
+   over the scrolling conversation, and the end of a long answer sat under it. */
+.side-panel-assistant {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.assistant {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.conversation {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .assistant .row {
   display: flex;
   gap: 0.5rem;
@@ -596,10 +622,27 @@ main {
   margin: 0.4rem 0;
 }
 
-.excerpts ul {
-  margin: 0.25rem 0 0;
-  padding-left: 1.1rem;
+.excerpts summary {
+  cursor: pointer;
 }
+
+.excerpts ul {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.excerpts li {
+  padding: 0.15rem 0;
+  overflow-wrap: anywhere;
+}
+
+.excerpt-path {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+
 
 .model {
   font-size: 0.8rem;
@@ -609,10 +652,9 @@ main {
 .ask-form {
   display: grid;
   gap: 0.5rem;
-  position: sticky;
-  bottom: 0;
-  background: inherit;
-  padding-top: 0.5rem;
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
 }
 
 .ask-form textarea {
@@ -726,13 +768,23 @@ main {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* A panel covers the window here, and scrolls inside it. It has to be told
+     to stretch: the wide layout aligns it to the top of its grid cell, and
+     that same alignment on a fixed box means "as tall as what is in it", so a
+     long panel ran off the foot of the screen with no way to reach the rest. */
   .side-panel {
     position: fixed;
     inset: 0;
+    align-self: stretch;
     max-height: none;
     border-left: none;
     z-index: 9;
     background: var(--bg);
+  }
+
+  /* Its height comes from the window's edges here, keyboard included. */
+  .side-panel-assistant {
+    height: auto;
   }
 
   .sheet-backdrop {

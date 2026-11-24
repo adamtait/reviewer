@@ -287,6 +287,9 @@ type Ask struct {
 	PullNumber int           `json:"pullNumber"`
 	History    []AskMessage  `json:"history"`
 	Selection  *AskSelection `json:"selection"`
+	// Path is the file the reader has open, or empty. The model is told its
+	// name, so that "this file" in a question means something.
+	Path string `json:"path"`
 }
 
 // The events of an answer's stream. Each is sent as one server-sent event

@@ -200,6 +200,8 @@ export interface Ask {
   pullNumber: number;
   history: AskMessage[];
   selection: AskSelection | null;
+  /** The file the reader has open, or ''. The model is told its name. */
+  path: string;
 }
 
 /** A run of lines the model was given. `startLine` counts from 0 and `endLine` is exclusive. */

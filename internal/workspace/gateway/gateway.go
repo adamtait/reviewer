@@ -53,6 +53,10 @@ type Call struct {
 	System   string
 	History  []Message
 	Question string
+	// Where says, in the service's own words, what the reader has open: a
+	// pull request, a file. It is sent ahead of the question, so that "this
+	// file" means something to the model. Empty when there is nothing to say.
+	Where string
 	// Selection is the code the reader selected, if any.
 	Selection *Segment
 	// File returns the whole text of a file at the commit. The gateway scans
@@ -290,6 +294,10 @@ func (q *question) scanWhatTheReaderSent(ctx context.Context) *Result {
 	for _, m := range q.call.History {
 		items = append(items, item{m.Text, "An earlier question or answer in this conversation holds what looks like a credential"})
 	}
+	if q.call.Where != "" {
+		// It holds a file's name, which is the repository's content like any other.
+		items = append(items, item{q.call.Where, "The name of the file you have open holds what looks like a credential"})
+	}
 	if s := q.call.Selection; s != nil {
 		where := "The selected code"
 		if s.Path != "" {
@@ -319,7 +327,7 @@ func (q *question) scanWhatTheReaderSent(ctx context.Context) *Result {
 	}
 
 	// Clear to send. Build the conversation: what was said before, as plain
-	// text, then the question with the selected lines.
+	// text, then where the reader is, the question, and the selected lines.
 	for _, m := range q.call.History {
 		role := model.RoleUser
 		if m.Role == "assistant" {
@@ -328,6 +336,9 @@ func (q *question) scanWhatTheReaderSent(ctx context.Context) *Result {
 		q.turns = append(q.turns, model.Turn{Role: role, Parts: []model.Part{model.Text{Text: m.Text}}})
 	}
 	text := q.call.Question
+	if q.call.Where != "" {
+		text = q.call.Where + "\n\n" + text
+	}
 	if s := q.call.Selection; s != nil {
 		text += "\n\n" + selectionHeading(*s) + "\n```\n" + strings.TrimRight(s.Text, "\n") + "\n```"
 		if s.Path != "" {

@@ -59,7 +59,7 @@ func (s *Server) question(w http.ResponseWriter, r *http.Request) {
 	session, _ := SessionFrom(r.Context())
 	sha := r.PathValue("sha")
 
-	ask := assistant.Ask{Text: body.Text}
+	ask := assistant.Ask{Text: body.Text, Path: body.Path}
 	for _, m := range body.History {
 		ask.History = append(ask.History, assistant.Message{Role: m.Role, Text: m.Text})
 	}

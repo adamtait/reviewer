@@ -419,7 +419,8 @@ five requests a minute and twenty a day, and one question takes three or more.
 ### What is sent to the provider
 
 For each question: the question, the earlier questions and answers of that conversation, the code
-the reader selected, and whatever the model asks its tools to read. The tools can search the
+the reader selected, one line naming the pull request and the file the reader has open, and
+whatever the model asks its tools to read. The tools can search the
 commit's text, read lines of a file, look up a definition or references, list the pull request's
 changed files, and read its title and description. They cannot write, post or reach the network.
 
@@ -436,6 +437,7 @@ file is scanned behind any lines quoted from it.
 | --- | --- |
 | The question, or an earlier question or answer | Nothing is sent. The reader is told why. |
 | The selected code, or anywhere in the file it comes from | Nothing is sent. The reader is told which file. |
+| The name of the file the reader has open | Nothing is sent. The reader is told why. |
 | A file, or lines of files, a tool returned | That file is withheld. The model is told it was withheld, the answer goes on without it, and the reader is told which file. |
 | The pull request's title and description | Withheld in the same way. |
 | The scanner cannot run | Nothing is sent. |
@@ -462,6 +464,10 @@ Five of the `limits` bound a question:
 
 In one live question against a small project, the model made six calls to read three files and
 answer, used 8,191 input tokens in all, and took 40 seconds. Set `modelCalls` above six.
+
+A free-tier key's limit of five requests a minute is reached inside one such question. The
+provider then names a wait of about half a minute. With `waitSeconds` below that wait the question
+ends as `rate_limited`; at 60 it is sat out and the question goes on.
 
 ### How a question can end
 
@@ -562,7 +568,8 @@ What a user should know:
   GitHub. A diagram is shown as its source.
 - **Asking is `a`**, with the cursor on a line or with lines selected, or "Ask" after clicking a
   line number. The code asked about is quoted above the question. The conversation is kept in the
-  page and is gone on reload.
+  page and is gone on reload. Under each answer, the lines the model was given are listed by file,
+  each a link; a list of more than six files is closed until opened.
 - **The diff is drawn between the pull request's head and its merge base**, in two columns on a
   wide screen and one on a narrow one. Each file is read when it nears the screen.
 - **Commenting happens on GitHub.** Clicking or tapping a line number offers "Comment on GitHub",

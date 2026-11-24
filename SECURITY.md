@@ -59,7 +59,8 @@ until it expires or you revoke the token on GitHub. Revoking the token ends ever
 
 **Asking the assistant sends code to a model provider.** A question goes to the one provider the
 operator configured for that repository, with the earlier turns of the conversation, the code you
-selected, and whatever the model asks its read-only tools to read from that commit. Everything is
+selected, the name of the file you have open, and whatever the model asks its read-only tools to
+read from that commit. Everything is
 scanned for credentials at the moment of sending. A credential in what you typed or selected stops
 the question; one in a file the model asked for withholds that file, and you are told which. The
 scan is a filter and can miss a credential in a format it does not know. Conversations are kept in

@@ -801,6 +801,7 @@ The first adapter calls Google's `interactions` method with `store` false and `s
 Segment = { path, name, startLine, endLine, text }  # path is empty for text that quotes no file,
                                                     # and name then says what the text is
 Call    = { owner, repo, sha, userLogin, system, history: [{role, text}], question,
+            where,                                            # what the reader has open, in one line
             selection: Segment | none, file(path) -> text }   # file: the whole file, for the scan
 Tool    = { spec: ToolSpec, run(argumentsJSON) -> [Segment] or an error told to the model }
 Result  = { outcome, message, withheld: [{ what, reason }], model, inputTokens, outputTokens,
@@ -872,7 +873,8 @@ References    = { label, references: [Location], truncated, matches: [Match], ma
                 # label: index | text_search | none
 Report        = { sha, path, line, character, kind, label }  # kind: definition | references
 Ask           = { text, pullNumber, history: [{ role, text }],
-                  selection: { sha, path, startLine, endLine } | null }
+                  selection: { sha, path, startLine, endLine } | null,
+                  path }                             # the file the reader has open, or empty
 ```
 
 | Method and path | Request | Response |
@@ -1171,7 +1173,11 @@ Measured through the service's own code against this repository on 2026-11-24: 3
 *   **What is asked about.** With lines selected, those lines. With none, the line the cursor is on. A selection is at most 400 lines, a question at most 4,000 characters, and a conversation's history at most 40 messages and 200,000 bytes; past any of these the request is refused with 400 and the page says which.
 *   **The pull request and the index are loaded for a question when they can be.** If either cannot be, the question goes ahead: `list_changed_files` and `read_description` then say there is no pull request, and the two lookup tools fall back to text search, labelled as such.
 *   **A stream that ends without `done` or `stopped`** is shown as a lost connection, with what had arrived kept on screen.
-*   **Not done: a full question through a deployed service.** The parts were verified separately: the adapter against recorded provider calls, the gateway against the real scanner and provider once, the route and the page against scripted models. See "Verification Plan".
+*   **A live run changed three things.** The service was run against this repository's own pull request on GitHub, with the real scanner and the real provider, and driven through the page in a browser. Sign-in, the pull request, the CI-built index, lookups and search worked as built. The first question asked did not:
+    *   **The model was not told what the reader had open.** Asked about "this file" from a file's page, it spent six calls searching for the file, and the provider's per-minute limit ended the question. `Ask` now carries the open file's path, and the question reaches the model behind one line that names the pull request and the file. The file is named only if it is a text file of the commit, its name is quoted, and the line is scanned like the rest. The pull request view names no file, since it shows many.
+    *   **The list of what the model was given ran to sixty links,** one for each line a search had found. It is now put together by file, with runs that touch joined, files that were read ahead of files a search touched, and the list closed when it names more than six files.
+    *   **The end of a long answer sat underneath the question box,** which floated over the conversation. The conversation now scrolls in a box of its own above it. Looking into that found that on a narrow screen any side panel grew with its contents and ran off the foot of the window, search results included. A panel there now fills the window and scrolls inside it, and the journeys check that it does.
+*   **Still not done: a question through a deployed service on a paid key.** The live run used a free-tier key, which allows five requests a minute and twenty a day.
 
 ### Verification Plan
 

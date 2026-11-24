@@ -67,7 +67,8 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   asked for withholds that file and says so (ADR-0031). The first provider is
   Google's Gemini API (ADR-0033). A pull request's description and every answer
   are drawn as Markdown with raw HTML and images off and links shown with their
-  address.
+  address. A question says which pull request and file the reader has open,
+  and the lines the model was given are listed by file under each answer.
 - The workspace can serve a public repository when the configuration allows it
   by name with `allowPublic`. That requires `allowedLogins`, the list of GitHub
   accounts that may sign in, because GitHub lets every account read a public

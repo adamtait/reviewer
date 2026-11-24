@@ -494,7 +494,7 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
         </aside>
       ) : null}
       {panel === 'assistant' ? (
-        <aside className="side-panel">
+        <aside className="side-panel side-panel-assistant">
           <AssistantPanel
             owner={owner}
             repo={repo}

@@ -340,12 +340,13 @@ export function CodeView({ owner, repo, sha, path, line, pull, assistant = false
         </aside>
       ) : null}
       {panel === 'assistant' ? (
-        <aside className="side-panel">
+        <aside className="side-panel side-panel-assistant">
           <AssistantPanel
             owner={owner}
             repo={repo}
             sha={sha}
             pull={pull}
+            path={path}
             github={from?.webUrl}
             conversation={conversation}
             selection={quoted}

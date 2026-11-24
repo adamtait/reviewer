@@ -245,6 +245,9 @@ func TestACredentialInWhatTheReaderSentStopsTheQuestion(t *testing.T) {
 		"in an earlier answer": {func(c *Call) {
 			c.History = []Message{{Role: "user", Text: "hello"}, {Role: "assistant", Text: "you pasted " + marker}}
 		}, "An earlier question or answer"},
+		"in the name of the open file": {func(c *Call) {
+			c.Where = `The reader is looking at the file "keys/` + marker + `.ts".`
+		}, "The name of the file you have open"},
 		"in the selected lines": {func(c *Call) { c.Selection = selection("src/config.ts", "apiKey: '"+marker+"'") }, "src/config.ts"},
 		// The lines selected are clean. The file they come from is not.
 		"elsewhere in the file the selection comes from": {func(c *Call) {
@@ -379,12 +382,14 @@ func TestEverythingSentIsScannedFirst(t *testing.T) {
 	w := newWorld(t, Asks(100, asksFor("call_1", "src/sum.ts")), Says("ok", 150))
 	c := call("the question")
 	c.History = []Message{{Role: "user", Text: "an earlier question"}, {Role: "assistant", Text: "an earlier answer"}}
+	c.Where = "The reader has pull request #7 open."
 	c.Selection = &Segment{Path: "src/caller.ts", StartLine: 2, EndLine: 2, Text: "sum(1, 2);"}
 	w.answer(c, readFile())
 
 	scanned := strings.Join(w.scanner.Scanned(), "\n---\n")
 	for _, want := range []string{
 		"the question", "an earlier question", "an earlier answer", "sum(1, 2);",
+		"The reader has pull request #7 open.",
 		files["src/caller.ts"], // the whole file behind the selection
 		files["src/sum.ts"],    // the whole file behind the tool's lines
 	} {
@@ -399,6 +404,23 @@ func TestEverythingSentIsScannedFirst(t *testing.T) {
 	}
 	if got := w.model.Requests()[0].Turns; len(got) != 3 || got[0].Role != model.RoleUser || got[1].Role != model.RoleAssistant {
 		t.Errorf("the earlier question and answer were not sent as turns: %+v", got)
+	}
+	// Where the reader is comes first in the question's own turn, so that
+	// the question is read in its light.
+	turns := w.model.Requests()[0].Turns
+	if text := turns[len(turns)-1].Parts[0].(model.Text).Text; !strings.HasPrefix(text, "The reader has pull request #7 open.\n\nthe question\n\n") {
+		t.Errorf("the question's turn:\n%s", text)
+	}
+}
+
+// With nothing to say about where the reader is, the question is sent as it
+// was asked.
+func TestAQuestionWithNothingOpenIsSentAsAsked(t *testing.T) {
+	w := newWorld(t, Says("ok", 10))
+	w.answer(call("the question"), readFile())
+	turns := w.model.Requests()[0].Turns
+	if text := turns[len(turns)-1].Parts[0].(model.Text).Text; text != "the question" {
+		t.Errorf("the question's turn: %q", text)
 	}
 }
 

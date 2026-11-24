@@ -218,6 +218,28 @@ func TestAFileTheScanFlagsIsWithheldAndTheReaderIsTold(t *testing.T) {
 	}
 }
 
+// "What does this file do?" means something only if the model is told which
+// file. The page sends the open file's name and the pull request's number,
+// and the question reaches the model with both ahead of it.
+func TestTheModelIsToldWhatTheReaderHasOpen(t *testing.T) {
+	w := newWorld(t).withPull()
+	w.gh.SetArchive("example", "alpha", headSHA, archiveWith(t, map[string]string{
+		"src/sum.ts": "export const sum = (a: number, b: number) => a + b;\n",
+	}))
+	alice := w.signIn("alice")
+	scripted := w.script(gateway.Says("It adds two numbers.", 100))
+
+	rec := w.do(http.MethodPost, questions(headSHA), apitypes.Ask{Text: "What does this file do?", PullNumber: 12, Path: "src/sum.ts"}, alice, false)
+	if got := names(events(t, rec)); got != "delta done" {
+		t.Fatalf("events = %s: %s", got, rec.Body.String())
+	}
+	sent := scripted.Requests()[0].Turns[0].Parts[0].(model.Text).Text
+	want := "The reader has pull request #12 open and is looking at the file \"src/sum.ts\".\n\nWhat does this file do?"
+	if sent != want {
+		t.Errorf("the model was sent:\n%s\nwant:\n%s", sent, want)
+	}
+}
+
 func TestAQuestionThatCannotBeAskedIsRefusedBeforeAnythingIsSent(t *testing.T) {
 	w := newWorld(t).withPull()
 	alice := w.signIn("alice")

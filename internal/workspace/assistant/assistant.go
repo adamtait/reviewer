@@ -14,6 +14,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -38,6 +39,8 @@ const (
 	MaxHistoryText = 200_000
 	// MaxSelection is the most lines of selected code.
 	MaxSelection = 400
+	// MaxPath is the longest name of the open file, in bytes.
+	MaxPath = 1024
 )
 
 // Message is an earlier question or answer, as the browser holds it.
@@ -59,6 +62,9 @@ type Ask struct {
 	Text      string
 	History   []Message
 	Selection *Selection
+	// Path is the file the reader has open, if any. The model is told its
+	// name and nothing more: it reads the file with its tools if it wants it.
+	Path string
 }
 
 // Pull is what the tools know of the pull request the reader has open.
@@ -108,12 +114,15 @@ func Call(subject Subject, ask Ask) (gateway.Call, error) {
 		return gateway.Call{}, bad("it is longer than %d characters", MaxQuestion)
 	case len(ask.History) > MaxHistory:
 		return gateway.Call{}, bad("the conversation is longer than %d questions and answers; start a new one", MaxHistory)
+	case len(ask.Path) > MaxPath:
+		return gateway.Call{}, bad("the name of the open file is longer than %d bytes", MaxPath)
 	}
 
 	call := gateway.Call{
 		Owner: subject.Owner, Repo: subject.Repo, SHA: subject.SHA, UserLogin: subject.UserLogin,
 		System:   System(),
 		Question: text,
+		Where:    where(subject, ask),
 		File:     subject.Commit.Text,
 	}
 	total := 0
@@ -146,6 +155,34 @@ func Call(subject Subject, ask Ask) (gateway.Call, error) {
 		}
 	}
 	return call, nil
+}
+
+// where says what the reader has open, for the model.
+//
+// Without it the model knows the commit and nothing of where in it the reader
+// is. Asked "what does this file do?", it has to guess which file, and in a
+// live trial it spent six calls searching for one it could have been told.
+//
+// The file is named only when it is a text file of the commit, since a name
+// the tools cannot read would send the model looking for it. It is not named
+// beside a selection, which says its own file. The name is quoted, so that a
+// file named like a sentence stays a name.
+func where(subject Subject, ask Ask) string {
+	open := ""
+	if ask.Path != "" && ask.Selection == nil {
+		if _, ok := subject.Commit.Text(ask.Path); ok {
+			open = strconv.Quote(ask.Path)
+		}
+	}
+	switch {
+	case subject.Pull != nil && open != "":
+		return fmt.Sprintf("The reader has pull request #%d open and is looking at the file %s.", subject.Pull.Number, open)
+	case subject.Pull != nil:
+		return fmt.Sprintf("The reader has pull request #%d open.", subject.Pull.Number)
+	case open != "":
+		return fmt.Sprintf("The reader is looking at the file %s.", open)
+	}
+	return ""
 }
 
 // splitLines splits a file's text into its lines. A final newline ends the

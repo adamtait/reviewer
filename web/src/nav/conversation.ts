@@ -55,7 +55,8 @@ export interface Conversation {
   exchanges: Exchange[];
   /** Whether an answer is arriving. */
   busy: boolean;
-  ask: (sha: string, question: string, selection: Quoted | null) => void;
+  /** Asks about a commit. `path` is the file the reader has open, or ''. */
+  ask: (sha: string, question: string, selection: Quoted | null, path: string) => void;
   /** Stops the answer that is arriving. The service stops with it. */
   stop: () => void;
 }
@@ -74,7 +75,7 @@ export function useConversation(owner: string, repo: string, pull: number | unde
   }, []);
 
   const start = useCallback(
-    (sha: string, question: string, selection: Quoted | null) => {
+    (sha: string, question: string, selection: Quoted | null, path: string) => {
       if (running.current) return;
       const id = next.current++;
       const earlier = history(latest.current);
@@ -98,6 +99,7 @@ export function useConversation(owner: string, repo: string, pull: number | unde
           pullNumber: pull ?? 0,
           history: earlier,
           selection: selection ? { sha: selection.sha, path: selection.path, startLine: selection.startLine, endLine: selection.endLine } : null,
+          path,
         },
         (event) => {
           switch (event.event) {

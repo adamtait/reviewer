@@ -67,7 +67,7 @@ Agreed decisions:
     `<span class="image-placeholder">` with the text
     `[image: alt] (address)`. `![alt](address)` stays as the text the
     author typed (`image` rule off), as now.
-- [x] Same file, **task lists**: a `- [x]` or `- [x]` list item gets a
+- [x] Same file, **task lists**: a `- [ ]` or `- [x]` list item gets a
   disabled checkbox in place of its leading marker, as GitHub does. Do this
   in the DOM walk: the `li` whose first text starts with `[ ] `, `[x] `, or
   `[X] `.
@@ -136,7 +136,7 @@ Agreed decisions:
     - **Tables and URLs:** table alignment survives as `align`; a bare URL
       is linked and its address shown once.
     - **Line breaks:** `breaks` on gives `<br>`; off gives none.
-    - **Task lists:** `- [x]` and `- [x]` give disabled checkboxes with the
+    - **Task lists:** `- [ ]` and `- [x]` give disabled checkboxes with the
       right `checked` state.
     - **Alerts:** each of the five kinds is drawn as an alert, and `[!FOO]`
       stays a blockquote.

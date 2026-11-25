@@ -11,6 +11,7 @@ import { Description } from '../components/Description';
 import { FileDiff, sources } from '../components/DiffView';
 import { IndexStatus } from '../components/IndexStatus';
 import { Link } from '../components/Link';
+import { InlineMarkdown } from '../components/Markdown';
 import { type LookupResult, LookupResults } from '../components/References';
 import { SearchPanel } from '../components/SearchPanel';
 import { ShortcutHelp } from '../components/ShortcutHelp';
@@ -338,7 +339,7 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
       <main>
         <header className="pull-header">
           <h1>
-            {current.title} <span className="muted">#{current.number}</span>
+            <InlineMarkdown text={current.title} /> <span className="muted">#{current.number}</span>
           </h1>
           <p className="muted">
             {current.draft ? <span className="badge">Draft</span> : null}

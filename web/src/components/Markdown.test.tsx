@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Markdown } from './Markdown';
+import { InlineMarkdown, Markdown, withoutHandlers } from './Markdown';
+import dependabot from './testdata/dependabot.md?raw';
 
 afterEach(cleanup);
 
@@ -28,12 +29,14 @@ describe('Markdown from untrusted text', () => {
     expect(container.querySelector('h3')?.textContent).toBe('A title');
   });
 
-  it('shows a script tag as the characters it is', () => {
+  it('shows a script tag as the characters it is, as GitHub does', () => {
     const hostile = 'Before <script>window.pwned = true</script> after\n\n<script>window.pwned = true</script>\n\n<img src=x onerror="window.pwned = true">';
     const { container } = show(hostile);
     expect(container.querySelector('script, img, iframe, object, embed')).toBeNull();
     expect(container.textContent).toContain('<script>window.pwned = true</script>');
-    expect(container.textContent).toContain('onerror=');
+    // The image is described, not loaded, and its handler is gone.
+    expect(container.querySelector('.image-placeholder')?.textContent).toBe('[image] (x)');
+    expect(container.textContent).not.toContain('onerror');
     expect((window as unknown as { pwned?: boolean }).pwned).toBeUndefined();
   });
 
@@ -69,8 +72,9 @@ describe('Markdown from untrusted text', () => {
     expect(links.map((a) => a.getAttribute('href'))).toEqual([`${github}/example/alpha/issues/3`, '/example/alpha/pull/12']);
     for (const link of links) {
       expect(link.getAttribute('rel')).toBe('noopener noreferrer');
-      // The address is shown even when the link can be followed.
-      expect(link.textContent).toContain(`(${link.getAttribute('href') ?? ''})`);
+      // The address is shown when the pointer rests on a link that can be followed.
+      expect(link.getAttribute('title')).toBe(link.getAttribute('href'));
+      expect(link.textContent).not.toContain('(');
     }
   });
 
@@ -91,5 +95,195 @@ describe('Markdown from untrusted text', () => {
     const { container } = show('```ts\nconst html = "<b>not bold</b>";\n```');
     expect(container.querySelector('pre code')?.textContent).toBe('const html = "<b>not bold</b>";\n');
     expect(container.querySelector('b')).toBeNull();
+  });
+});
+
+describe('GitHub markup', () => {
+  const repository = `${github}/example/alpha`;
+  const gh = (text: string, breaks = false) =>
+    render(<Markdown text={text} trusted={[`${repository}/pull/12`]} repository={repository} breaks={breaks} />);
+
+  it('draws a Dependabot description the way GitHub does', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { container } = render(<Markdown text={dependabot} trusted={['https://github.com/example/alpha/pull/7']} breaks />);
+    // React complained about nothing, such as text where a table or list cannot hold it.
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+
+    const sections = Array.from(container.querySelectorAll('details'));
+    expect(sections.map((d) => d.querySelector(':scope > summary')?.textContent)).toEqual([
+      'Release notes',
+      'Changelog',
+      'Commits',
+      'Maintainer changes',
+    ]);
+    // The raw tags are drawn, not shown.
+    expect(container.textContent).not.toContain('<details>');
+    expect(container.textContent).not.toContain('<summary>');
+    expect(container.textContent).not.toContain('raw HTML omitted');
+    // Headings inside stay below the page's own.
+    expect(container.querySelector('h1, h2')).toBeNull();
+    expect(container.querySelector('blockquote h4')?.textContent).toBe('v11.0.7');
+    expect(container.querySelector('blockquote h3')?.textContent).toBe('change log');
+    expect(container.querySelector('blockquote code')?.textContent).toBe('mergeRows');
+    expect(container.querySelector('p em')?.textContent).toBe("Sourced from minimatch's releases.");
+
+    // Links to GitHub can be followed; the npm link cannot, and shows where it leads.
+    const commit = container.querySelector('a[href$="e89926755f3f79cf79f1087bd5730ed4d7eba60e"]');
+    expect(commit?.textContent).toBe('e899267');
+    expect(commit?.querySelector('code')).not.toBeNull();
+    const npm = sections[3]?.querySelector('.link-text');
+    expect(npm?.textContent).toBe('GitHub Actions (https://www.npmjs.com/~GitHub%20Actions)');
+    expect(sections[3]?.querySelector('a')).toBeNull();
+
+    // A bare address in the text becomes a link, and is not repeated beside itself.
+    const bare = container.querySelector('a[href="https://github.com/isaacs/minimatch"]');
+    expect(bare?.textContent).toBe('https://github.com/isaacs/minimatch');
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('shows the tags GitHub filters as the characters they are', () => {
+    const { container } = gh('<style>p { display: none }</style>\n\n<iframe src="https://elsewhere.example"></iframe>\n\na <textarea>b</textarea>');
+    expect(container.querySelector('style, iframe, textarea')).toBeNull();
+    expect(container.textContent).toContain('<style>p { display: none }</style>');
+    expect(container.textContent).toContain('<iframe src="https://elsewhere.example"></iframe>');
+    expect(container.textContent).toContain('<textarea>b</textarea>');
+  });
+
+  it('keeps only the attributes on the list, and no raw link that runs code', () => {
+    const { container } = gh(
+      '<p id="top" class="x" style="color: red" onclick="window.pwned = true" align="center">centred</p>\n\n<a href="javascript:alert(1)">run</a> <a href="https://elsewhere.example/x" onmouseover="window.pwned = true">away</a>',
+    );
+    const p = container.querySelector('p');
+    expect(p?.getAttribute('align')).toBe('center');
+    for (const name of ['id', 'class', 'style', 'onclick']) expect(p?.hasAttribute(name)).toBe(false);
+    expect(container.querySelector('a')).toBeNull();
+    expect(container.textContent).toContain('run (javascript:alert(1))');
+    expect(container.textContent).toContain('away (https://elsewhere.example/x)');
+  });
+
+  it('keeps the text of a tag it does not know, and drops what is not text', () => {
+    const { container } = gh('<custom-tag>kept</custom-tag> <svg><text>drawing</text></svg> <template>hidden</template> <font color=red>plain</font>');
+    expect(container.querySelector('custom-tag, svg, template, font')).toBeNull();
+    expect(container.textContent).toContain('kept');
+    expect(container.textContent).toContain('plain');
+    expect(container.textContent).not.toContain('drawing');
+    expect(container.textContent).not.toContain('hidden');
+  });
+
+  it('draws the GitHub tags a description uses, such as keys, superscripts and definitions', () => {
+    const { container } = gh('Press <kbd>Ctrl</kbd>, x<sup>2</sup>, <del>old</del> <ins>new</ins>\n\n<dl><dt>term</dt><dd>meaning</dd></dl>');
+    expect(container.querySelector('kbd')?.textContent).toBe('Ctrl');
+    expect(container.querySelector('sup')?.textContent).toBe('2');
+    expect(container.querySelector('del')?.textContent).toBe('old');
+    expect(container.querySelector('ins')?.textContent).toBe('new');
+    expect(container.querySelector('dl dt')?.textContent).toBe('term');
+  });
+
+  it('keeps a table column aligned', () => {
+    const { container } = gh('| a | b |\n|:-:|--:|\n| 1 | 2 |');
+    const cells = Array.from(container.querySelectorAll('td'));
+    expect(cells.map((c) => c.getAttribute('align'))).toEqual(['center', 'right']);
+    expect(cells.some((c) => c.hasAttribute('style'))).toBe(false);
+  });
+
+  it('draws a line break as a break only for GitHub text', () => {
+    expect(gh('one\ntwo', true).container.querySelector('p br')).not.toBeNull();
+    cleanup();
+    expect(gh('one\ntwo', false).container.querySelector('br')).toBeNull();
+  });
+
+  it('draws a task list with boxes that cannot be changed', () => {
+    const { container } = gh('- [ ] to do\n- [x] done\n- [link](/x) not a task');
+    const boxes = Array.from(container.querySelectorAll('input'));
+    expect(boxes.map((b) => [b.type, b.disabled, b.checked])).toEqual([
+      ['checkbox', true, false],
+      ['checkbox', true, true],
+    ]);
+    const items = Array.from(container.querySelectorAll('li'));
+    expect(items.map((li) => li.className)).toEqual(['task-list-item', 'task-list-item', '']);
+    expect(items[0]?.textContent).toBe(' to do');
+    expect(container.textContent).not.toContain('[x]');
+  });
+
+  it('does not let the text make a box other than a checkbox', () => {
+    const { container } = gh('<input type="text" value="typed"> <input type="checkbox" checked onclick="window.pwned = true">');
+    const boxes = Array.from(container.querySelectorAll('input'));
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0]?.type).toBe('checkbox');
+    expect(boxes[0]?.disabled).toBe(true);
+    expect(boxes[0]?.hasAttribute('onclick')).toBe(false);
+  });
+
+  it.each([
+    ['NOTE', 'note', 'Note'],
+    ['TIP', 'tip', 'Tip'],
+    ['IMPORTANT', 'important', 'Important'],
+    ['WARNING', 'warning', 'Warning'],
+    ['CAUTION', 'caution', 'Caution'],
+  ])('draws a [!%s] block quote as an alert', (marker, kind, title) => {
+    for (const breaks of [false, true]) {
+      const { container } = gh(`> [!${marker}]\n> Read this first.`, breaks);
+      const alert = container.querySelector(`.markdown-alert.markdown-alert-${kind}`);
+      expect(alert?.querySelector('.markdown-alert-title')?.textContent).toBe(title);
+      expect(alert?.textContent).toBe(`${title}Read this first.`);
+      expect(container.querySelector('blockquote, br')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('leaves a block quote alone when its marker is not one of the five', () => {
+    const { container } = gh('> [!FOO]\n> text\n\n> [!NOTE] on the same line');
+    expect(container.querySelector('.markdown-alert')).toBeNull();
+    expect(container.querySelectorAll('blockquote')).toHaveLength(2);
+    expect(container.textContent).toContain('[!FOO]');
+  });
+
+  it('links issues, pull requests and people to GitHub', () => {
+    const { container } = gh('Fixes #12, see other/repo#3, thanks @octo-cat.');
+    expect(Array.from(container.querySelectorAll('a'), (a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['#12', `${repository}/issues/12`],
+      ['other/repo#3', `${github}/other/repo/issues/3`],
+      ['@octo-cat', `${github}/octo-cat`],
+    ]);
+    expect(container.textContent).toBe('Fixes #12, see other/repo#3, thanks @octo-cat.');
+  });
+
+  it('does not link a reference in code, in a link, in an email address or inside a word', () => {
+    const { container } = gh('`#12` and [see #4](/x) and a@b.example and x#1 and @org/team\n\n```\n#7 @someone\n```');
+    expect(Array.from(container.querySelectorAll('a'), (a) => a.getAttribute('href'))).toEqual(['/x']);
+    // An email address is shown once, not beside its own address.
+    expect(container.textContent).toContain('and a@b.example and');
+  });
+
+  it('does not link a reference without a repository to link it to', () => {
+    const { container } = show('Fixes #12, thanks @octo-cat.');
+    expect(container.querySelector('a')).toBeNull();
+  });
+
+  it('draws a title the way GitHub does: code in backticks, and nothing else', () => {
+    const { container } = render(
+      <h1>
+        <InlineMarkdown text="Rename `total` to **sum** <b>now</b> [x](https://elsewhere.example)" />
+      </h1>,
+    );
+    expect(container.querySelector('code')?.textContent).toBe('total');
+    expect(container.querySelector('strong, b, a')).toBeNull();
+    expect(container.textContent).toBe('Rename total to **sum** <b>now</b> [x](https://elsewhere.example)');
+  });
+});
+
+describe('taking handlers out of raw HTML before it is parsed', () => {
+  it.each([
+    // The space before a removed attribute stays; it changes nothing.
+    ['<p onclick="a" align=center>x</p>', '<p  align=center>x</p>'],
+    ['<img/onerror=x src=y>', '<img/ src=y>'],
+    ['<b ONCLICK = "x">t</b>', '<b >t</b>'],
+    [`<a title="x > onclick=y" onmouseover='z'>t</a>`, '<a title="x > onclick=y" >t</a>'],
+    ['<!-- <b onclick=x> -->', '<!-- <b onclick=x> -->'],
+    ['turn on=off, 1 < 2', 'turn on=off, 1 < 2'],
+    ['<details open ontoggle=x>', '<details open >'],
+  ])('%s', (html, want) => {
+    expect(withoutHandlers(html)).toBe(want);
   });
 });

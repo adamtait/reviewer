@@ -18,11 +18,14 @@ Agreed decisions:
 - Assistant answers get the same HTML allowlist. A single newline becomes a
   line break only in GitHub text (descriptions).
 
+**Review baseline:** starting commit `f70c7708d467a21f49f7446a1d7d9e2b74809f0f`
+(includes the alternatives and checklist commits); working tree clean.
+
 ## Change targets
 
 ### Renderer
 
-- [ ] [web/src/components/Markdown.tsx](web/src/components/Markdown.tsx):
+- [x] [web/src/components/Markdown.tsx](web/src/components/Markdown.tsx):
   replace the token walker with: render, parse inertly, copy through the
   allowlist.
   - Parser: `markdown-it` with `html: true`, `linkify: true`, and `image`
@@ -64,17 +67,17 @@ Agreed decisions:
     `<span class="image-placeholder">` with the text
     `[image: alt] (address)`. `![alt](address)` stays as the text the
     author typed (`image` rule off), as now.
-- [ ] Same file, **task lists**: a `- [ ]` or `- [x]` list item gets a
+- [x] Same file, **task lists**: a `- [x]` or `- [x]` list item gets a
   disabled checkbox in place of its leading marker, as GitHub does. Do this
   in the DOM walk: the `li` whose first text starts with `[ ] `, `[x] `, or
   `[X] `.
-- [ ] Same file, **alerts**: when a `blockquote`'s first paragraph starts
+- [x] Same file, **alerts**: when a `blockquote`'s first paragraph starts
   with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, or `[!CAUTION]`,
   followed by a line end, `<br>`, or nothing, draw it as
   `<div class="markdown-alert markdown-alert-{kind}">`. It gets a title
   paragraph ("Note", "Tip", and so on) and loses the marker. Any other
   `[!X]` stays a plain blockquote.
-- [ ] Same file, **references**: new prop `repository?: string`, the
+- [x] Same file, **references**: new prop `repository?: string`, the
   repository's GitHub address from
   [`repositoryUrl()`](web/src/github/links.ts#L33). In text nodes that are
   not inside `a`, `code`, or `pre`:
@@ -87,33 +90,33 @@ Agreed decisions:
   keeps `a@b.com`, `foo#1`, and URL fragments unlinked. A login is
   `[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})`. These links go through
   `followable()` like any other link.
-- [ ] Same file, **inline title**: export `InlineMarkdown({ text })`. It
+- [x] Same file, **inline title**: export `InlineMarkdown({ text })`. It
   uses `parseInline` and draws only `code_inline` as `<code>`. Everything
   else is plain text, with no links, emphasis, or HTML, matching GitHub's
   titles.
 
 ### Callers
 
-- [ ] [web/src/components/Description.tsx](web/src/components/Description.tsx):
+- [x] [web/src/components/Description.tsx](web/src/components/Description.tsx):
   pass `breaks` and `repository={repositoryUrl(github)}` when `github` is
   set. Update the comment to the new rules.
-- [ ] [web/src/components/AssistantPanel.tsx:124](web/src/components/AssistantPanel.tsx#L124):
+- [x] [web/src/components/AssistantPanel.tsx:124](web/src/components/AssistantPanel.tsx#L124):
   pass `repository` (no `breaks`).
-- [ ] [web/src/views/PullView.tsx:341](web/src/views/PullView.tsx#L341)
+- [x] [web/src/views/PullView.tsx:341](web/src/views/PullView.tsx#L341)
   and [web/src/views/PullList.tsx:48](web/src/views/PullList.tsx#L48):
   draw `title` with `InlineMarkdown`.
-- [ ] [web/src/styles/app.css](web/src/styles/app.css#L501-L540): styles
+- [x] [web/src/styles/app.css](web/src/styles/app.css#L501-L540): styles
   for `details`/`summary`, `.markdown-alert-*` (border colour per kind),
   task-list items (no bullet), `kbd`, `.image-placeholder`, and `dl`.
 
 ### Tests
 
-- [ ] [web/src/components/testdata/dependabot.md](web/src/components/testdata/dependabot.md)
+- [x] [web/src/components/testdata/dependabot.md](web/src/components/testdata/dependabot.md)
   (new): one real-shaped Dependabot body from the user's example, with
   Dependabot's real line breaks, cut to one section of each kind (release
   notes, changelog, commits, maintainer changes). It keeps the
   `<!-- raw HTML omitted -->` comment and `<br />`.
-- [ ] [web/src/components/Markdown.test.tsx](web/src/components/Markdown.test.tsx):
+- [x] [web/src/components/Markdown.test.tsx](web/src/components/Markdown.test.tsx):
   - **Keep** every current security assertion.
   - **Adjust two:**
     - The `<img onerror>` case still has no `img` element, and now shows a
@@ -133,7 +136,7 @@ Agreed decisions:
     - **Tables and URLs:** table alignment survives as `align`; a bare URL
       is linked and its address shown once.
     - **Line breaks:** `breaks` on gives `<br>`; off gives none.
-    - **Task lists:** `- [ ]` and `- [x]` give disabled checkboxes with the
+    - **Task lists:** `- [x]` and `- [x]` give disabled checkboxes with the
       right `checked` state.
     - **Alerts:** each of the five kinds is drawn as an alert, and `[!FOO]`
       stays a blockquote.
@@ -142,12 +145,12 @@ Agreed decisions:
       and `x#1` are not linked.
     - **Titles:** `InlineMarkdown` draws backticks as `code` and leaves
       `**x**` and `<b>` as text.
-- [ ] [web/src/components/Description.test.tsx](web/src/components/Description.test.tsx):
+- [x] [web/src/components/Description.test.tsx](web/src/components/Description.test.tsx):
   - Keep the hostile-content test.
   - Move the followable link's address assertion from `textContent` to
     `title`.
   - Add: a single newline gives `<br>`.
-- [ ] [web/e2e/journeys.spec.ts:79-92](web/e2e/journeys.spec.ts#L79-L92):
+- [x] [web/e2e/journeys.spec.ts:79-92](web/e2e/journeys.spec.ts#L79-L92):
   rename "the description is shown as text" to "the description is drawn
   under the allowlist". With the same hostile body:
   - `<b>` is drawn bold;
@@ -163,31 +166,50 @@ Agreed decisions:
 
 ### Documentation
 
-- [ ] [docs/workspace.md:565-568](docs/workspace.md#L565-L568): describe the
+- [x] [docs/workspace.md:565-568](docs/workspace.md#L565-L568): describe the
   new rules. GitHub's HTML allowlist, nine tags shown as text, images not
   loaded, a link's address on hover when it can be followed and inline
   when it cannot, task lists, alerts, references, and diagrams still shown
   as source.
-- [ ] [docs/designs/review-workspace.md](docs/designs/review-workspace.md#L1166):
+- [x] [docs/designs/review-workspace.md](docs/designs/review-workspace.md#L1166):
   add an **As built** bullet under PR-54 recording the change from "raw
   HTML off" and why: Dependabot and Renovate bodies are mostly HTML. The
   original line 469 stays as history.
-- [ ] [THIRD_PARTY_LICENSES.md:77-78](THIRD_PARTY_LICENSES.md#L77-L78):
+- [x] [THIRD_PARTY_LICENSES.md:77-78](THIRD_PARTY_LICENSES.md#L77-L78):
   `markdown-it` now writes HTML that the application parses inertly and
   copies through an allowlist. `linkify-it` is now switched on.
-- [ ] Comment-only edits saying the body is now drawn as GitHub-flavoured
+- [x] Comment-only edits saying the body is now drawn as GitHub-flavoured
   Markdown through an allowlist:
   [internal/workspace/api/apitypes/types.go:111-112](internal/workspace/api/apitypes/types.go#L111-L112)
   and [web/src/api/types.ts:76](web/src/api/types.ts#L76).
 
 ### Tooling
 
-- [ ] In `web/`: `npm ci`, `npm run typecheck`, `npm run lint`,
+- [x] In `web/`: `npm ci`, `npm run typecheck`, `npm run lint`,
   `npm test`, and `npm run e2e -- --trace off`. Use the pre-installed
   Chromium at `/opt/pw-browsers/chromium` if the pinned Playwright
   version needs it.
-- [ ] `go build ./... && go vet ./internal/workspace/...`, for the
+- [x] `go build ./... && go vet ./internal/workspace/...`, for the
   comment-only Go edit.
+
+## Execution notes
+
+- **Inline title:** `InlineMarkdown` uses a small backtick pattern, not
+  `markdown-it`'s `parseInline`. It behaves the same (code in backticks,
+  everything else as typed) and needs no token filtering.
+- **Diagram blocks:** `pre` keeps `data-language` from markdown-it's
+  `language-X` class, so the existing diagram test still holds.
+- **Whitespace:** whitespace-only text inside `ul`, `ol`, `dl`, table parts,
+  `details` and `blockquote` is not drawn. React rejects text inside table
+  rows, and the fixture test checks that React logs no error.
+- **Emails:** `fuzzyEmail: false` still links `a@b.example` as `mailto:`. It
+  cannot be followed, and its address is not repeated beside it.
+- **Journey 5** ("an answer is drawn as text") is unchanged and passes. It
+  failed only on the CSP report, which `withoutHandlers()` fixed.
+- **Results:** typecheck, lint and 121 unit tests pass. The e2e suite has
+  56 passed and 16 skipped (the skips are tests limited to one screen
+  size, as before). `go build ./...` and `go vet ./internal/workspace/...`
+  pass, and `gofmt` is clean.
 
 ## Deferred and excluded (agreed before review)
 
@@ -203,9 +225,16 @@ Agreed decisions:
 
 ## Unverified blind-spot risks
 
-- **[⏳ ACK]** A document made by `DOMParser` does not run scripts or fetch
-  resources. Browsers do this by design, and DOMPurify depends on it. It is
-  checked in the scheduled e2e test above, under the real CSP.
+- **Verified (tag removed):** a document made by `DOMParser` does not run
+  scripts or fetch resources. The e2e journey checks this under the real CSP.
+  A Chromium probe without any CSP also found no handler execution and no
+  requests, for `DOMParser`, `<template>` content and `createHTMLDocument`
+  alike. **Finding:** under the CSP, Chromium reports a violation for every
+  inline `on…` attribute it parses, even in a detached document. That
+  failed the journeys' no-violations check. Fix (in `Markdown.tsx`):
+  `withoutHandlers()` takes `on…` attributes out of raw HTML before parsing,
+  reading tags the way the HTML tokenizer does. The allowlist copy is still
+  the security boundary.
 - **[⏳ ACK]** A link to `/{owner}/{repo}/issues/{n}` redirects to the pull
   request when `n` is one. This is GitHub's documented behaviour. It is not
   tested here, because the tests use a fake GitHub host.

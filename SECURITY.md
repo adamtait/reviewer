@@ -36,6 +36,40 @@ argument list. Provider errors pass through a redactor that strips the configure
 key, the configured endpoint, and anything key-shaped; the subscription CLI adapters
 put the prompt on stdin because an argument list is world-readable.
 
+## What the review workspace does with your token
+
+The review workspace (`cmd/workspace`, [`docs/workspace.md`](docs/workspace.md)) is a separate
+program from the review tool above, and is on trial.
+
+**You sign in with a fine-grained personal access token of your own**, with read access to
+Contents, Pull requests, Metadata and Actions. A classic token is refused. The service makes no
+write call to GitHub, whatever a token allows, and cannot check which permissions a token carries.
+
+**The token is not stored.** It is sealed, with a key held by the operator, into a session cookie
+that scripts cannot read. The server keeps no copy and has no database. Whoever holds that key can
+open any cookie presented while the key is in use.
+
+**Everything is read from GitHub as you.** The service has no GitHub credential of its own. You see
+a repository in the workspace only if GitHub lets your token read it. A public repository is
+refused unless the operator has allowed it by name, and then only the GitHub accounts the operator
+has listed can sign in.
+
+**Signing out clears the cookie in that browser only.** A copy of the cookie made beforehand works
+until it expires or you revoke the token on GitHub. Revoking the token ends every session it is in.
+
+**Asking the assistant sends code to a model provider.** A question goes to the one provider the
+operator configured for that repository, with the earlier turns of the conversation, the code you
+selected, the name of the file you have open, and whatever the model asks its read-only tools to
+read from that commit. Everything is
+scanned for credentials at the moment of sending. A credential in what you typed or selected stops
+the question; one in a file the model asked for withholds that file, and you are told which. The
+scan is a filter and can miss a credential in a format it does not know. Conversations are kept in
+your browser page only: not by the service, and not by the provider, which is asked to store
+nothing.
+
+**Tokens are filtered from the log.** Every string the service logs passes through a filter that
+removes anything in the shape of a GitHub token.
+
 ## Trust boundaries
 
 **A fork's pull request is untrusted.** The generated workflow triggers on

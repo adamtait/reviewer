@@ -1,0 +1,5 @@
+{
+  "path": "src/total.ts",
+  "kind": "text",
+  "text": "export function total(prices: number[]): number {\n  return prices.reduce((a, b) =\u003e a + b, 0);\n}\n"
+}

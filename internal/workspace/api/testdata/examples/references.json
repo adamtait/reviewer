@@ -1,0 +1,57 @@
+{
+  "label": "index",
+  "references": [
+    {
+      "path": "src/money.ts",
+      "line": 12,
+      "character": 16,
+      "endLine": 12,
+      "endCharacter": 19
+    },
+    {
+      "path": "src/cart.ts",
+      "line": 0,
+      "character": 16,
+      "endLine": 0,
+      "endCharacter": 19
+    },
+    {
+      "path": "src/cart.ts",
+      "line": 14,
+      "character": 12,
+      "endLine": 14,
+      "endCharacter": 15
+    },
+    {
+      "path": "src/index.ts",
+      "line": 1,
+      "character": 16,
+      "endLine": 1,
+      "endCharacter": 19
+    }
+  ],
+  "truncated": false,
+  "matches": [
+    {
+      "path": "src/cart.ts",
+      "line": 0,
+      "text": "import { Money, add } from './money';"
+    },
+    {
+      "path": "src/cart.ts",
+      "line": 14,
+      "text": "      sum = add(sum, item);"
+    },
+    {
+      "path": "src/index.ts",
+      "line": 1,
+      "text": "export { Money, add } from './money';"
+    },
+    {
+      "path": "src/money.ts",
+      "line": 12,
+      "text": "export function add(a: Money, b: Money): Money {"
+    }
+  ],
+  "matchesTruncated": false
+}

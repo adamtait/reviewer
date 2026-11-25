@@ -15,6 +15,10 @@
 #
 # usage: install-tools.sh [DESTDIR]   (default: the first writable of
 #                                      $GOPATH/bin, /usr/local/bin, ./bin)
+#
+# Set INSTALL_TOOLS_ONLY to one tool's name (gitleaks, opengrep or osv-scanner)
+# to install that one alone. The review workspace's image needs the scanner and
+# must not carry the other two.
 
 set -euo pipefail
 
@@ -136,8 +140,15 @@ install_tarball() { # name url sha member
   log "$name: installed to $destdir/$name"
 }
 
-install_tarball gitleaks "$gitleaks_url" "$gitleaks_sha" gitleaks
-install_binary  opengrep "$opengrep_url" "$opengrep_sha"
-install_binary  osv-scanner "$osv_url" "$osv_sha"
+only="${INSTALL_TOOLS_ONLY:-}"
+case "$only" in
+  ""|gitleaks|opengrep|osv-scanner) ;;
+  *) die "INSTALL_TOOLS_ONLY names \"$only\", which is not one of gitleaks, opengrep, osv-scanner" ;;
+esac
+wanted() { [ -z "$only" ] || [ "$only" = "$1" ]; }
+
+if wanted gitleaks;    then install_tarball gitleaks "$gitleaks_url" "$gitleaks_sha" gitleaks; fi
+if wanted opengrep;    then install_binary  opengrep "$opengrep_url" "$opengrep_sha"; fi
+if wanted osv-scanner; then install_binary  osv-scanner "$osv_url" "$osv_sha"; fi
 
 log "done. Add $destdir to PATH if it is not already there."

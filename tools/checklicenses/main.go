@@ -38,7 +38,7 @@ var (
 	sectionRe = regexp.MustCompile(`(?m)^## (.+)$`)
 )
 
-// section names the four parts of the inventory. Each is reconciled against its
+// section names the parts of the inventory. Each is reconciled against its
 // own dependency source: mixing them would report every Go module as missing
 // from the npm tree, which is a real bug this shape prevents.
 type section int
@@ -52,6 +52,13 @@ const (
 	// sectionNPMDev holds direct development dependencies only. They are not
 	// distributed, so their transitive trees are not inventoried (ADR-0028).
 	sectionNPMDev
+	// sectionWeb holds the packages built into the review workspace's web
+	// application, and so served to every user of it. Reconciled against every
+	// non-development package in web/package-lock.json.
+	sectionWeb
+	// sectionWebDev holds the web application's direct development
+	// dependencies. Not distributed, so listed at depth one, as for the plugin.
+	sectionWebDev
 	sectionBinaries
 	sectionTools
 )
@@ -64,6 +71,10 @@ func sectionOf(heading string) section {
 		return sectionNPM
 	case "npm development dependencies":
 		return sectionNPMDev
+	case "web application packages":
+		return sectionWeb
+	case "web application development dependencies":
+		return sectionWebDev
 	case "external binaries":
 		return sectionBinaries
 	case "development tools":
@@ -73,17 +84,20 @@ func sectionOf(heading string) section {
 }
 
 // inventory is the parsed THIRD_PARTY_LICENSES.md: a license per name, per section.
+//
+// Rows are keyed by section and name together. A name alone is not enough:
+// `typescript` is a development dependency of the plugin and of the web
+// application, at different versions, and a row for one must not stand in for,
+// or overwrite, the row for the other.
 type inventory struct {
-	licenses map[string]string
-	sections map[string]section
+	rows map[section]map[string]string
 }
 
+// namesIn returns the rows of one section: name to license.
 func (inv inventory) namesIn(s section) map[string]string {
 	out := map[string]string{}
-	for name, sec := range inv.sections {
-		if sec == s {
-			out[name] = inv.licenses[name]
-		}
+	for name, license := range inv.rows[s] {
+		out[name] = license
 	}
 	return out
 }
@@ -140,9 +154,26 @@ func check(root string) (violations []string, summary string, err error) {
 			"THIRD_PARTY_LICENSES.md lists %d npm packages but the plugin's dependency tree could not be read", listed))
 	}
 
-	npmPkgs := merge(npmProd, npmDev)
-	violations = append(violations, checkCopyleft(inv, goMods, npmPkgs)...)
-	violations = append(violations, checkBoundary(root, goMods, npmPkgs)...)
+	// The web application is read from its lockfile, with no install: the
+	// lockfile is what the image is built from, and it is always there.
+	web, err := webPackages(root)
+	if err != nil {
+		return nil, "", err
+	}
+	if web.checked {
+		violations = append(violations, reconcile("web application package", web.distributed, inv.namesIn(sectionWeb))...)
+		violations = append(violations, reconcile("web application development dependency", web.directDev, inv.namesIn(sectionWebDev))...)
+		violations = append(violations, checkDeclared(web)...)
+	} else if listed := len(inv.namesIn(sectionWeb)) + len(inv.namesIn(sectionWebDev)); listed > 0 {
+		violations = append(violations, fmt.Sprintf(
+			"THIRD_PARTY_LICENSES.md lists %d web application packages but web/package-lock.json could not be read", listed))
+	}
+
+	violations = append(violations, checkCopyleft(inv, map[section]map[string]string{
+		sectionGo: goMods, sectionNPM: npmProd, sectionNPMDev: npmDev,
+		sectionWeb: web.distributed, sectionWebDev: web.directDev,
+	})...)
+	violations = append(violations, checkBoundary(root, goMods, merge(npmProd, npmDev, web.distributed, web.directDev))...)
 
 	sort.Strings(violations)
 
@@ -150,13 +181,17 @@ func check(root string) (violations []string, summary string, err error) {
 	if npmChecked {
 		npmNote = fmt.Sprintf("npm: %d distributed, %d direct dev", len(npmProd), len(npmDev))
 	}
-	return violations, fmt.Sprintf("Go: %d modules, %s, 0 copyleft, inventory in sync", len(goMods), npmNote), nil
+	webNote := "web: not yet present"
+	if web.checked {
+		webNote = fmt.Sprintf("web: %d distributed, %d direct dev", len(web.distributed), len(web.directDev))
+	}
+	return violations, fmt.Sprintf("Go: %d modules, %s, %s, 0 copyleft, inventory in sync", len(goMods), npmNote, webNote), nil
 }
 
 // parseInventory reads the document section by section, so each name is
 // reconciled against the dependency source it actually belongs to.
 func parseInventory(md string) inventory {
-	inv := inventory{licenses: map[string]string{}, sections: map[string]section{}}
+	inv := inventory{rows: map[section]map[string]string{}}
 
 	// Split on headings, keeping each heading with the body that follows it.
 	headings := sectionRe.FindAllStringSubmatchIndex(md, -1)
@@ -175,8 +210,10 @@ func parseInventory(md string) inventory {
 			if looksLikeLicense(second) {
 				license = second
 			}
-			inv.licenses[name] = license
-			inv.sections[name] = current
+			if inv.rows[current] == nil {
+				inv.rows[current] = map[string]string{}
+			}
+			inv.rows[current][name] = license
 		}
 	}
 	return inv
@@ -256,6 +293,87 @@ func npmPackages(root string, args ...string) (pkgs map[string]string, checked b
 	return pkgs, true, nil
 }
 
+// webSet is the review workspace's web application, as its lockfile describes it.
+type webSet struct {
+	// distributed is every package that is not development-only: what is built
+	// into the page and served to users. Name to version.
+	distributed map[string]string
+	// directDev is the development dependencies package.json names itself.
+	directDev map[string]string
+	// declared is the license each distributed package states for itself.
+	declared map[string]string
+	// checked is false when there is no web application to read.
+	checked bool
+}
+
+// webPackages reads web/package-lock.json. Nothing is installed and npm is not
+// run: the lockfile records, for every package, its version, whether it is
+// development-only, and the license it declares.
+func webPackages(root string) (webSet, error) {
+	set := webSet{distributed: map[string]string{}, directDev: map[string]string{}, declared: map[string]string{}}
+	raw, err := os.ReadFile(filepath.Join(root, "web", "package-lock.json"))
+	if os.IsNotExist(err) {
+		return set, nil
+	}
+	if err != nil {
+		return set, fmt.Errorf("reading the web application's lockfile: %w", err)
+	}
+	var lock struct {
+		LockfileVersion int `json:"lockfileVersion"`
+		Packages        map[string]struct {
+			Version         string            `json:"version"`
+			License         string            `json:"license"`
+			Dev             bool              `json:"dev"`
+			Link            bool              `json:"link"`
+			DevDependencies map[string]string `json:"devDependencies"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		return set, fmt.Errorf("reading the web application's lockfile: %w", err)
+	}
+	if lock.LockfileVersion < 2 || lock.Packages == nil {
+		return set, fmt.Errorf("web/package-lock.json is lockfile version %d; version 2 or later is needed, which lists every package", lock.LockfileVersion)
+	}
+
+	const marker = "node_modules/"
+	for path, pkg := range lock.Packages {
+		if path == "" || pkg.Link {
+			continue
+		}
+		// "node_modules/a/node_modules/b" is package b, nested under a.
+		name := path[strings.LastIndex(path, marker)+len(marker):]
+		// Only `dev` is development-only. A package marked optional, or both
+		// development and optional, can reach the build, so it is counted.
+		if pkg.Dev {
+			continue
+		}
+		set.distributed[name] = pkg.Version
+		set.declared[name] = pkg.License
+	}
+	for name := range lock.Packages[""].DevDependencies {
+		set.directDev[name] = lock.Packages[marker+name].Version
+	}
+	set.checked = true
+	return set, nil
+}
+
+// checkDeclared refuses a distributed web package whose own stated license is
+// copyleft, whatever the inventory says about it. The inventory is typed by
+// hand; this is the package's own word.
+func checkDeclared(web webSet) []string {
+	var violations []string
+	for name, license := range web.declared {
+		for _, bad := range copyleft {
+			if strings.Contains(strings.ToUpper(license), bad) {
+				violations = append(violations, fmt.Sprintf(
+					"web application package %s declares the license %s; it is built into the page and must not be copyleft",
+					name, license))
+			}
+		}
+	}
+	return violations
+}
+
 // reconcile compares one section of the inventory against one dependency source,
 // failing in both directions: an undocumented dependency, and a documented one
 // that no longer exists.
@@ -279,25 +397,22 @@ func reconcile(kind string, actual, listed map[string]string) []string {
 // checkCopyleft refuses a copyleft license on anything this project links.
 // Spawned binaries and development tools are exempt by section, not by a hardcoded
 // name list: that is the distinction ADR-0011 turns on.
-func checkCopyleft(inv inventory, goMods, npmPkgs map[string]string) []string {
+//
+// linked gives, for each section that holds linked dependencies, the
+// dependencies really present. A row is judged against its own section's set.
+func checkCopyleft(inv inventory, linked map[section]map[string]string) []string {
 	var violations []string
-	for name, license := range inv.licenses {
-		switch inv.sections[name] {
-		case sectionBinaries, sectionTools:
-			continue // spawned or dev-only, not linked; see ADR-0011
-		}
-		_, isDep := goMods[name]
-		if !isDep {
-			_, isDep = npmPkgs[name]
-		}
-		if !isDep {
-			continue
-		}
-		for _, bad := range copyleft {
-			if strings.Contains(strings.ToUpper(license), bad) {
-				violations = append(violations, fmt.Sprintf(
-					"%s is a linked dependency licensed %s; this project is MIT and must not link copyleft code",
-					name, license))
+	for sec, present := range linked {
+		for name, license := range inv.rows[sec] {
+			if _, isDep := present[name]; !isDep {
+				continue // a stale row; reconcile reports it
+			}
+			for _, bad := range copyleft {
+				if strings.Contains(strings.ToUpper(license), bad) {
+					violations = append(violations, fmt.Sprintf(
+						"%s is a linked dependency licensed %s; this project is MIT and must not link copyleft code",
+						name, license))
+				}
 			}
 		}
 	}
@@ -321,7 +436,11 @@ func checkBoundary(root string, goMods, npmPkgs map[string]string) []string {
 			}
 		}
 		// Belt and braces: a manifest entry that never resolved still states intent.
-		for _, manifest := range []string{"go.mod", filepath.Join("plugins", "typescript", "package.json")} {
+		for _, manifest := range []string{
+			"go.mod",
+			filepath.Join("plugins", "typescript", "package.json"),
+			filepath.Join("web", "package.json"),
+		} {
 			body, err := os.ReadFile(filepath.Join(root, manifest))
 			if err != nil {
 				continue

@@ -1,0 +1,1 @@
+{"error":{"message":"Rate limit exceeded for model gemini-3-flash (limit: 20 requests per day on Free Tier). Please retry in 8h39m34s or upgrade your tier at https://ai.dev/rate-limit.","code":"too_many_requests"}}

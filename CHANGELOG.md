@@ -29,6 +29,67 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 
 ## [Unreleased]
 
+### Changed
+
+- **The minimum Go version is now 1.26.** Go 1.24 and 1.25 no longer receive
+  security fixes, and CI now tests the two supported releases, 1.26 and 1.27.
+  Building `reviewer` from source needs Go 1.26 or newer; the released binaries
+  are unaffected.
+  The pinned `staticcheck` moves to 2026.2.2, which supports both.
+
+### Added
+
+- `cmd/workspace`, the skeleton of the review workspace service described in
+  `docs/designs/review-workspace.md`: configuration, logging and a health
+  address, with a container image. It does nothing for a user yet. See
+  `docs/workspace.md` (ADR-0029).
+- Sign-in for the workspace service with a fine-grained personal access token,
+  sealed into the session cookie and not stored, and an access check that asks
+  GitHub as the user and refuses public repositories (ADR-0032).
+- The workspace service reads a repository as the signed-in user: its open pull
+  requests, one pull request with its merge base and changed files, the files
+  of a commit, and literal text search at a commit. A commit's files come from
+  GitHub as one archive and are held in memory, bounded by configured limits
+  and keyed by repository and commit together (ADR-0030).
+- The workspace's web application, in `web/` and embedded in the service: sign-in,
+  the list of open pull requests, a pull request's description and diff in two
+  columns or one, a code view for any file at a commit, text search, keyboard
+  shortcuts with a touch route for each, and links to GitHub for commenting. It
+  is served under a content security policy that allows scripts and requests
+  from the service alone. `THIRD_PARTY_LICENSES.md` gains its packages, and
+  `tools/checklicenses` reads them from the web application's lockfile.
+- An assistant in the workspace. A reader asks about the code on screen, or about
+  lines they select, and the answer streams in from the model provider configured
+  for that repository, with the model's name and a link to every run of lines the
+  model was given. The model reads the commit through six read-only tools.
+  Everything sent is scanned for credentials at the moment of sending: one in
+  the question or the selection stops the question, and one in a file the model
+  asked for withholds that file and says so (ADR-0031). The first provider is
+  Google's Gemini API (ADR-0033). A pull request's description and every answer
+  are drawn as Markdown with raw HTML and images off and links shown with their
+  address. A question says which pull request and file the reader has open,
+  and the lines the model was given are listed by file under each answer.
+- The workspace can serve a public repository when the configuration allows it
+  by name with `allowPublic`. That requires `allowedLogins`, the list of GitHub
+  accounts that may sign in, because GitHub lets every account read a public
+  repository. The default is unchanged: a public repository is refused.
+- Go-to-definition and find-references in the workspace, for TypeScript, from
+  the index the `review-index.yml` workflow builds. The service decodes the
+  index itself, checks it against the commit's files, and follows a definition
+  only where the text at the target is the same word. Every result is labelled
+  with where it came from: the CI-built index, text search, a package outside
+  the repository, or not found. A commit with no index, or one whose index job
+  is still running or failed, falls back to text search and says so. A result
+  can be reported as wrong, which writes a log line.
+
+- `reviewer init` writes a second workflow, `.github/workflows/review-index.yml`,
+  into a repository with a root `tsconfig.json`. On every push it builds a
+  navigation index of the TypeScript code and saves it as a workflow artifact,
+  for the review workspace described in `docs/designs/review-workspace.md`
+  (ADR-0034). An existing install gains this one file on its next `init`; every
+  other file is left as it is. Deleting the workflow turns that navigation off
+  and changes nothing else.
+
 ## [0.1.0] - 2026-09-16
 
 ### Added

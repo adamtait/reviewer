@@ -1,0 +1,50 @@
+# Trial workflow for entry condition E2 of the review workspace design.
+#
+# Copy this file to .github/workflows/review-index.yml on a branch of ONE
+# repository, change the install step to that repository's usual command, and
+# push. Every push to any branch then builds a navigation index and saves it as
+# an artifact named "review-index".
+#
+# The job reads the repository and nothing else. It needs no secret unless the
+# repository's own install does.
+
+name: review-index
+
+on:
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # On a push, the default checkout is the pushed commit.
+      - uses: actions/checkout@v4
+
+      # The indexer needs Node 22. If the repository installs with an older
+      # Node, install with that version first and add a second setup-node step
+      # for 22 before the index step.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Replace with the repository's usual install command, for example:
+      #   pnpm:  corepack enable && pnpm install --frozen-lockfile
+      #   yarn:  corepack enable && yarn install --immutable
+      #   bun:   add "- uses: oven-sh/setup-bun@v2" above, then: bun install --frozen-lockfile
+      - run: npm ci
+
+      # Writes index.scip in the working directory. It reads tsconfig.json at
+      # the repository root. For a workspace, see the indexer's --yarn-workspaces
+      # and --pnpm-workspaces options, and record which was needed.
+      - run: npx --yes @sourcegraph/scip-typescript@0.6.2 index
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-index
+          path: index.scip
+          if-no-files-found: error

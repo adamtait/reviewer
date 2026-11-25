@@ -268,3 +268,112 @@ func TestTheContextStopsTheScanner(t *testing.T) {
 		t.Fatal("want a cancelled scan to return an error")
 	}
 }
+
+// recording is a stub scanner that writes down how it was called: its
+// arguments, its working directory and its environment.
+const recording = `
+log="$RECORD_TO"
+[ -n "$log" ] || log="$(dirname "$0")/called"
+{ pwd; printf '%s\n' "$#"; for a in "$@"; do printf '%s\n' "$a"; done; echo "--env"; env | sort; } > "$log"
+while [ $# -gt 0 ]; do
+  case "$1" in --report-path) shift; out="$1";; esac
+  shift
+done
+echo '[]' > "$out"
+exit 0
+`
+
+func called(t *testing.T, binary string) (dir string, args []string, env []string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(binary), "called"))
+	if err != nil {
+		t.Fatalf("the scanner was not run: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	dir = lines[0]
+	at := 2
+	for ; at < len(lines) && lines[at] != "--env"; at++ {
+		args = append(args, lines[at])
+	}
+	if at+1 < len(lines) {
+		env = lines[at+1:]
+	}
+	return dir, args, env
+}
+
+// The analyzer's command is the same command it has always run: the repository
+// root as working directory, the relative file as target, and nothing added.
+// Scan was exported for a second caller, and that must not have changed this one.
+func TestTheAnalyzersCommandIsUnchanged(t *testing.T) {
+	binary := stubBinary(t, recording)
+	r := req(t, "config.ts")
+	if _, _, err := Analyze(context.Background(), r, binary); err != nil {
+		t.Fatal(err)
+	}
+	dir, args, env := called(t, binary)
+
+	wantDir, _ := filepath.EvalSymlinks(r.Root)
+	gotDir, _ := filepath.EvalSymlinks(dir)
+	if gotDir != wantDir {
+		t.Errorf("working directory %q, want the repository root %q", gotDir, wantDir)
+	}
+	if len(args) != 9 {
+		t.Fatalf("arguments = %q", args)
+	}
+	reportPath := args[5]
+	want := []string{"dir", "--no-banner", "--report-format", "json", "--report-path", reportPath, "--exit-code", "1", "config.ts"}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("argument %d = %q, want %q (all: %q)", i, args[i], want[i], args)
+		}
+	}
+	// It inherits the environment, as before.
+	if len(env) == 0 {
+		t.Error("the analyzer's scan ran with an empty environment; it has always inherited its caller's")
+	}
+}
+
+func TestScanPassesEachOptionToTheScanner(t *testing.T) {
+	binary := stubBinary(t, recording)
+	work := t.TempDir()
+	t.Setenv("GITLEAKS_CONFIG", "/somewhere/else.toml")
+	reports, err := Scan(context.Background(), binary, Options{
+		Dir: work, Target: "/scan/here", Config: "/rules/rules.toml",
+		IgnoreAllowComments: true, MaxDecodeDepth: 2, EmptyEnvironment: true,
+	})
+	if err != nil || len(reports) != 0 {
+		t.Fatalf("reports %v, err %v", reports, err)
+	}
+	dir, args, env := called(t, binary)
+	wantDir, _ := filepath.EvalSymlinks(work)
+	gotDir, _ := filepath.EvalSymlinks(dir)
+	if gotDir != wantDir {
+		t.Errorf("working directory %q, want %q", gotDir, wantDir)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--config /rules/rules.toml", "--ignore-gitleaks-allow", "--max-decode-depth 2"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("arguments %q lack %q", joined, want)
+		}
+	}
+	if args[len(args)-1] != "/scan/here" {
+		t.Errorf("the target is %q, want it last", args[len(args)-1])
+	}
+	// Nothing of the caller's environment reaches the scanner. A shell sets a
+	// few variables of its own, such as PWD; what matters is that none of ours
+	// is there, least of all one that configures the scanner.
+	for _, line := range env {
+		if strings.HasPrefix(line, "GITLEAKS_") || strings.HasPrefix(line, "HOME=") || strings.HasPrefix(line, "PATH=/") && strings.Contains(line, "go") {
+			t.Errorf("the scanner's environment holds %q", line)
+		}
+	}
+}
+
+func TestScanFailsClosedLikeTheAnalyzer(t *testing.T) {
+	if _, err := Scan(context.Background(), stubBinary(t, "exit 0\n"), Options{Dir: t.TempDir(), Target: "."}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("a scanner that wrote no report: %v, want ErrUnavailable", err)
+	}
+	if _, err := Scan(context.Background(), filepath.Join(t.TempDir(), "absent"), Options{Dir: t.TempDir(), Target: "."}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("a scanner that is not there: %v, want ErrUnavailable", err)
+	}
+}

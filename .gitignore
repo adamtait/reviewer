@@ -7,8 +7,18 @@
 /audithistory
 /checkadrs
 /checklicenses
+/workspace
 node_modules/
 *.tsbuildinfo
 # The plugin compiled. Rebuilt by `npm run build`, and by `make check`
 # before the tests that need it, so a tracked copy is only ever a stale one.
 plugins/typescript/dist/
+
+# The review workspace's web application. Built by `make web`, which also
+# copies it to where the service embeds it. The placeholder is tracked so the
+# service compiles without it.
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/internal/workspace/web/dist/*
+!/internal/workspace/web/dist/placeholder.txt

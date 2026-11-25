@@ -1,0 +1,3 @@
+event: stopped
+data: {"outcome":"secret_blocked","message":"Your question holds what looks like a credential (test-credential). Nothing was sent to the model provider.","retryAfterSeconds":0,"resetAt":""}
+

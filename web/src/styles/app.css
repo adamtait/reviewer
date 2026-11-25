@@ -1,0 +1,829 @@
+/* SPDX-License-Identifier: MIT */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --code-bg: #ffffff;
+  --text: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --link: #0969da;
+  --focus: #0969da;
+  --error: #b42318;
+  --added: #1a7f37;
+  --deleted: #b42318;
+  --renamed: #8250df;
+  --modified: #9a6700;
+  --target: #fff8c5;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --code-bg: #0d1117;
+    --text: #f0f6fc;
+    --muted: #9198a1;
+    --border: #3d444d;
+    --link: #4493f8;
+    --focus: #4493f8;
+    --error: #ff7b72;
+    --added: #3fb950;
+    --deleted: #ff7b72;
+    --renamed: #ab7df8;
+    --modified: #d29922;
+    --target: #3a2f00;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* A phone's browser enlarges text it judges too small, and does so for the
+   code and not for the line numbers beside it, which then no longer line up. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--sans);
+}
+
+a {
+  color: var(--link);
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 0 0 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 1rem 0 0.5rem;
+}
+
+code,
+kbd {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+kbd {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.35em;
+  background: var(--panel);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  min-height: 36px;
+  padding: 0 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+input[type='text'],
+input[type='search'],
+input[type='password'] {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--error);
+}
+
+.pad {
+  padding: 1rem;
+}
+
+.label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.badge {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0.5em;
+  font-size: 0.8rem;
+  margin-right: 0.35em;
+}
+
+.badge.outside {
+  border-color: var(--modified);
+  color: var(--modified);
+}
+
+/* The page frame */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.app-name {
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--text);
+  margin-right: auto;
+}
+
+main {
+  padding: 1rem;
+  min-width: 0;
+}
+
+.signin,
+.notfound,
+.pull-lists {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.signin form {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.refusal {
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.refusal p {
+  margin: 0.25rem 0 0;
+}
+
+/* The list of pull requests */
+
+.pull-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pull-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.pull-list a {
+  display: block;
+  padding: 0.6rem 0.75rem;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.pull-list a:hover .pull-title {
+  color: var(--link);
+}
+
+.pull-title {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pull-meta {
+  font-size: 0.85rem;
+}
+
+/* A pull request */
+
+.pull-view,
+.code-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pull-view.with-panel,
+.code-view.with-panel {
+  grid-template-columns: minmax(0, 1fr) 24rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+/* The description is its author's text, drawn under the rules in Markdown.tsx. */
+.description {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin: 0.75rem 0;
+  background: var(--panel);
+}
+
+.file-list ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-list li a {
+  display: block;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.file-list li.active a {
+  background: var(--panel);
+  box-shadow: inset 3px 0 0 var(--focus);
+}
+
+.status {
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.status-added {
+  color: var(--added);
+}
+
+.status-deleted {
+  color: var(--deleted);
+}
+
+.status-renamed {
+  color: var(--renamed);
+}
+
+.status-modified {
+  color: var(--modified);
+}
+
+.file-diff {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 1rem 0;
+  overflow: hidden;
+  scroll-margin-top: 0.5rem;
+}
+
+.file-header {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.4rem 0.75rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.file-path {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.file-body p {
+  margin: 0;
+}
+
+.code-pane,
+.merge-pane {
+  overflow-x: auto;
+}
+
+.merge-pane .cm-mergeView {
+  overflow: visible;
+}
+
+.code-header .back {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+}
+
+.code-view .code-pane {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* Search */
+
+.side-panel {
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  padding: 1rem;
+  min-width: 0;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.search-panel form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.search-panel .row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.search-panel .check {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.search-results ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.search-results li a {
+  display: block;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
+  text-decoration: none;
+}
+
+.match-place {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.match-text {
+  display: block;
+  color: var(--text);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Navigation: every result says where it came from */
+
+.index-status {
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.notice {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  margin: 0.5rem 0;
+  background: var(--panel);
+}
+
+.label {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  margin: 0;
+}
+
+.label-index {
+  border-color: var(--link);
+  color: var(--link);
+}
+
+.label-text_search,
+.label-external {
+  border-color: var(--modified);
+  color: var(--modified);
+}
+
+.label-none {
+  color: var(--muted);
+}
+
+.arrival {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.arrival .report,
+.lookup-results .report {
+  margin: 0.4rem 0 0;
+}
+
+.lookup-results .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.lookup-results h2 {
+  margin: 0;
+}
+
+.lookup-results section {
+  margin-top: 0.75rem;
+}
+
+.lookup-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.lookup-list li a {
+  display: block;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
+  text-decoration: none;
+}
+
+/* Markdown from a description or an answer */
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown pre {
+  overflow-x: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.markdown table {
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.5rem;
+}
+
+.markdown blockquote {
+  margin-left: 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+/* A link's address is always shown, so a reader sees where it leads. */
+.link-address {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* The assistant */
+
+/* Its panel is as tall as the window and does not scroll as a whole. The
+   conversation scrolls inside it and the question box stays below, where it
+   was when the reader last typed in it. An earlier layout floated the box
+   over the scrolling conversation, and the end of a long answer sat under it. */
+.side-panel-assistant {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.assistant {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.conversation {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.assistant .row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.assistant h2 {
+  margin: 0;
+}
+
+.exchanges {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.exchange {
+  border-top: 1px solid var(--border);
+  padding: 0.6rem 0;
+}
+
+.asked {
+  font-weight: 600;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.asked-about {
+  margin: 0.1rem 0 0.4rem;
+  font-size: 0.85rem;
+}
+
+.answer {
+  overflow-wrap: anywhere;
+}
+
+.stopped {
+  border: 1px solid var(--modified);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin: 0.4rem 0;
+}
+
+.stopped p {
+  margin: 0.25rem 0 0;
+}
+
+.notice.withheld {
+  border-color: var(--modified);
+}
+
+.excerpts {
+  font-size: 0.85rem;
+  margin: 0.4rem 0;
+}
+
+.excerpts summary {
+  cursor: pointer;
+}
+
+.excerpts ul {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.excerpts li {
+  padding: 0.15rem 0;
+  overflow-wrap: anywhere;
+}
+
+.excerpt-path {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+
+
+.model {
+  font-size: 0.8rem;
+  margin: 0.3rem 0 0;
+}
+
+.ask-form {
+  display: grid;
+  gap: 0.5rem;
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.ask-form textarea {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  resize: vertical;
+}
+
+.ask-form .hint {
+  font-size: 0.8rem;
+}
+
+/* The code a question is about stays in view above the question box. */
+.quoted {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+}
+
+.quoted pre {
+  margin: 0.3rem 0 0;
+  max-height: 9rem;
+  overflow: auto;
+  font-size: 0.8rem;
+}
+
+/* Sheets: a line's actions, and the shortcut help */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 10;
+}
+
+.sheet {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+.sheet-title {
+  margin: 0 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.sheet-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sheet-actions button {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.help table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.help th,
+.help td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.help .unavailable {
+  color: var(--muted);
+}
+
+.note {
+  font-size: 0.8rem;
+}
+
+/* The bottom bar is the touch route for moving through changes. */
+.bottom-bar {
+  display: none;
+}
+
+/* Narrow screens: one column, larger targets, panels over the page. */
+@media (max-width: 899px) {
+  main {
+    padding: 0.75rem;
+  }
+
+  .pull-view.with-panel,
+  .code-view.with-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A panel covers the window here, and scrolls inside it. It has to be told
+     to stretch: the wide layout aligns it to the top of its grid cell, and
+     that same alignment on a fixed box means "as tall as what is in it", so a
+     long panel ran off the foot of the screen with no way to reach the rest. */
+  .side-panel {
+    position: fixed;
+    inset: 0;
+    align-self: stretch;
+    max-height: none;
+    border-left: none;
+    z-index: 9;
+    background: var(--bg);
+  }
+
+  /* Its height comes from the window's edges here, keyboard included. */
+  .side-panel-assistant {
+    height: auto;
+  }
+
+  .sheet-backdrop {
+    place-items: end center;
+  }
+
+  .sheet {
+    width: 100vw;
+    border-radius: 12px 12px 0 0;
+    border-bottom: none;
+  }
+
+  button {
+    min-height: 44px;
+  }
+
+  .pull-view main {
+    padding-bottom: 4.5rem;
+  }
+
+  .bottom-bar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    z-index: 5;
+  }
+
+  .bottom-bar button {
+    flex: 1;
+  }
+
+  .who {
+    display: none;
+  }
+}

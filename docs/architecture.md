@@ -100,7 +100,7 @@ never run with a token that can write (ADR-0018).
 
 ## This repository's own CI
 
-Seven jobs, of which one matters to branch protection.
+Nine jobs, of which one matters to branch protection.
 
 - **test** — the full suite, over the two most recent Go releases × ubuntu and
   macos. It installs gitleaks, opengrep and osv-scanner via
@@ -111,6 +111,11 @@ Seven jobs, of which one matters to branch protection.
 - **lint**, **adrs**, **plugin**, **secrets** — staticcheck and licence headers;
   the append-only ADR check and the dependency inventory; the plugin's own Node
   test suite; a full-history secret scan.
+- **workspace-image** — builds the review workspace's container image, checks that it holds
+  the service and nothing else that can run, and starts it. See "The review workspace" below.
+- **web** — the review workspace's web application: lint, type-check, unit tests, and the
+  user journeys in a real browser at a desktop size and at a phone's width, under the same
+  content security policy the service sends.
 - **provenance** — `tools/audithistory` over what a branch adds, and over the whole
   history on `main`. Publishing a repository publishes its history, so this reads
   git objects rather than the working tree.
@@ -124,3 +129,39 @@ third-party binary is absent, and a skipped test is indistinguishable from a
 passing one in a green job — which is how the test asserting that no diff reaches
 a model provider after a credential is found sat here having never once run on a
 runner. With the variable set, a missing binary fails instead.
+
+## The review workspace
+
+A second binary, `cmd/workspace`, lives beside the CLI: a web application used beside GitHub's
+pull request page, with code navigation and an AI assistant. It is designed in
+[`designs/review-workspace.md`](designs/review-workspace.md), operated per
+[`workspace.md`](workspace.md), and on trial: its ADRs (0029 onward) are `Proposed`.
+
+Its packages live under `internal/workspace/`, apart from the CLI's, so that one rule can be stated
+about all of them: none starts a program. The CLI's analyzers exist to start programs; the service
+must never run code from a pull request. `internal/workspace/rules_test.go` holds the service to
+that in source, and the **workspace-image** job holds the image to it.
+
+The service is not part of a run of `reviewer`, shares no state with it, and stores nothing. A
+commit's files are read from GitHub as one archive, with the token of the user who asked, and held
+in memory under a byte limit (ADR-0030).
+
+| Package | What it does |
+| --- | --- |
+| `wsconfig` | Reads and checks the configuration and the secrets. |
+| `obs` | Writes the log, one line per request, with credentials removed. |
+| `identity`, `access` | Sign-in, and "can this user read this repository", which is GitHub's answer. |
+| `source` | Unpacks a commit's archive into memory; the cache; text search. |
+| `catalog` | Lists and describes pull requests. |
+| `navigation`, `navigation/scip` | Finds a commit's CI-built index, decodes it, checks it against the commit's files, and answers definition and reference lookups by the design's five rules. |
+| `api`, `api/apitypes` | The route table, the middleware every request passes through, the handlers, and the request and response bodies. |
+| `scan` | Runs the secrets scanner over what is about to be sent to a model provider, in one fixed way that content cannot change. |
+| `gateway` | The one way out to a model provider: scans, calls the repository's provider, runs the tools the model asks for, applies the limits. |
+| `assistant` | Builds a question for the gateway, with the six read-only tools bound to the commit. |
+| `web` | Embeds the built web application and serves it under a content security policy. |
+| `testgithub` | A stand-in for GitHub's API, for the tests. |
+
+The web application is in `web/`, outside the Go module's packages: React, with CodeMirror for
+code and diffs. It holds no data of its own. Everything it shows it asks the service's API for, so
+the page itself can be served to anyone. Its types mirror `api/apitypes` by hand, and the recorded
+responses under `internal/workspace/api/testdata/examples/` are checked by both sides' tests.

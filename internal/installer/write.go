@@ -26,6 +26,7 @@ import (
 //go:embed templates/config.yaml.tmpl templates/review.yml.tmpl
 //go:embed templates/review.gitignore.tmpl templates/env.example.tmpl
 //go:embed templates/SKILL.md.tmpl templates/review.sh.tmpl
+//go:embed templates/review-index.yml.tmpl
 var templates embed.FS
 
 // checksumPlaceholder is what the generated workflow carries where the release
@@ -47,6 +48,11 @@ const versionPlaceholder = "0.0.0-REPLACE-WITH-A-RELEASE-VERSION"
 // node >= 22; pinning the major here rather than reading .nvmrc keeps the
 // generated workflow honest about what was actually verified.
 const nodeVersion = "22"
+
+// indexerVersion is the scip-typescript release the index workflow runs. Pinned
+// because the workspace's index reader is tested against this version's output:
+// a newer indexer may write a form the reader has not seen (ADR-0034).
+const indexerVersion = "0.6.2"
 
 // Rendered is one file's full content, ready to write.
 type Rendered struct {
@@ -122,6 +128,8 @@ func renderOne(path string, data any) ([]byte, error) {
 		name = "review.gitignore.tmpl"
 	case ".github/workflows/review.yml":
 		name = "review.yml.tmpl"
+	case IndexWorkflowPath:
+		name = "review-index.yml.tmpl"
 	case ".review/.env.example":
 		name = "env.example.tmpl"
 	case ".agent/skills/code-review/SKILL.md":
@@ -225,7 +233,15 @@ func manualSteps(p Plan, pluginVersion string) []string {
 			installCommand(p.Detected.PackageManager, d)))
 	}
 	if p.Detected.PackageManager == "bun" {
-		steps = append(steps, "add a step installing bun to .github/workflows/review.yml: "+
+		// Every generated workflow that installs dependencies, not only the review:
+		// the index workflow runs the same install and fails the same way.
+		targets := ".github/workflows/review.yml"
+		for _, f := range p.Files {
+			if f.Path == IndexWorkflowPath {
+				targets += " and " + IndexWorkflowPath
+			}
+		}
+		steps = append(steps, "add a step installing bun to "+targets+": "+
 			"it is not on a hosted runner and actions/setup-node cannot install it")
 	}
 	for _, f := range p.Files {
@@ -297,6 +313,7 @@ type data struct {
 
 	NeedsNode      bool
 	NodeVersion    string
+	IndexerVersion string
 	PackageManager string
 	InstallCommand string
 	// CacheKey is what actions/setup-node is told to cache, or empty when it has
@@ -355,6 +372,7 @@ func templateData(p Plan, pluginVersion string) data {
 
 		NeedsNode:        len(p.DevDependencies) > 0,
 		NodeVersion:      nodeVersion,
+		IndexerVersion:   indexerVersion,
 		PackageManager:   packageManagerOrNpm(d.PackageManager),
 		ReviewerVersion:  workflowVersion(pluginVersion),
 		ReviewerChecksum: checksumPlaceholder,

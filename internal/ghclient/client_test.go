@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,6 +139,12 @@ func TestErrorMapping(t *testing.T) {
 			`{"message":"API rate limit exceeded"}`, nil, "rate limit",
 		},
 		{
+			// Refused, as distinct from rate limited: a token that lacks a
+			// permission or is waiting for an organisation owner's approval.
+			"forbidden", http.StatusForbidden,
+			`{"message":"Resource not accessible by personal access token"}`, ErrForbidden, "403 Forbidden",
+		},
+		{
 			// GitHub's own message, not the whole body: an error body can be long
 			// and is not worth pasting into a CI log.
 			"validation failed", http.StatusUnprocessableEntity,
@@ -239,5 +246,103 @@ func TestNextLink(t *testing.T) {
 		if got := nextLink(header); got != want {
 			t.Errorf("nextLink(%q) = %q, want %q", header, got, want)
 		}
+	}
+}
+
+// The workspace asks two things of a repository before showing any of it: can
+// this token see it, and is it private.
+func TestGetRepo(t *testing.T) {
+	var asked string
+	_, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Path
+		fmt.Fprint(w, `{"full_name":"o/r","private":true,"visibility":"private"}`)
+	})
+	info, err := c.GetRepo(context.Background(), Repo{"o", "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != "/repos/o/r" {
+		t.Errorf("asked for %q, want /repos/o/r", asked)
+	}
+	if !info.Private || info.Visibility != "private" || info.FullName != "o/r" {
+		t.Errorf("info = %+v", info)
+	}
+}
+
+// A rate limit is still reported in its own words and is not ErrForbidden: the
+// caller's response to "slow down" and to "no" are different.
+func TestARateLimitIsNotForbidden(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+	})
+	_, err := c.GetRepo(context.Background(), Repo{"o", "r"})
+	if err == nil || errors.Is(err, ErrForbidden) {
+		t.Fatalf("want a rate limit error that is not ErrForbidden, got %v", err)
+	}
+}
+
+func TestPullRequestCarriesWhatTheWorkspaceShows(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"number":7,"title":"t","body":"why","user":{"login":"octocat"},`+
+			`"created_at":"2026-11-01T10:00:00Z","html_url":"http://example.invalid/o/r/pull/7"}`)
+	})
+	pr, err := c.GetPullRequest(context.Background(), Repo{"o", "r"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Body != "why" || pr.User.Login != "octocat" || pr.CreatedAt.IsZero() || pr.HTMLURL == "" {
+		t.Errorf("pull request = %+v", pr)
+	}
+}
+
+func TestListOpenPullRequestsStopsAtTheLimit(t *testing.T) {
+	var asked []string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.RawQuery)
+		page := r.URL.Query().Get("page")
+		if page == "" {
+			page = "1"
+		}
+		first := map[string]int{"1": 1, "2": 101, "3": 201}[page]
+		var items []string
+		for n := first; n < first+100; n++ {
+			items = append(items, fmt.Sprintf(`{"number":%d}`, n))
+		}
+		next, _ := strconv.Atoi(page)
+		w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/pulls?page=%d>; rel="next"`, srv.URL, next+1))
+		_, _ = w.Write([]byte("[" + strings.Join(items, ",") + "]"))
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "test-token", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pulls, more, err := c.ListOpenPullRequests(context.Background(), Repo{Owner: "o", Name: "r"}, 150)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pulls) != 150 || !more || pulls[149].Number != 150 {
+		t.Errorf("%d pull requests, more %v; want 150 and true", len(pulls), more)
+	}
+	if len(asked) != 2 {
+		t.Errorf("%d pages were read; the limit was reached on the second", len(asked))
+	}
+	if !strings.Contains(asked[0], "state=open") || !strings.Contains(asked[0], "per_page=100") {
+		t.Errorf("first request: %s", asked[0])
+	}
+}
+
+func TestListOpenPullRequestsSaysWhenItHasThemAll(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"number":7},{"number":3}]`))
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, "test-token", "")
+	pulls, more, err := c.ListOpenPullRequests(context.Background(), Repo{Owner: "o", Name: "r"}, 2)
+	if err != nil || len(pulls) != 2 || more {
+		t.Errorf("pulls %d, more %v, err %v; want 2, false, nil", len(pulls), more, err)
 	}
 }

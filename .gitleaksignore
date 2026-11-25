@@ -1,0 +1,17 @@
+# Known false positives in this repository's own history, for the scan that
+# guards it (.gitleaks.toml, ADR-0010).
+#
+# Each line is one finding: commit, file, rule, line. Nothing here is a secret
+# or a hostname. The "internal-hostname" rule matches any word followed by a
+# dot and "local", and these five are a Go struct field that was named `Local`,
+# read through a variable. The field has since been renamed, so the code no
+# longer matches; these entries cover the two commits that carry the old name.
+#
+# Add to this file only for a finding that has been read and is not what its
+# rule is for. A real credential or hostname is removed from history instead.
+
+b178c5ce28139afa0c3812c15abf78c534300b2a:internal/workspace/navigation/scip/symbol_test.go:internal-hostname:42
+b178c5ce28139afa0c3812c15abf78c534300b2a:internal/workspace/navigation/scip/symbol_test.go:internal-hostname:50
+b178c5ce28139afa0c3812c15abf78c534300b2a:internal/workspace/navigation/scip/symbol_test.go:internal-hostname:96
+b71af2fa747052468ec20a74491005c38715c3b0:internal/workspace/navigation/query.go:internal-hostname:167
+b71af2fa747052468ec20a74491005c38715c3b0:internal/workspace/navigation/query.go:internal-hostname:172

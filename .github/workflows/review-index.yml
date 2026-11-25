@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds a navigation index of this repository's TypeScript and saves it as a
+# workflow artifact, for the review workspace (docs/workspace.md).
+#
+# This is the index workflow `reviewer init` writes into a repository, adapted
+# to this one. The installed workflow indexes a project whose tsconfig.json is
+# at the repository root. This repository has two TypeScript projects and
+# neither is at the root, so both are named, and the indexer is run from the
+# root so that every path it records is a path from the root: the workspace
+# drops any path that is not a file of the commit.
+#
+# It is here so that the workspace can be tried on this repository's own pull
+# requests with a real index built by GitHub's runners. It reads the
+# repository and nothing else, and uses no secret.
+
+name: review-index
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # On a push, the default checkout is the pushed commit.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            plugins/typescript/package-lock.json
+            web/package-lock.json
+
+      # The indexer reads each project's dependencies for their types.
+      - run: npm ci
+        working-directory: plugins/typescript
+      # No package's install script is run, as in the image's build.
+      - run: npm ci --ignore-scripts
+        working-directory: web
+
+      - run: npx --yes @sourcegraph/scip-typescript@0.6.2 index plugins/typescript web --output index.scip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-index
+          path: index.scip
+          if-no-files-found: error

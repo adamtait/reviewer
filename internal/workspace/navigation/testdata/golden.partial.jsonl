@@ -1,0 +1,54 @@
+{"character": 9, "label": "text_search", "line": 0, "path": "src/cart.ts", "targets": []}
+{"character": 16, "label": "text_search", "line": 0, "path": "src/cart.ts", "targets": []}
+{"character": 27, "label": "text_search", "line": 0, "path": "src/cart.ts", "targets": []}
+{"character": 12, "label": "text_search", "line": 1, "path": "src/cart.ts", "targets": []}
+{"character": 21, "label": "text_search", "line": 1, "path": "src/cart.ts", "targets": []}
+{"character": 9, "label": "text_search", "line": 2, "path": "src/cart.ts", "targets": []}
+{"character": 20, "label": "text_search", "line": 2, "path": "src/cart.ts", "targets": []}
+{"character": 13, "label": "definition", "line": 4, "path": "src/cart.ts", "targets": [["src/cart.ts", 4, 13]]}
+{"character": 19, "label": "definition", "line": 5, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 26, "label": "text_search", "line": 5, "path": "src/cart.ts", "targets": []}
+{"character": 2, "label": "definition", "line": 7, "path": "src/cart.ts", "targets": [["src/cart.ts", 7, 2]]}
+{"character": 14, "label": "definition", "line": 7, "path": "src/cart.ts", "targets": [["src/cart.ts", 7, 14]]}
+{"character": 21, "label": "text_search", "line": 7, "path": "src/cart.ts", "targets": []}
+{"character": 9, "label": "index", "line": 8, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 17, "label": "index", "line": 8, "path": "src/cart.ts", "targets": [["src/cart.ts", 7, 14]]}
+{"character": 2, "label": "definition", "line": 11, "path": "src/cart.ts", "targets": [["src/cart.ts", 11, 2]]}
+{"character": 11, "label": "text_search", "line": 11, "path": "src/cart.ts", "targets": []}
+{"character": 8, "label": "definition", "line": 12, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 14, "label": "text_search", "line": 12, "path": "src/cart.ts", "targets": []}
+{"character": 20, "label": "text_search", "line": 12, "path": "src/cart.ts", "targets": []}
+{"character": 15, "label": "definition", "line": 13, "path": "src/cart.ts", "targets": [["src/cart.ts", 13, 15]]}
+{"character": 28, "label": "index", "line": 13, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 6, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 12, "label": "text_search", "line": 14, "path": "src/cart.ts", "targets": []}
+{"character": 16, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 21, "label": "index", "line": 14, "path": "src/cart.ts", "targets": [["src/cart.ts", 13, 15]]}
+{"character": 11, "label": "text_search", "line": 16, "path": "src/cart.ts", "targets": []}
+{"character": 15, "label": "text_search", "line": 16, "path": "src/cart.ts", "targets": []}
+{"character": 23, "label": "index", "line": 16, "path": "src/cart.ts", "targets": [["src/cart.ts", 12, 8]]}
+{"character": 2, "label": "definition", "line": 19, "path": "src/cart.ts", "targets": [["src/cart.ts", 19, 2]]}
+{"character": 11, "label": "text_search", "line": 20, "path": "src/cart.ts", "targets": []}
+{"character": 15, "label": "external", "line": 20, "package": "typescript 6.0.3", "path": "src/cart.ts", "targets": []}
+{"character": 27, "label": "index", "line": 20, "path": "src/cart.ts", "targets": [["src/cart.ts", 5, 19]]}
+{"character": 33, "label": "external", "line": 20, "package": "typescript 6.0.3", "path": "src/cart.ts", "targets": []}
+{"character": 9, "label": "external", "line": 0, "package": "tiny-format 2.1.0", "path": "src/receipt.ts", "targets": []}
+{"character": 23, "label": "external", "line": 0, "package": "tiny-format 2.1.0", "path": "src/receipt.ts", "targets": []}
+{"character": 9, "label": "index", "line": 1, "path": "src/receipt.ts", "targets": [["src/cart.ts", 4, 13]]}
+{"character": 21, "label": "index", "line": 1, "path": "src/receipt.ts", "targets": [["src/cart.ts", 0, 0]]}
+{"character": 14, "label": "text_search", "line": 2, "path": "src/receipt.ts", "targets": []}
+{"character": 27, "label": "text_search", "line": 2, "path": "src/receipt.ts", "targets": []}
+{"character": 16, "label": "definition", "line": 4, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 4, 16]]}
+{"character": 24, "label": "definition", "line": 4, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 4, 24]]}
+{"character": 32, "label": "text_search", "line": 4, "path": "src/receipt.ts", "targets": []}
+{"character": 8, "label": "definition", "line": 5, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 5, 8]]}
+{"character": 19, "label": "index", "line": 5, "path": "src/receipt.ts", "targets": [["src/cart.ts", 7, 2]]}
+{"character": 24, "label": "index", "line": 5, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 4, 24]]}
+{"character": 8, "label": "definition", "line": 6, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 6, 8]]}
+{"character": 16, "label": "index", "line": 6, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 5, 8]]}
+{"character": 21, "label": "index", "line": 6, "path": "src/receipt.ts", "targets": [["src/cart.ts", 11, 2]]}
+{"character": 12, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 5, 8]]}
+{"character": 17, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/cart.ts", 19, 2]]}
+{"character": 28, "label": "external", "line": 7, "package": "tiny-format 2.1.0", "path": "src/receipt.ts", "targets": []}
+{"character": 35, "label": "index", "line": 7, "path": "src/receipt.ts", "targets": [["src/receipt.ts", 6, 8]]}
+{"character": 41, "label": "text_search", "line": 7, "path": "src/receipt.ts", "targets": []}

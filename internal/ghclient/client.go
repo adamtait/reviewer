@@ -46,6 +46,27 @@ type PullRequest struct {
 	Base   Ref    `json:"base"`
 	// UpdatedAt drives the poller's watermark.
 	UpdatedAt time.Time `json:"updated_at"`
+	// Body, User, CreatedAt and HTMLURL are what the review workspace shows at
+	// the top of a pull request: its description, who opened it and when, and
+	// where it lives on GitHub.
+	Body      string    `json:"body"`
+	User      User      `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
+	HTMLURL   string    `json:"html_url"`
+	// ChangedFiles is GitHub's count of the files the pull request changes. It
+	// is present when one pull request is read and absent from a list. The
+	// files call stops at 3,000, so this is how a caller knows it was cut short.
+	ChangedFiles int `json:"changed_files"`
+}
+
+// RepoInfo is what must be known about a repository before anything of it is
+// shown: that this token can see it at all, and that it is not public.
+type RepoInfo struct {
+	FullName string `json:"full_name"`
+	// Private is false for a public repository, which every GitHub token can
+	// read. The workspace refuses to serve one for that reason.
+	Private    bool   `json:"private"`
+	Visibility string `json:"visibility"`
 }
 
 // Ref is one end of a pull request.
@@ -93,6 +114,9 @@ type ChangedFile struct {
 	Filename string `json:"filename"`
 	Status   string `json:"status"`
 	Patch    string `json:"patch"`
+	// PreviousFilename is set for a renamed file: where its old version is to
+	// be read from.
+	PreviousFilename string `json:"previous_filename"`
 }
 
 // Client is the read surface. Writes are added in PR-18 as a separate interface,
@@ -114,6 +138,22 @@ var ErrNotFound = errors.New("not found, or not visible to this token")
 
 // ErrUnauthorized means the token is missing or rejected.
 var ErrUnauthorized = errors.New("the GitHub token was rejected")
+
+// ErrForbidden means GitHub understood the token and refused the request: the
+// token lacks a permission, is still waiting for an organisation owner's
+// approval, or is blocked by the organisation's policy. A rate limit is not
+// this; it is reported in its own words.
+var ErrForbidden = errors.New("GitHub refused the request")
+
+// statusError reports a failed request in the same words as before ErrForbidden
+// existed, while letting a caller ask errors.Is which kind it was.
+type statusError struct {
+	message string
+	kind    error
+}
+
+func (e *statusError) Error() string        { return e.message }
+func (e *statusError) Is(target error) bool { return target == e.kind }
 
 // REST is the HTTP implementation.
 type REST struct {
@@ -167,6 +207,15 @@ func (c *REST) Viewer(ctx context.Context) (User, error) {
 	return u, err
 }
 
+// GetRepo reads one repository as this token sees it. It is a method on REST and
+// not part of Client: reviewing a pull request never needs it, and only the
+// review workspace asks.
+func (c *REST) GetRepo(ctx context.Context, repo Repo) (RepoInfo, error) {
+	var info RepoInfo
+	err := c.get(ctx, "/repos/"+repo.String(), &info)
+	return info, err
+}
+
 func (c *REST) GetPullRequest(ctx context.Context, repo Repo, number int) (PullRequest, error) {
 	var pr PullRequest
 	err := c.get(ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, number), &pr)
@@ -179,6 +228,29 @@ func (c *REST) ListPullRequests(ctx context.Context, repo Repo, state string) ([
 	}
 	return paginate[PullRequest](ctx, c, fmt.Sprintf("/repos/%s/pulls?state=%s&sort=updated&direction=desc",
 		repo, url.QueryEscape(state)))
+}
+
+// ListOpenPullRequests returns up to max open pull requests, most recently
+// updated first, and whether there were more.
+//
+// It is bounded where ListPullRequests is not because it is called while a
+// person waits: a repository with thousands of open pull requests would
+// otherwise cost one round trip per hundred before anything was shown.
+func (c *REST) ListOpenPullRequests(ctx context.Context, repo Repo, max int) (pulls []PullRequest, more bool, err error) {
+	pulls, err = paginateUntil[PullRequest](ctx, c,
+		fmt.Sprintf("/repos/%s/pulls?state=open&sort=updated&direction=desc", repo),
+		func(PullRequest) bool {
+			if max <= 0 {
+				more = true
+				return true
+			}
+			max--
+			return false
+		})
+	if err != nil {
+		return nil, false, err
+	}
+	return pulls, more, nil
 }
 
 // ListPullRequestsUpdatedSince returns the pull requests touched in a window,
@@ -332,6 +404,11 @@ func (c *REST) do(ctx context.Context, method, pathOrURL string, body any, into 
 		return "", fmt.Errorf("%w (%s %s)", ErrNotFound, method, redact(target))
 	case resp.StatusCode == http.StatusForbidden && strings.Contains(string(raw), "rate limit"):
 		return "", fmt.Errorf("GitHub rate limit reached; reset at %s", resp.Header.Get("X-RateLimit-Reset"))
+	case resp.StatusCode == http.StatusForbidden:
+		return "", &statusError{
+			message: fmt.Sprintf("%s %s: %s: %s", method, redact(target), resp.Status, apiMessage(raw)),
+			kind:    ErrForbidden,
+		}
 	case resp.StatusCode >= 300:
 		// The message, not the whole body: a GitHub error body can be long and is
 		// not worth pasting into a run log.

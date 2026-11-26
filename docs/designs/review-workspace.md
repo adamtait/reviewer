@@ -970,6 +970,7 @@ font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; fo
 | Ask about the selection or line | `a` | Tap the line number, then "Ask" |
 | Search code | `/` | Search button |
 | Toggle diff and new code | `d` | Toggle in the header |
+| Close or open this file | `o` | Tap the file's name |
 | Comment on GitHub at this line | `c` | Tap the line number, then "Comment on GitHub" |
 | Switch pull request | `g` then `p` | Pull request list |
 | Return to the diff | `Esc` | "Back to diff" |

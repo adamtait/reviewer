@@ -45,7 +45,8 @@ export interface PullViewProps {
 }
 
 const always: readonly Action[] = [
-  'nextChange', 'prevChange', 'nextFile', 'prevFile', 'definition', 'references', 'search', 'toggleDiff', 'comment',
+  'nextChange', 'prevChange', 'nextFile', 'prevFile', 'definition', 'references', 'search', 'toggleDiff', 'toggleFile',
+  'comment',
   'switchPull', 'back', 'help',
 ];
 
@@ -287,6 +288,26 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
           },
           toggleDiff: () => {
             setMode((m) => (m === 'diff' ? 'new' : 'diff'));
+          },
+          toggleFile: () => {
+            const target = files[active];
+            if (!target) return;
+            if (closed.has(target.path)) {
+              openFile(target.path);
+              const pane = panes.current.get(target.path);
+              focusWhenReady.current = pane ? null : target.path;
+              pane?.focus();
+              return;
+            }
+            toggleFile(target.path);
+            // The code with the keyboard's focus is about to be taken off the
+            // page. Focus moves to the file's name, so the keys go on working
+            // from this file, and the file is brought into view if its top
+            // was above the screen.
+            const section = document.querySelector<HTMLElement>(`[data-path="${CSS.escape(target.path)}"]`);
+            if (!section) return;
+            section.querySelector<HTMLElement>('.file-toggle')?.focus({ preventScroll: true });
+            if (section.getBoundingClientRect().top < 0) section.scrollIntoView({ block: 'start' });
           },
           comment: () => {
             const target = files[active];

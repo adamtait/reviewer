@@ -1018,6 +1018,28 @@ test.describe('shortcuts', () => {
     await expect(page.locator('[data-path="src/cart.ts"] .cm-editor.cm-focused')).toHaveCount(1);
   });
 
+  test('o closes the file the keyboard is in, and opens it again', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    await fakeApi(page);
+    await page.goto(pull);
+    const cart = page.locator('[data-path="src/cart.ts"]');
+    const name = cart.getByRole('button', { name: /src\/cart\.ts/ });
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+
+    await page.keyboard.press(']');
+    await expect(cart.locator('.cm-editor.cm-focused')).toHaveCount(1);
+
+    await page.keyboard.press('o');
+    await expect(name).toHaveAttribute('aria-expanded', 'false');
+    await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
+    // The keyboard stays on this file, at its name.
+    await expect(name).toBeFocused();
+
+    await page.keyboard.press('o');
+    await expect(name).toHaveAttribute('aria-expanded', 'true');
+    await expect(cart.locator('.cm-editor.cm-focused')).toHaveCount(1);
+  });
+
   test('j and k pass a closed file by', async ({ page }) => {
     test.skip(narrow(page), 'a keyboard');
     await fakeApi(page);

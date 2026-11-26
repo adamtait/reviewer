@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { type Ref, useEffect, useRef, useState } from 'react';
+import { type Ref, useEffect, useId, useRef, useState } from 'react';
 
 import { ApiFailure, api, isNotFound } from '../api/client';
 import type { ChangedFile, File, PullView } from '../api/types';
@@ -82,6 +82,13 @@ export interface FileDiffProps {
   tapMenu?: boolean;
   /** The reader clicked or tabbed into this file: it is now the one the keyboard acts on. */
   onActivate?: () => void;
+  /**
+   * Whether the file's code is shown. A closed file's code is taken off the
+   * page, so it has no pane, and moving through the changes passes it by.
+   */
+  open?: boolean;
+  /** The reader clicked or tapped the file's name, to close it or open it again. */
+  onToggle?: () => void;
   ref?: Ref<PaneHandle>;
 }
 
@@ -99,11 +106,18 @@ export function FileDiff({
   onSymbolAction,
   tapMenu,
   onActivate,
+  open = true,
+  onToggle,
   ref,
 }: FileDiffProps) {
   const [state, setState] = useState<State>({ phase: 'waiting' });
   const [attempt, setAttempt] = useState(0);
   const [visible, setVisible] = useState(eager === true || typeof IntersectionObserver === 'undefined');
+  const bodyId = useId();
+  // The line the address names is shown once. Opening the file again shows
+  // its top, where the reader just tapped, and does not jump back to that line.
+  const [lineShown, setLineShown] = useState<number | undefined>(undefined);
+  const paneLine = line === lineShown ? undefined : line;
   const section = useRef<HTMLElement>(null);
 
   // A large pull request has hundreds of files. Each is read when it comes
@@ -154,21 +168,46 @@ export function FileDiff({
     : undefined;
 
   return (
-    <section className="file-diff" ref={section} data-path={file.path} aria-label={file.path} onFocus={onActivate}>
-      <header className="file-header">
-        <span className={`status status-${file.status}`}>{file.status}</span>
-        <span className="file-path">
-          {file.status === 'renamed' && file.previousPath ? (
-            <>
-              <span className="muted">{file.previousPath} → </span>
-              {file.path}
-            </>
-          ) : (
-            file.path
-          )}
-        </span>
-      </header>
-      <div className="file-body">{body()}</div>
+    <section
+      className={`file-diff${open ? '' : ' closed'}`}
+      ref={section}
+      data-path={file.path}
+      aria-label={file.path}
+      onFocus={onActivate}
+    >
+      <h3 className="file-header">
+        <button
+          type="button"
+          className="file-toggle"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => {
+            // Not every browser focuses a button it clicks, so this file is
+            // made the active one here as well as on focus.
+            onActivate?.();
+            if (open) setLineShown(line);
+            onToggle?.();
+          }}
+        >
+          <span className="file-chevron" aria-hidden="true">
+            {open ? '▾' : '▸'}
+          </span>
+          <span className={`status status-${file.status}`}>{file.status}</span>
+          <span className="file-path">
+            {file.status === 'renamed' && file.previousPath ? (
+              <>
+                <span className="muted">{file.previousPath} → </span>
+                {file.path}
+              </>
+            ) : (
+              file.path
+            )}
+          </span>
+        </button>
+      </h3>
+      <div className="file-body" id={bodyId} hidden={!open}>
+        {open ? body() : null}
+      </div>
     </section>
   );
 
@@ -220,7 +259,7 @@ export function FileDiff({
           path={file.path}
           text={newText}
           side="new"
-          line={line}
+          line={paneLine}
           onLineAction={act}
           onSymbolAction={symbol}
           tapMenu={tapMenu}
@@ -234,7 +273,7 @@ export function FileDiff({
         oldText={oldText}
         newText={newText}
         layout={layout}
-        line={line}
+        line={paneLine}
         onLineAction={act}
         onSymbolAction={symbol}
         tapMenu={tapMenu}

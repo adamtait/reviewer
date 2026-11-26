@@ -14,6 +14,7 @@ export type Action =
   | 'ask'
   | 'search'
   | 'toggleDiff'
+  | 'toggleFile'
   | 'comment'
   | 'switchPull'
   | 'back'
@@ -38,6 +39,7 @@ export const keymap: readonly Binding[] = [
   { action: 'ask', keys: ['a'], label: 'Ask about the selection or line', touch: 'Tap the line number, then "Ask"' },
   { action: 'search', keys: ['/'], label: 'Search code', touch: 'Search button' },
   { action: 'toggleDiff', keys: ['d'], label: 'Toggle diff and new code', touch: 'Toggle in the header' },
+  { action: 'toggleFile', keys: ['o'], label: 'Close or open this file', touch: "Tap the file's name" },
   { action: 'comment', keys: ['c'], label: 'Comment on GitHub at this line', touch: 'Tap the line number, then "Comment on GitHub"' },
   { action: 'switchPull', keys: ['g', 'p'], label: 'Switch pull request', touch: 'Pull request list' },
   { action: 'back', keys: ['Escape'], label: 'Return to the diff', touch: '"Back to diff"' },

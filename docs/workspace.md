@@ -579,6 +579,11 @@ What a user should know:
   each a link; a list of more than six files is closed until opened.
 - **The diff is drawn between the pull request's head and its merge base**, in two columns on a
   wide screen and one on a narrow one. Each file is read when it nears the screen.
+- **Clicking or tapping the bar with a file's name closes the file**, and doing so again opens it.
+  `o` does the same for the file the keyboard is in.
+  Moving from change to change passes a closed file by; going to it from the list of changed files,
+  with `]` or `[`, or by its address opens it. Which files are closed is not kept: reloading, or
+  leaving the pull request's page and coming back, opens every file again.
 - **Commenting happens on GitHub.** Clicking or tapping a line number offers "Comment on GitHub",
   which opens GitHub's "Files changed" page at that line. On a narrow screen a removed line has no
   line number of its own, so this is offered for lines of the new file only.

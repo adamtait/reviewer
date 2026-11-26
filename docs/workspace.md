@@ -582,8 +582,9 @@ What a user should know:
 - **Clicking or tapping the bar with a file's name closes the file**, and doing so again opens it.
   `o` does the same for the file the keyboard is in.
   Moving from change to change passes a closed file by; going to it from the list of changed files,
-  with `]` or `[`, or by its address opens it. Which files are closed is not kept: reloading, or
-  leaving the pull request's page and coming back, opens every file again.
+  with `]` or `[`, or by its address opens it. Which files are closed is kept for the browser tab:
+  they stay closed after going to a definition and coming back, or a reload. A new tab opens every
+  file.
 - **Commenting happens on GitHub.** Clicking or tapping a line number offers "Comment on GitHub",
   which opens GitHub's "Files changed" page at that line. On a narrow screen a removed line has no
   line number of its own, so this is offered for lines of the new file only.

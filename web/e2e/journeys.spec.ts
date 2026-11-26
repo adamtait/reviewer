@@ -149,6 +149,40 @@ test.describe('journey 1: read the description, then the diff', () => {
     await expect(cart).toContainText('return sum(prices);');
   });
 
+  test('a closed file stays closed after leaving the page and coming back, and after a reload', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(pull);
+
+    const cart = page.locator('[data-path="src/cart.ts"]');
+    const name = cart.getByRole('button', { name: /src\/cart\.ts/ });
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await (narrow(page) ? name.tap() : name.click());
+    await expect(name).toHaveAttribute('aria-expanded', 'false');
+
+    // Away to the list of pull requests and back.
+    if (narrow(page)) {
+      await page.getByRole('link', { name: 'Pull requests' }).tap();
+    } else {
+      await page.keyboard.press('g');
+      await page.keyboard.press('p');
+    }
+    await expect(page).toHaveURL('/');
+    await page.goBack();
+    await expect(page.locator('[data-path="src/tax.ts"]')).toContainText('export const rate = 0.2;');
+    await expect(name).toHaveAttribute('aria-expanded', 'false');
+    await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.locator('[data-path="src/tax.ts"]')).toContainText('export const rate = 0.2;');
+    await expect(name).toHaveAttribute('aria-expanded', 'false');
+
+    // Opened again, it stays open.
+    await (narrow(page) ? name.tap() : name.click());
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await page.reload();
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+  });
+
   test('going to a closed file from the list opens it', async ({ page }) => {
     test.skip(narrow(page), 'the keyboard focus is checked');
     await fakeApi(page);

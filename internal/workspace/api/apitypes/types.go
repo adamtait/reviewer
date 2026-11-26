@@ -108,8 +108,9 @@ type ChangedFile struct {
 type PullView struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
-	// Body is the description as its author wrote it. It is shown as plain
-	// text and never rendered.
+	// Body is the description as its author wrote it. The page draws it as
+	// GitHub-flavoured Markdown, through an allowlist; it is never put into the
+	// page as HTML.
 	Body   string `json:"body"`
 	Author string `json:"author"`
 	// State is "open" or "closed". A merged pull request is closed.

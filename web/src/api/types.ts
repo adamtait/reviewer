@@ -72,7 +72,7 @@ export interface ChangedFile {
 export interface PullView {
   number: number;
   title: string;
-  /** As its author wrote it. Untrusted text: shown as text, never as HTML. */
+  /** As its author wrote it. Untrusted text: drawn as GitHub-flavoured Markdown through an allowlist, never put into the page as HTML. */
   body: string;
   author: string;
   state: string;

@@ -69,6 +69,12 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
   const [active, setActive] = useState(0);
   const narrow = useNarrow();
   const panes = useRef(new Map<string, PaneHandle>());
+  // The files the reader has closed by tapping their names. Kept while this
+  // page is open; reloading or leaving it opens every file again.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set());
+  // A file gone to before its code was on the page: its editor takes focus
+  // once it is made, unless the reader has moved on by then.
+  const focusWhenReady = useRef<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -95,25 +101,47 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
     document.querySelector(`[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start' });
   }, []);
 
+  const toggleFile = useCallback((path: string) => {
+    setClosed((now) => {
+      const next = new Set(now);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+  }, []);
+
+  // Going to a file is asking to read it, so a closed file is opened.
+  const openFile = useCallback((path: string) => {
+    setClosed((now) => {
+      if (!now.has(path)) return now;
+      const next = new Set(now);
+      next.delete(path);
+      return next;
+    });
+  }, []);
+
   // The address can name a file. Go to it once the list is known.
   useEffect(() => {
     if (!file || files.length === 0) return;
     const index = files.findIndex((f) => f.path === file);
     if (index < 0) return;
     setActive(index);
+    openFile(file);
     scrollTo(file);
-  }, [file, files, scrollTo]);
+  }, [file, files, openFile, scrollTo]);
 
   const goToFile = useCallback(
     (index: number) => {
       const target = files[index];
       if (!target) return;
       setActive(index);
+      openFile(target.path);
       navigate(href({ view: 'pull', owner, repo, number, file: target.path }), { replace: true });
       scrollTo(target.path);
-      panes.current.get(target.path)?.focus();
+      const pane = panes.current.get(target.path);
+      focusWhenReady.current = pane ? null : target.path;
+      pane?.focus();
     },
-    [files, owner, repo, number, scrollTo],
+    [files, owner, repo, number, openFile, scrollTo],
   );
 
   const moveChange = useCallback(
@@ -121,7 +149,8 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
       const here = files[active];
       if (here && panes.current.get(here.path)?.moveChange(direction, 'cursor')) return;
       // No further change in this file: go on to the next file that has one,
-      // or failing that, to the next file.
+      // or failing that, to the next file the reader has not closed. A closed
+      // file has no pane, so the first loop passes it by too.
       for (let i = active + direction; i >= 0 && i < files.length; i += direction) {
         const next = files[i];
         if (!next) break;
@@ -130,9 +159,15 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
           return;
         }
       }
-      goToFile(active + direction);
+      for (let i = active + direction; i >= 0 && i < files.length; i += direction) {
+        const next = files[i];
+        if (next && !closed.has(next.path)) {
+          goToFile(i);
+          return;
+        }
+      }
     },
-    [files, active, goToFile],
+    [files, active, closed, goToFile],
   );
 
   const comment = useCallback(
@@ -445,6 +480,11 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
               tapMenu={narrow}
               onActivate={() => {
                 setActive(i);
+                if (focusWhenReady.current !== f.path) focusWhenReady.current = null;
+              }}
+              open={!closed.has(f.path)}
+              onToggle={() => {
+                toggleFile(f.path);
               }}
               onSymbolAction={(target, at, intent) => {
                 setActive(i);
@@ -452,8 +492,15 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
                 else setSheet({ file: target, at });
               }}
               ref={(handle) => {
-                if (handle) panes.current.set(f.path, handle);
-                else panes.current.delete(f.path);
+                if (!handle) {
+                  panes.current.delete(f.path);
+                  return;
+                }
+                panes.current.set(f.path, handle);
+                if (focusWhenReady.current === f.path) {
+                  focusWhenReady.current = null;
+                  handle.focus();
+                }
               }}
             />
           ))}

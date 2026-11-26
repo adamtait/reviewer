@@ -319,15 +319,39 @@ main {
 }
 
 .file-header {
-  display: flex;
-  gap: 0.6rem;
-  align-items: baseline;
-  padding: 0.4rem 0.75rem;
+  margin: 0;
+  font: inherit;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 2;
+}
+
+.file-diff.closed .file-header {
+  border-bottom: none;
+}
+
+/* The whole header is the button that closes and opens the file. */
+.file-toggle {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+}
+
+.file-toggle:focus-visible {
+  outline-offset: -2px;
+}
+
+.file-chevron {
+  width: 0.8em;
+  color: var(--muted);
 }
 
 .file-path {

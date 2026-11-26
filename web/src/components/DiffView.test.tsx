@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiFailure } from '../api/client';
@@ -16,8 +16,8 @@ vi.mock('./CodePane', () => ({
       {props.text}
     </pre>
   ),
-  MergePane: (props: { oldText: string; newText: string; layout: string }) => (
-    <div data-testid="merge" data-layout={props.layout}>
+  MergePane: (props: { oldText: string; newText: string; layout: string; line?: number }) => (
+    <div data-testid="merge" data-layout={props.layout} data-line={props.line}>
       <pre data-testid="old">{props.oldText}</pre>
       <pre data-testid="new">{props.newText}</pre>
     </div>
@@ -160,6 +160,61 @@ describe('a changed file', () => {
     serve();
     getByRole('button', { name: 'Try again' }).click();
     expect((await findByTestId('new')).textContent).toBe('src/cart.ts at head');
+  });
+
+  it('asks to close or open when its name is clicked, and opens again without reading again', async () => {
+    serve();
+    const onToggle = vi.fn();
+    const onActivate = vi.fn();
+    const at = (open: boolean) => (
+      <FileDiff
+        owner="example"
+        repo="alpha"
+        pull={pull}
+        file={changed('src/cart.ts')}
+        mode="diff"
+        layout="split"
+        eager
+        open={open}
+        onToggle={onToggle}
+        onActivate={onActivate}
+      />
+    );
+    const { findByTestId, getByRole, queryByTestId, rerender } = render(at(true));
+    expect((await findByTestId('new')).textContent).toBe('src/cart.ts at head');
+
+    const name = getByRole('button', { name: /src\/cart\.ts/ });
+    expect(name.getAttribute('aria-expanded')).toBe('true');
+    const body = document.getElementById(name.getAttribute('aria-controls') ?? '');
+    expect(body?.hidden).toBe(false);
+
+    fireEvent.click(name);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalled();
+
+    rerender(at(false));
+    expect(name.getAttribute('aria-expanded')).toBe('false');
+    expect(body?.hidden).toBe(true);
+    expect(queryByTestId('merge')).toBeNull();
+
+    rerender(at(true));
+    expect(name.getAttribute('aria-expanded')).toBe('true');
+    expect((await findByTestId('new')).textContent).toBe('src/cart.ts at head');
+    expect(file).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the line the address names once, and not again when opened after being closed', async () => {
+    serve();
+    const at = (open: boolean) => (
+      <FileDiff owner="example" repo="alpha" pull={pull} file={changed('src/cart.ts')} mode="diff" layout="split" eager line={3} open={open} />
+    );
+    const { findByTestId, getByRole, rerender } = render(at(true));
+    expect((await findByTestId('merge')).dataset.line).toBe('3');
+
+    fireEvent.click(getByRole('button', { name: /src\/cart\.ts/ }));
+    rerender(at(false));
+    rerender(at(true));
+    expect((await findByTestId('merge')).dataset.line).toBeUndefined();
   });
 
   it('waits to read a file until it is near the screen', async () => {

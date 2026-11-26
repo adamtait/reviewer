@@ -229,6 +229,8 @@ export interface CodePaneProps {
 export function CodePane({ path, text, side = 'new', line, onLineAction, onSymbolAction, tapMenu, ref }: CodePaneProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  // Asked for focus before the editor was made: it takes focus once it is.
+  const focusWhenMade = useRef(false);
   const onLine = useRef(onLineAction);
   const onSymbol = useRef(onSymbolAction);
   const menu = useRef(tapMenu);
@@ -268,6 +270,10 @@ export function CodePane({ path, text, side = 'new', line, onLineAction, onSymbo
     });
     view.current = editor;
     showLine(editor, line);
+    if (focusWhenMade.current) {
+      focusWhenMade.current = false;
+      editor.focus();
+    }
     return () => {
       editor.destroy();
       view.current = null;
@@ -279,7 +285,10 @@ export function CodePane({ path, text, side = 'new', line, onLineAction, onSymbo
     cursor: () => (view.current ? { side, ...cursorPlace(view.current) } : null),
     selection: () => (view.current ? selectedLines(view.current, side) : null),
     lines: (which, startLine, endLine) => (view.current && which === side ? textOfLines(view.current, startLine, endLine) : null),
-    focus: () => view.current?.focus(),
+    focus: () => {
+      if (view.current) view.current.focus();
+      else focusWhenMade.current = true;
+    },
   }));
 
   return <div className="code-pane" data-testid="code-pane" ref={host} />;
@@ -308,6 +317,8 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
   const host = useRef<HTMLDivElement>(null);
   const newSide = useRef<EditorView | null>(null);
   const oldSide = useRef<EditorView | null>(null);
+  // Asked for focus before the editors were made: the new side takes it once they are.
+  const focusWhenMade = useRef(false);
   const onLine = useRef(onLineAction);
   const onSymbol = useRef(onSymbolAction);
   const menu = useRef(tapMenu);
@@ -319,6 +330,11 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
 
   useEffect(() => {
     if (!host.current) return;
+    const takeFocus = (editor: EditorView) => {
+      if (!focusWhenMade.current) return;
+      focusWhenMade.current = false;
+      editor.focus();
+    };
     const act = (side: Side) => (n: number) => onLine.current?.({ side, line: n });
     const clicks = (side: Side) =>
       symbolClicks(
@@ -339,6 +355,7 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
       });
       newSide.current = editor;
       showLine(editor, line);
+      takeFocus(editor);
       return () => {
         editor.destroy();
         newSide.current = null;
@@ -355,6 +372,7 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
     newSide.current = merge.b;
     oldSide.current = merge.a;
     showLine(merge.b, line);
+    takeFocus(merge.b);
     return () => {
       merge.destroy();
       newSide.current = null;
@@ -377,7 +395,10 @@ export function MergePane({ path, oldText, newText, layout, line, onLineAction, 
       const view = which === 'old' ? oldSide.current : newSide.current;
       return view ? textOfLines(view, startLine, endLine) : null;
     },
-    focus: () => newSide.current?.focus(),
+    focus: () => {
+      if (newSide.current) newSide.current.focus();
+      else focusWhenMade.current = true;
+    },
   }));
 
   return <div className={`merge-pane merge-${layout}`} data-testid="merge-pane" ref={host} />;

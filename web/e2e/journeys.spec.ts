@@ -104,6 +104,45 @@ test.describe('journey 1: read the description, then the diff', () => {
     await expect(page.locator('[data-path="docs/old.md"]')).toContainText('Notes nobody reads.');
   });
 
+  test('a file closes and opens again from a tap on its name', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(pull);
+
+    const cart = page.locator('[data-path="src/cart.ts"]');
+    const name = cart.getByRole('button', { name: /src\/cart\.ts/ });
+    const press = () => (narrow(page) ? name.tap() : name.click());
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await expect(name).toHaveAttribute('aria-expanded', 'true');
+
+    await press();
+    await expect(name).toHaveAttribute('aria-expanded', 'false');
+    await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
+    await expect(cart).not.toContainText('return sum(prices);');
+    // The other files are left as they were.
+    await expect(page.locator('[data-path="src/tax.ts"]')).toContainText('export const rate = 0.2;');
+
+    await press();
+    await expect(name).toHaveAttribute('aria-expanded', 'true');
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await expect(cart).toContainText('return sum(prices);');
+  });
+
+  test('going to a closed file from the list opens it', async ({ page }) => {
+    test.skip(narrow(page), 'the keyboard focus is checked');
+    await fakeApi(page);
+    await page.goto(pull);
+
+    const cart = page.locator('[data-path="src/cart.ts"]');
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await cart.getByRole('button', { name: /src\/cart\.ts/ }).click();
+    await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
+
+    await page.getByRole('navigation', { name: 'Changed files' }).getByRole('link', { name: /src\/cart\.ts/ }).click();
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    // The keyboard acts on the file gone to, once its code is on the page.
+    await expect(page.locator('[data-path="src/cart.ts"] .cm-editor.cm-focused')).toHaveCount(1);
+  });
+
   test('every place has an address, and back returns to the diff', async ({ page }) => {
     await fakeApi(page);
     await page.goto(`${pull}#file=src%2Ftax.ts`);
@@ -977,5 +1016,26 @@ test.describe('shortcuts', () => {
     // The first file with a change to step through is src/cart.ts.
     await expect(page.getByRole('navigation', { name: 'Changed files' }).locator('li.active')).toContainText('src/cart.ts');
     await expect(page.locator('[data-path="src/cart.ts"] .cm-editor.cm-focused')).toHaveCount(1);
+  });
+
+  test('j and k pass a closed file by', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    await fakeApi(page);
+    await page.goto(pull);
+    const cart = page.locator('[data-path="src/cart.ts"]');
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await cart.getByRole('button', { name: /src\/cart\.ts/ }).click();
+    await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
+    const active = page.getByRole('navigation', { name: 'Changed files' }).locator('li.active');
+
+    // src/cart.ts is closed, so the first change to step to is in src/sum.ts.
+    await page.keyboard.press('j');
+    await expect(active).toContainText('src/sum.ts');
+    await expect(page.locator('[data-path="src/sum.ts"] .cm-editor.cm-focused')).toHaveCount(1);
+
+    // Back past it again: to the file before, and src/cart.ts stays closed.
+    await page.keyboard.press('k');
+    await expect(active).toContainText('docs/old.md');
+    await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
   });
 });

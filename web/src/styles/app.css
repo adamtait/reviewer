@@ -531,7 +531,78 @@ main {
   color: var(--muted);
 }
 
-/* A link's address is always shown, so a reader sees where it leads. */
+.markdown details {
+  margin: 0.5rem 0;
+}
+
+.markdown summary {
+  cursor: pointer;
+}
+
+.markdown kbd {
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--panel);
+}
+
+.markdown dt {
+  font-weight: 600;
+}
+
+.markdown .task-list-item {
+  list-style: none;
+}
+
+.markdown .task-list-item input {
+  margin: 0 0.4rem 0 -1.3rem;
+  vertical-align: middle;
+}
+
+/* The five alerts GitHub draws from `> [!NOTE]` and the like, in GitHub's colours. */
+.markdown-alert {
+  margin: 1rem 0;
+  padding: 0.25rem 0.75rem;
+  border-left: 3px solid var(--alert, var(--border));
+}
+
+.markdown-alert-title {
+  font-weight: 600;
+  color: var(--alert, inherit);
+}
+
+.markdown-alert-note {
+  --alert: var(--link);
+}
+
+.markdown-alert-tip {
+  --alert: var(--added);
+}
+
+.markdown-alert-important {
+  --alert: var(--renamed);
+}
+
+.markdown-alert-warning {
+  --alert: var(--modified);
+}
+
+.markdown-alert-caution {
+  --alert: var(--error);
+}
+
+/* An image is not loaded. Its description and address stand in for it. */
+.image-placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* A link that cannot be followed shows its address beside its text; one that
+   can shows it when the pointer rests on it. Either way a reader can see where
+   it leads. */
 .link-address {
   color: var(--muted);
   overflow-wrap: anywhere;

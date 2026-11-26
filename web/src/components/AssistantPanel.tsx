@@ -2,6 +2,7 @@
 
 import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
+import { repositoryUrl } from '../github/links';
 import type { Conversation, Exchange, Quoted } from '../nav/conversation';
 import { type FileExcerpts, type Run, brief, byFile, spoken } from '../nav/excerpts';
 import { href } from '../router';
@@ -121,7 +122,7 @@ export function AssistantPanel({
 
               {exchange.answer ? (
                 <div className="answer" data-testid="answer">
-                  <Markdown text={exchange.answer} trusted={github ? [github] : []} />
+                  <Markdown text={exchange.answer} trusted={github ? [github] : []} repository={github ? repositoryUrl(github) : undefined} />
                 </div>
               ) : null}
               {exchange.state === 'asking' ? (

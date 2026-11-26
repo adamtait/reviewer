@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ApiFailure, api } from '../api/client';
 import type { Me, PullList as Pulls, RepositoryRef } from '../api/types';
 import { Link } from '../components/Link';
+import { InlineMarkdown } from '../components/Markdown';
 import { href } from '../router';
 
 type RepoState = { phase: 'loading' } | { phase: 'ready'; list: Pulls } | { phase: 'failed'; message: string };
@@ -45,7 +46,7 @@ function RepositoryPulls({ repository }: { repository: RepositoryRef }) {
             <li key={pull.number}>
               <Link to={href({ view: 'pull', owner, repo: name, number: pull.number })}>
                 <span className="pull-title">
-                  {pull.title} <span className="muted">#{pull.number}</span>
+                  <InlineMarkdown text={pull.title} /> <span className="muted">#{pull.number}</span>
                 </span>
                 <span className="pull-meta muted">
                   {pull.draft ? <span className="badge">Draft</span> : null} {pull.author}, updated{' '}

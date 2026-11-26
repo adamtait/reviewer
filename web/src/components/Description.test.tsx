@@ -35,13 +35,19 @@ describe('the description', () => {
     expect(container.querySelectorAll('li')).toHaveLength(2);
   });
 
-  it('lets a link to GitHub be followed, with its address shown', () => {
+  it('lets a link to GitHub be followed, with its address shown on hover', () => {
     const { container } = render(
       <Description body="Closes [the issue](https://github.example/example/alpha/issues/3)." github="https://github.example/example/alpha/pull/12" />,
     );
     const link = container.querySelector('a');
     expect(link?.getAttribute('href')).toBe('https://github.example/example/alpha/issues/3');
-    expect(link?.textContent).toBe('the issue (https://github.example/example/alpha/issues/3)');
+    expect(link?.textContent).toBe('the issue');
+    expect(link?.getAttribute('title')).toBe('https://github.example/example/alpha/issues/3');
+  });
+
+  it('draws a line break as GitHub does in a pull request', () => {
+    const { container } = render(<Description body={'first line\nsecond line'} />);
+    expect(container.querySelector('p br')).not.toBeNull();
   });
 
   it('says so when there is none', () => {

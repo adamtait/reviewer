@@ -562,10 +562,17 @@ by changing the host.
 
 What a user should know:
 
-- **The description and every answer are drawn as Markdown, with limits.** Both are text the
-  service does not trust. Raw HTML is shown as the characters it is, images are not loaded, and a
-  link is shown with its full address and can be followed only if it leads to the workspace or to
-  GitHub. A diagram is shown as its source.
+- **The description and every answer are drawn as GitHub draws them, with limits.** Both are text
+  the service does not trust. Raw HTML is drawn only through GitHub's own allowlist of tags, so a
+  Dependabot description's folded sections open and close. Every attribute that could run or
+  style anything is dropped. The nine tags GitHub shows as text (`<script>`, `<style>`, `<iframe>`
+  and others) are shown as text here too. Images are not loaded; each is shown as its description
+  and its address. A link can be followed only if it leads to the workspace or to GitHub, and its
+  address is shown when the pointer rests on it. Any other link is shown with its full address
+  beside its text. Task lists, the five alerts (`> [!NOTE]` and the like), and `#12`,
+  `owner/repo#12` and `@login` are drawn as on GitHub. In a description, a line break is a break,
+  as on GitHub. Text in backticks in a title is drawn as code. A diagram is shown as its source.
+  Emoji codes, footnotes and mathematics are shown as typed.
 - **Asking is `a`**, with the cursor on a line or with lines selected, or "Ask" after clicking a
   line number. The code asked about is quoted above the question. The conversation is kept in the
   page and is gone on reload. Under each answer, the lines the model was given are listed by file,

@@ -74,11 +74,12 @@ says.
 | `crelt` | 1.0.7 | MIT | Brought by `@codemirror/view`. |
 | `style-mod` | 4.1.5 | MIT | Brought by `@codemirror/view`: the editor's styles, injected at run time. |
 | `w3c-keyname` | 2.2.8 | MIT | Brought by `@codemirror/view`: key names. |
-| `markdown-it` | 15.0.3 | MIT | Parses the Markdown of a description or an answer into tokens. The application draws the tokens itself and never uses the HTML this package can write. |
-| `linkify-it` | 6.1.0 | MIT | Brought by `markdown-it`. Turning bare addresses into links is switched off. |
+| `markdown-it` | 15.0.3 | MIT | Turns the Markdown of a description or an answer into HTML, which `parse5` reads. |
+| `parse5` | 8.1.1 | MIT | Parses that HTML, by the HTML standard's rules, into a tree of plain objects, from which the application copies only allowlisted tags and attributes into the page. The browser never parses it. |
+| `linkify-it` | 6.1.0 | MIT | Brought by `markdown-it`: turning bare `https://` and `www.` addresses into links, as GitHub does. |
 | `mdurl` | 2.1.0 | MIT | Brought by `markdown-it`: reading link addresses. |
 | `uc.micro` | 3.0.0 | MIT | Brought by `markdown-it` and `linkify-it`: character classes. |
-| `entities` | 8.1.0 | BSD-2-Clause | Brought by `markdown-it`: decoding character references. |
+| `entities` | 8.1.0, 9.0.0 | BSD-2-Clause | Brought by `markdown-it` (8.1.0) and `parse5` (9.0.0): decoding character references. |
 | `punycode.js` | 2.3.1 | MIT | Brought by `markdown-it`: internationalised host names. |
 | `argparse` | 3.0.4 | PSF-2.0 | Brought by `markdown-it` for its command-line program, which the application does not use. It is in the lockfile as a non-development package, so it is listed. |
 

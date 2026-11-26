@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: MIT
 
 import MarkdownIt from 'markdown-it';
+import { type DefaultTreeAdapterTypes as T, defaultTreeAdapter as tree, html as namespaces, parse } from 'parse5';
 import { type ReactNode, createElement, useMemo } from 'react';
 
 // Markdown from people and models that are not trusted: a pull request's
 // description, and an assistant's answer, which can repeat whatever the model
 // read. It is drawn the way GitHub draws it, under GitHub's own limits.
 //
-// The text is turned into HTML by markdown-it, and that HTML is parsed into a
-// document that is never attached to this page: a DOMParser document runs no
-// script and loads nothing. That document is then copied into React elements,
-// one node at a time, and only the tags and attributes listed below are
-// copied. No HTML string ever reaches the page, so there is nothing to inject
-// into.
+// The text is turned into HTML by markdown-it, and that HTML is parsed by
+// parse5, which follows the HTML standard's parsing rules and builds a tree of
+// plain objects. The browser never parses it: nothing in it can run, load, or
+// be reported against the content security policy. The tree is then copied
+// into React elements, one node at a time, and only the tags and attributes
+// listed below are copied. No HTML string ever reaches the page, so there is
+// nothing to inject into.
 //
 // What GitHub allows, and what this keeps from it:
 //
@@ -42,7 +44,7 @@ function makeParser(breaks: boolean) {
   // names or email addresses.
   parser.linkify.set({ fuzzyLink: false, fuzzyEmail: false });
   parser.core.ruler.push('tagfilter', (state) => {
-    const clean = (html: string) => withoutHandlers(html.replace(filtered, '&lt;'));
+    const clean = (html: string) => html.replace(filtered, '&lt;');
     for (const token of state.tokens) {
       if (token.type === 'html_block') token.content = clean(token.content);
       for (const child of token.children ?? []) {
@@ -54,79 +56,6 @@ function makeParser(breaks: boolean) {
 }
 
 const parsers = { text: makeParser(false), github: makeParser(true) };
-
-/**
- * Raw HTML with every `on...` attribute taken out of its tags.
- *
- * This is not what keeps a handler from running: the copy into React keeps
- * no handler, and a parsed document runs none. It is here because Chromium
- * checks the content security policy as soon as it parses a handler, even in
- * a document that is never shown, and reports a violation for each one. A
- * description should not fill the console, or a policy report, with those.
- *
- * It reads tags the way the HTML tokenizer does: a name, then attributes
- * separated by spaces or slashes, each value quoted or not. Comments are
- * passed over whole, ended where the tokenizer ends them.
- */
-export function withoutHandlers(html: string): string {
-  let out = '';
-  let i = 0;
-  const space = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r';
-  while (i < html.length) {
-    if (html.startsWith('<!--', i)) {
-      // As the tokenizer reads a comment: `<!-->` and `<!--->` end at once,
-      // and any other ends at the first `-->` or `--!>`.
-      let stop: number;
-      if (html.startsWith('<!-->', i)) stop = i + 5;
-      else if (html.startsWith('<!--->', i)) stop = i + 6;
-      else {
-        const ends = [html.indexOf('-->', i + 4), html.indexOf('--!>', i + 4)].filter((n) => n !== -1);
-        const end = ends.length === 0 ? -1 : Math.min(...ends);
-        stop = end === -1 ? html.length : end + (html.startsWith('--!>', end) ? 4 : 3);
-      }
-      out += html.slice(i, stop);
-      i = stop;
-      continue;
-    }
-    if (html[i] !== '<' || !/[A-Za-z]/.test(html[i + 1] ?? '')) {
-      out += html.charAt(i);
-      i++;
-      continue;
-    }
-    // A start tag: its name, then its attributes up to `>`.
-    let j = i + 1;
-    while (j < html.length && !space(html[j]) && html[j] !== '/' && html[j] !== '>') j++;
-    out += html.slice(i, j);
-    while (j < html.length && html[j] !== '>') {
-      if (space(html[j]) || html[j] === '/') {
-        out += html.charAt(j);
-        j++;
-        continue;
-      }
-      const start = j;
-      j++; // The first character belongs to the name, even an `=`.
-      while (j < html.length && !space(html[j]) && html[j] !== '/' && html[j] !== '>' && html[j] !== '=') j++;
-      const name = html.slice(start, j);
-      let k = j;
-      while (space(html[k])) k++;
-      if (html[k] === '=') {
-        k++;
-        while (space(html[k])) k++;
-        const quote = html[k];
-        if (quote === '"' || quote === "'") {
-          const close = html.indexOf(quote, k + 1);
-          k = close === -1 ? html.length : close + 1;
-        } else {
-          while (k < html.length && !space(html[k]) && html[k] !== '>') k++;
-        }
-        j = k;
-      }
-      if (!/^on/i.test(name)) out += html.slice(start, j);
-    }
-    i = j;
-  }
-  return out;
-}
 
 /**
  * Tags that may be drawn, from GitHub's sanitizer allowlist, and the tag each
@@ -164,8 +93,6 @@ const dropped = new Set([
   'object',
   'embed',
   'iframe',
-  'frame',
-  'frameset',
   'noscript',
   'noembed',
   'noframes',
@@ -173,15 +100,37 @@ const dropped = new Set([
   'textarea',
   'xmp',
   'plaintext',
-  'head',
-  'link',
-  'meta',
-  'base',
   'applet',
 ]);
 
-/** Containers in which text between elements is only layout, and is not drawn. */
-const structural = new Set(['body', 'ul', 'ol', 'dl', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'details', 'blockquote', 'picture']);
+/** Containers in which text between elements is only layout, and is not drawn: React refuses text in a table's rows. */
+const structural = new Set(['ul', 'ol', 'dl', 'table', 'thead', 'tbody', 'tfoot', 'tr']);
+
+/** Blocks: whitespace with a block, or nothing, on each side is only layout, and is not drawn. */
+const blocks = new Set([
+  'p',
+  'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'li',
+  'dl',
+  'dt',
+  'dd',
+  'table',
+  'blockquote',
+  'pre',
+  'hr',
+  'details',
+  'summary',
+  'figure',
+  'figcaption',
+]);
 
 const aligned = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th']);
 
@@ -224,7 +173,8 @@ export function Markdown({ text, trusted = [], breaks = false, repository }: Mar
   );
   const drawn = useMemo(() => {
     const html = (breaks ? parsers.github : parsers.text).render(text);
-    const body = new DOMParser().parseFromString(html, 'text/html').body;
+    const body = bodyOf(parse(html, { scriptingEnabled: false }));
+    if (!body) return [];
     const marks: Marks = { tasks: new Set(), alerts: new Map() };
     markTasks(body, marks);
     markAlerts(body, marks);
@@ -251,11 +201,66 @@ export function InlineMarkdown({ text }: { text: string }) {
   return <>{parts}</>;
 }
 
+type Node = T.ChildNode | T.ParentNode;
+type Element = T.Element;
+type Text = T.TextNode;
+
 interface Marks {
   /** List items that began with `[ ]` or `[x]`, which now hold a checkbox. */
   tasks: Set<Element>;
   /** Block quotes that begin with an alert marker, and the alert's kind. */
   alerts: Map<Element, string>;
+}
+
+/** The `body` of a parsed document. The parser always makes one. */
+function bodyOf(document: T.Document): Element | undefined {
+  const root = document.childNodes.find(isElement);
+  return root?.childNodes.find((node): node is Element => isElement(node) && node.tagName === 'body');
+}
+
+function isElement(node: Node): node is Element {
+  return 'tagName' in node;
+}
+
+function isText(node: Node | null | undefined): node is Text {
+  return node?.nodeName === '#text';
+}
+
+/** An attribute's value, or null when the element does not have it. The parser lower-cases names. */
+function attribute(node: Element, name: string): string | null {
+  return node.attrs.find((a) => a.name === name)?.value ?? null;
+}
+
+/** Every element under `node`, in document order. */
+function* elements(node: Node): Generator<Element> {
+  for (const child of 'childNodes' in node ? node.childNodes : []) {
+    if (!isElement(child)) continue;
+    yield child;
+    yield* elements(child);
+  }
+}
+
+function textOf(node: Node): string {
+  if (isText(node)) return node.value;
+  return 'childNodes' in node ? node.childNodes.map(textOf).join('') : '';
+}
+
+function siblings(node: T.ChildNode): T.ChildNode[] {
+  return node.parentNode?.childNodes ?? [];
+}
+
+function next(node: T.ChildNode): T.ChildNode | undefined {
+  const all = siblings(node);
+  return all[all.indexOf(node) + 1];
+}
+
+function previous(node: T.ChildNode): T.ChildNode | undefined {
+  const all = siblings(node);
+  return all[all.indexOf(node) - 1];
+}
+
+function isTag(node: T.ChildNode | undefined, name: string): boolean {
+  return node !== undefined && isElement(node) && node.tagName === name;
 }
 
 interface Context {
@@ -295,80 +300,86 @@ function followable(address: string, origins: ReadonlySet<string>): boolean {
 }
 
 /** The first child that is not whitespace. */
-function firstContent(node: Node): ChildNode | null {
-  let child = node.firstChild;
-  while (child && child.nodeType === Node.TEXT_NODE && (child.textContent ?? '').trim() === '') child = child.nextSibling;
-  return child;
+function firstContent(node: Element): T.ChildNode | undefined {
+  return node.childNodes.find((child) => !(isText(child) && child.value.trim() === ''));
 }
 
 /** Where a list item's or a block quote's own text begins: inside its first paragraph, if it has one. */
-function leadingText(node: Element): Text | null {
+function leadingText(node: Element): Text | undefined {
   let first = firstContent(node);
-  if (first instanceof Element && first.localName === 'p') first = first.firstChild;
-  return first && first.nodeType === Node.TEXT_NODE ? (first as Text) : null;
+  if (first && isTag(first, 'p')) first = (first as Element).childNodes[0];
+  return isText(first) ? first : undefined;
 }
 
 /** Finds task-list items, puts a checkbox in place of each one's `[ ]` or `[x]`, and marks the item. */
-function markTasks(body: HTMLElement, marks: Marks): void {
-  for (const item of Array.from(body.querySelectorAll('li'))) {
+function markTasks(body: Element, marks: Marks): void {
+  for (const item of Array.from(elements(body)).filter((e) => e.tagName === 'li')) {
     const text = leadingText(item);
-    const match = text?.data.match(/^\[([ xX])\](?=\s|$)/);
-    if (!text || !match) continue;
-    text.data = text.data.slice(match[0].length);
-    const box = body.ownerDocument.createElement('input');
-    box.setAttribute('type', 'checkbox');
-    if (match[1] !== ' ') box.setAttribute('checked', '');
-    text.before(box);
+    const match = text?.value.match(/^\[([ xX])\](?=\s|$)/);
+    if (!text?.parentNode || !match) continue;
+    text.value = text.value.slice(match[0].length);
+    const attrs = [{ name: 'type', value: 'checkbox' }, ...(match[1] === ' ' ? [] : [{ name: 'checked', value: '' }])];
+    tree.insertBefore(text.parentNode, tree.createElement('input', namespaces.NS.HTML, attrs), text);
     marks.tasks.add(item);
   }
 }
 
 /** Finds block quotes that open with `[!NOTE]` and the like, removes the marker, and marks the quote. */
-function markAlerts(body: HTMLElement, marks: Marks): void {
-  for (const quote of Array.from(body.querySelectorAll('blockquote'))) {
+function markAlerts(body: Element, marks: Marks): void {
+  for (const quote of Array.from(elements(body)).filter((e) => e.tagName === 'blockquote')) {
     const text = leadingText(quote);
-    const match = text?.data.match(/^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i);
+    const match = text?.value.match(/^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i);
     if (!text || !match?.[1]) continue;
     // The marker must be alone on its line. When it ends its text rather
     // than its line, what follows must be a break or nothing.
-    const after = text.nextSibling;
-    if (!match[0].endsWith('\n') && after !== null && !(after instanceof Element && after.localName === 'br')) continue;
-    text.data = text.data.slice(match[0].length);
-    const paragraph = text.parentElement;
-    if (text.data === '' && text.nextSibling instanceof Element && text.nextSibling.localName === 'br') {
+    const after = next(text);
+    if (!match[0].endsWith('\n') && after !== undefined && !isTag(after, 'br')) continue;
+    text.value = text.value.slice(match[0].length);
+    const paragraph = text.parentNode;
+    if (text.value === '' && after && isTag(after, 'br')) {
       // With line breaks drawn, the marker's line ends in a break, and the
       // next line starts with the newline that followed it.
-      text.nextSibling.remove();
-      const next: ChildNode | null = text.nextSibling;
-      if (next instanceof Text) next.data = next.data.replace(/^\s+/, '');
+      tree.detachNode(after);
+      const following = next(text);
+      if (isText(following)) following.value = following.value.replace(/^\s+/, '');
     }
-    if (text.data === '') text.remove();
-    if (paragraph && paragraph !== quote && firstContent(paragraph) === null) paragraph.remove();
+    if (text.value === '') tree.detachNode(text);
+    if (paragraph && paragraph !== quote && isElement(paragraph) && firstContent(paragraph) === undefined) tree.detachNode(paragraph);
     marks.alerts.set(quote, match[1].toLowerCase());
   }
 }
 
-function children(node: Node, context: Context, key: string): ReactNode[] {
-  return Array.from(node.childNodes).flatMap((child, i) => draw(child, context, `${key}.${i}`));
+/** Whether whitespace-only text is only layout: inside a list or table, or between two blocks. */
+function layout(node: Text): boolean {
+  const parent = node.parentNode;
+  if (parent && isElement(parent) && structural.has(parent.tagName)) return true;
+  const isBlock = (n: T.ChildNode | undefined) => n === undefined || (isElement(n) && blocks.has(n.tagName));
+  return isBlock(previous(node)) && isBlock(next(node));
 }
 
-function draw(node: Node, context: Context, key: string): ReactNode[] {
-  if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.textContent ?? '';
-    if (text.trim() === '' && structural.has(node.parentElement?.localName ?? '')) return [];
+function children(node: Element, context: Context, key: string): ReactNode[] {
+  return node.childNodes.flatMap((child, i) => draw(child, context, `${key}.${i}`));
+}
+
+function draw(node: T.ChildNode, context: Context, key: string): ReactNode[] {
+  if (isText(node)) {
+    const text = node.value;
+    if (text.trim() === '' && layout(node)) return [];
     return context.plain || !context.repository ? [text] : references(text, context.repository, context, key);
   }
   // Comments, and anything else that is not an element, are not shown.
-  if (!(node instanceof Element)) return [];
+  if (!isElement(node)) return [];
+  // Drawings and formulas are not copied: their tags are not HTML's.
+  if (node.namespaceURI !== namespaces.NS.HTML) return [];
 
-  const name = node.localName;
+  const name = node.tagName;
   if (dropped.has(name)) return [];
   if (name === 'img') return [image(node, key)];
   if (name === 'a') return [anchor(node, context, key)];
   if (name === 'input') {
     // Only a checkbox, and never one the reader can change.
-    if (node.getAttribute('type')?.toLowerCase() !== 'checkbox') return [];
-    return [<input key={key} type="checkbox" disabled checked={node.hasAttribute('checked')} readOnly />];
+    if (attribute(node, 'type')?.toLowerCase() !== 'checkbox') return [];
+    return [<input key={key} type="checkbox" disabled checked={attribute(node, 'checked') !== null} readOnly />];
   }
   if (name === 'blockquote') {
     const kind = context.marks.alerts.get(node);
@@ -396,39 +407,41 @@ function attributes(node: Element, name: string, context: Context, key: string):
   const props: Record<string, unknown> = { key };
   if (aligned.has(name)) {
     // markdown-it writes a table column's alignment as a style, which is not kept.
-    const style = node.getAttribute('style')?.match(/^\s*text-align:\s*(left|right|center)\s*;?\s*$/i)?.[1];
-    const align = (node.getAttribute('align') ?? style)?.toLowerCase();
+    const style = attribute(node, 'style')?.match(/^\s*text-align:\s*(left|right|center)\s*;?\s*$/i)?.[1];
+    const align = (attribute(node, 'align') ?? style)?.toLowerCase();
     if (align === 'left' || align === 'right' || align === 'center' || align === 'justify') props.align = align;
   }
-  if ((name === 'td' || name === 'th') && node.hasAttribute('colspan')) props.colSpan = span(node.getAttribute('colspan'));
-  if ((name === 'td' || name === 'th') && node.hasAttribute('rowspan')) props.rowSpan = span(node.getAttribute('rowspan'));
-  if (name === 'ol' && node.hasAttribute('start')) {
-    const start = Number.parseInt(node.getAttribute('start') ?? '', 10);
-    if (Number.isFinite(start)) props.start = start;
-  }
-  if (name === 'details' && node.hasAttribute('open')) props.open = true;
-  if (name === 'time' && node.hasAttribute('datetime')) props.dateTime = node.getAttribute('datetime');
+  const colspan = attribute(node, 'colspan');
+  const rowspan = attribute(node, 'rowspan');
+  if ((name === 'td' || name === 'th') && colspan !== null) props.colSpan = span(colspan);
+  if ((name === 'td' || name === 'th') && rowspan !== null) props.rowSpan = span(rowspan);
+  const start = Number.parseInt(attribute(node, 'start') ?? '', 10);
+  if (name === 'ol' && Number.isFinite(start)) props.start = start;
+  if (name === 'details' && attribute(node, 'open') !== null) props.open = true;
+  const datetime = attribute(node, 'datetime');
+  if (name === 'time' && datetime !== null) props.dateTime = datetime;
   if (name === 'li' && context.marks.tasks.has(node)) props.className = 'task-list-item';
   if (name === 'pre') {
     // Whatever the language named, the block is shown as text. A diagram's
     // source is its source; nothing draws it.
-    const language = node.querySelector(':scope > code')?.className.match(/(?:^|\s)language-(\S+)/)?.[1];
+    const code = node.childNodes.find((child): child is Element => isTag(child, 'code'));
+    const language = (code && attribute(code, 'class'))?.match(/(?:^|\s)language-(\S+)/)?.[1];
     if (language) props['data-language'] = language;
   }
   return props;
 }
 
-function span(value: string | null): number {
-  const n = Number.parseInt(value ?? '', 10);
+function span(value: string): number {
+  const n = Number.parseInt(value, 10);
   return Number.isFinite(n) && n >= 1 && n <= 1000 ? n : 1;
 }
 
 function anchor(node: Element, context: Context, key: string): ReactNode {
   const inside = children(node, { ...context, plain: true }, key);
-  const address = node.getAttribute('href');
+  const address = attribute(node, 'href');
   if (address === null) return <span key={key}>{inside}</span>;
   // A bare address that markdown-it linked has decoded text and an encoded address.
-  const text = node.textContent.trim();
+  const text = textOf(node).trim();
   const same = text === address || parsers.text.normalizeLink(text) === address || `mailto:${text}` === address;
   return link(address, inside, same, context, key);
 }
@@ -455,8 +468,8 @@ function link(address: string, inside: ReactNode[], textIsAddress: boolean, cont
 }
 
 function image(node: Element, key: string): ReactNode {
-  const alt = node.getAttribute('alt')?.trim() ?? '';
-  const source = node.getAttribute('src') ?? '';
+  const alt = attribute(node, 'alt')?.trim() ?? '';
+  const source = attribute(node, 'src') ?? '';
   return (
     <span key={key} className="image-placeholder">
       {alt ? `[image: ${alt}]` : '[image]'}

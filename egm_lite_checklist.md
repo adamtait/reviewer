@@ -219,6 +219,39 @@ Agreed decisions:
 - [x] [9] [P3] Delete `'input'` from `empty` and the repeated repository check
   in `references()`.
 
+### Fixes from the diff review (round 2)
+
+Agreed: Option A for [1], with `parse5` replacing the browser parse.
+
+- [x] [1] [P1] [web/src/components/Markdown.tsx](web/src/components/Markdown.tsx):
+  parse markdown-it's output with `parse5` (`parse(html,
+  { scriptingEnabled: false })`, then the `body`) instead of `DOMParser`.
+  The browser never parses the description, so no CSP reports are possible.
+  Delete `withoutHandlers()` and its tests. Port the walk, task lists, and
+  alerts to parse5's tree, using `defaultTreeAdapter` for the two edits.
+  Keep the tagfilter, for GitHub parity. Add the reviewer's vectors (bogus
+  comment, end-tag attributes, an attribute value left open across blocks)
+  to unit tests, and one to the e2e hostile body. The e2e journey's
+  no-CSP-report check is the proof.
+- [x] [1] Dependencies: `parse5@^8.1.1` in
+  [web/package.json](web/package.json) and the lockfile (its `entities`
+  9.0.0 is already present). Add a row to
+  [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and keep `make check`'s
+  licence inventory in sync.
+- [x] [1] Docs: correct the design doc's As built bullet and the
+  `markdown-it` licence row, which describe the browser parse and handler
+  stripping.
+- [x] [2] [P2] The quadratic comment search is gone with `withoutHandlers()`.
+  Add a test: 64 KB of comments draws in well under a second.
+- [x] [3] [P2] Whitespace-only text is dropped only inside `ul`, `ol`, `dl`,
+  and table parts, or when both neighbours are block elements (or missing).
+  Tests: `<blockquote><b>Breaking</b> <i>change</i></blockquote>` keeps the
+  space, and so do two `code` elements inside `details`.
+- [x] [4] [P3] One test asserts `colspan`, `rowspan` (`0` becomes 1),
+  `start`, `datetime`, and `open`.
+- [x] [5] [P3] Remove `head`, `frame`, `frameset`, `base`, `link`, and `meta`
+  from `dropped`.
+
 ## Execution notes
 
 - **Inline title:** `InlineMarkdown` uses a small backtick pattern, not
@@ -233,6 +266,13 @@ Agreed decisions:
   cannot be followed, and its address is not repeated beside it.
 - **Journey 5** ("an answer is drawn as text") is unchanged and passes. It
   failed only on the CSP report, which `withoutHandlers()` fixed.
+- **Round 2 fixes:** `parse5` replaces `DOMParser`, and `withoutHandlers()`
+  is gone. `entities` 9.0.0, already installed for `jsdom`, is now
+  distributed too, and its licence row names both versions. The reviewer's
+  five vectors are unit tests that assert the browser parser is never
+  called, and the bogus-comment vector is in the e2e hostile body, which
+  fails on any CSP report. Typecheck, lint, 122 unit tests, the e2e suite
+  (56 passed, 16 skipped) and `make check` all pass.
 - **Round 1 fixes:** each new regression test was run against the renderer
   as it was before the fixes, and all 8 new cases failed there. After the
   fixes: typecheck, lint and 129 unit tests pass, and the e2e suite has 56
@@ -264,10 +304,11 @@ Agreed decisions:
   requests, for `DOMParser`, `<template>` content and `createHTMLDocument`
   alike. **Finding:** under the CSP, Chromium reports a violation for every
   inline `on…` attribute it parses, even in a detached document. That
-  failed the journeys' no-violations check. Fix (in `Markdown.tsx`):
-  `withoutHandlers()` takes `on…` attributes out of raw HTML before parsing,
-  reading tags the way the HTML tokenizer does. The allowlist copy is still
-  the security boundary.
+  failed the journeys' no-violations check. The first fix,
+  `withoutHandlers()`, was a hand-written scanner, and the round 2 review
+  found inputs it read differently from the browser. It was replaced in
+  round 2: `parse5` parses the HTML, so the browser never sees it. The
+  allowlist copy is still the security boundary.
 - **Accepted risk (no test):** a link to `/{owner}/{repo}/issues/{n}`
   redirects to the pull request when `n` is one. This is GitHub's documented
   behaviour. It cannot be tested here, because the tests use a fake GitHub

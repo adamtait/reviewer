@@ -83,6 +83,8 @@ test.describe('journey 1: read the description, then the diff', () => {
       '<img src="https://elsewhere.example/pixel.png" alt="a pixel"> <picture><source srcset="https://elsewhere.example/p.webp"></picture>',
       '<details><summary>Release notes</summary><p onclick="document.title=\'pwned\'">Inside</p></details>',
       '<script>document.title = \'pwned\'</script>',
+      // A bogus comment holding `<!--`, which a hand-written scanner once read differently from the browser.
+      '<div>\n<?x <!-- ?><b onclick="document.title=\'pwned\'">bogus</b>-->\n</div>',
     ].join('\n\n');
     await page.route(`**/api/v1/repos/example/alpha/pulls/${pullView.number}`, (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...pullView, body }) }),
@@ -93,7 +95,9 @@ test.describe('journey 1: read the description, then the diff', () => {
 
     await page.goto(pull);
     const description = page.getByTestId('description');
-    await expect(description.locator('b')).toHaveText('bold');
+    await expect(description.locator('b').first()).toHaveText('bold');
+    await expect(description.locator('b', { hasText: 'bogus' })).toHaveCount(1);
+    await expect(description.locator('[onclick]')).toHaveCount(0);
     await expect(description.locator('details summary')).toHaveText('Release notes');
     await description.locator('summary').click();
     await description.getByText('Inside').click();

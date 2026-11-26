@@ -3,8 +3,13 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { InlineMarkdown, Markdown, withoutHandlers } from './Markdown';
+import * as parse5 from 'parse5';
+
+import { InlineMarkdown, Markdown } from './Markdown';
 import dependabot from './testdata/dependabot.md?raw';
+
+// parse5 as it is, with its calls counted.
+vi.mock('parse5', { spy: true });
 
 afterEach(cleanup);
 
@@ -282,26 +287,6 @@ describe('GitHub markup', () => {
   });
 });
 
-describe('taking handlers out of raw HTML before it is parsed', () => {
-  it.each([
-    // The space before a removed attribute stays; it changes nothing.
-    ['<p onclick="a" align=center>x</p>', '<p  align=center>x</p>'],
-    ['<img/onerror=x src=y>', '<img/ src=y>'],
-    ['<b ONCLICK = "x">t</b>', '<b >t</b>'],
-    [`<a title="x > onclick=y" onmouseover='z'>t</a>`, '<a title="x > onclick=y" >t</a>'],
-    ['<!-- <b onclick=x> -->', '<!-- <b onclick=x> -->'],
-    ['turn on=off, 1 < 2', 'turn on=off, 1 < 2'],
-    ['<details open ontoggle=x>', '<details open >'],
-    // Comments end where the tokenizer ends them, and the tags after them are read.
-    ['<!--><b onclick="a">t</b>', '<!--><b >t</b>'],
-    ['<!---><b onclick="a">t</b>', '<!---><b >t</b>'],
-    ['<!-- a --!><b onclick="a">t</b>', '<!-- a --!><b >t</b>'],
-    ['<!----><b onclick="a">t</b>', '<!----><b >t</b>'],
-  ])('%s', (html, want) => {
-    expect(withoutHandlers(html)).toBe(want);
-  });
-});
-
 describe('the renderer itself', () => {
   it('draws a tag named after a property every object has as its text', () => {
     const { container } = show('Hello <constructor>x</constructor> <toString>y</toString> <valueOf>z</valueOf> <hasOwnProperty>w</hasOwnProperty>');
@@ -309,7 +294,8 @@ describe('the renderer itself', () => {
   });
 
   it('does not parse an unchanged text again when the page draws it again', () => {
-    const parse = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    const parse = vi.mocked(parse5.parse);
+    parse.mockClear();
     const view = (n: number) => <Markdown key="one" text={`unchanged ${'x'.repeat(n)}`} trusted={[`${github}/example/alpha/pull/12`]} />;
     const { rerender } = render(view(1));
     rerender(view(1));
@@ -317,7 +303,51 @@ describe('the renderer itself', () => {
     expect(parse).toHaveBeenCalledTimes(1);
     rerender(view(2));
     expect(parse).toHaveBeenCalledTimes(2);
-    parse.mockRestore();
+  });
+
+  it('never has the browser parse the text, so no handler in it is even read', () => {
+    // Inputs a hand-written scanner read differently from the browser.
+    const hostile = [
+      '<div>\n<?x <!-- ?><b onclick="alert(1)">bogus</b>-->\n</div>',
+      '<div>\n</x <!-- ><i onclick="alert(1)">endtag</i>-->\n</div>',
+      '<div>\n<!x <!-- ><i onclick="alert(1)">decl</i>-->\n</div>',
+      "<div title='\n\n' onclick=alert(1) x='\n\n'>shown",
+      '<svg><![CDATA[<!--]]><b onclick="alert(1)">cdata</b>',
+    ];
+    const parsed = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    for (const text of hostile) {
+      const { container } = show(text);
+      expect(container.querySelectorAll('[onclick]')).toHaveLength(0);
+      cleanup();
+    }
+    expect(parsed).not.toHaveBeenCalled();
+    parsed.mockRestore();
+  });
+
+  it('draws a long run of comments quickly', () => {
+    const text = '<div>\n' + '<!-- -->'.repeat(8192);
+    const began = performance.now();
+    show(text);
+    expect(performance.now() - began).toBeLessThan(1000);
+  });
+
+  it('keeps the space between words inside a block quote or a folded section', () => {
+    const { container } = show('<blockquote><b>Breaking</b> <i>change</i></blockquote>\n\n<details><summary>S</summary><code>a</code> <code>b</code></details>');
+    expect(container.querySelector('blockquote')?.textContent).toBe('Breaking change');
+    expect(container.querySelector('details')?.textContent).toBe('Sa b');
+  });
+
+  it('keeps the attributes on the list, within their limits', () => {
+    const { container } = show(
+      '<table><tr><td colspan=2 rowspan=0>x</td><td colspan=5000>y</td></tr></table>\n\n<ol start=3><li>a</li></ol>\n\n<time datetime=2026-01-01>t</time> <details open><summary>s</summary>body</details>',
+    );
+    const [first, second] = Array.from(container.querySelectorAll('td'));
+    expect(first?.colSpan).toBe(2);
+    expect(first?.rowSpan).toBe(1);
+    expect(second?.colSpan).toBe(1);
+    expect(container.querySelector('ol')?.getAttribute('start')).toBe('3');
+    expect(container.querySelector('time')?.getAttribute('datetime')).toBe('2026-01-01');
+    expect(container.querySelector('details')?.open).toBe(true);
   });
 
   it('shows a bare address once, even when its text and its address are written differently', () => {

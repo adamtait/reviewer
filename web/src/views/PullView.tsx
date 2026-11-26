@@ -17,6 +17,7 @@ import { ShortcutHelp } from '../components/ShortcutHelp';
 import { commentUrl, openOnGitHub } from '../github/links';
 import type { Action } from '../keys/keymap';
 import { useHotkeys } from '../keys/useHotkeys';
+import { readClosed, writeClosed } from '../nav/closed';
 import { type Quoted, useConversation } from '../nav/conversation';
 import {
   type Context,
@@ -70,9 +71,13 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
   const [active, setActive] = useState(0);
   const narrow = useNarrow();
   const panes = useRef(new Map<string, PaneHandle>());
-  // The files the reader has closed by tapping their names. Kept while this
-  // page is open; reloading or leaving it opens every file again.
-  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set());
+  // The files the reader has closed by tapping their names. They are kept for
+  // the browser tab, so leaving this page and coming back, or reloading it,
+  // keeps them closed. App gives each pull request its own PullView.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => readClosed(owner, repo, number));
+  useEffect(() => {
+    writeClosed(owner, repo, number, closed);
+  }, [owner, repo, number, closed]);
   // A file gone to before its code was on the page: its editor takes focus
   // once it is made, unless the reader has moved on by then.
   const focusWhenReady = useRef<string | null>(null);

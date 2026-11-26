@@ -232,10 +232,10 @@ describe('GitHub markup', () => {
     }
   });
 
-  it('leaves a block quote alone when its marker is not one of the five', () => {
-    const { container } = gh('> [!FOO]\n> text\n\n> [!NOTE] on the same line');
+  it('leaves a block quote alone when its marker is not one of the five, or not alone on its line', () => {
+    const { container } = gh('> [!FOO]\n> text\n\n> [!NOTE] on the same line\n\n> [!NOTE] **bold on the same line**\n\n> [!TIP] `code`');
     expect(container.querySelector('.markdown-alert')).toBeNull();
-    expect(container.querySelectorAll('blockquote')).toHaveLength(2);
+    expect(container.querySelectorAll('blockquote')).toHaveLength(4);
     expect(container.textContent).toContain('[!FOO]');
   });
 
@@ -254,6 +254,15 @@ describe('GitHub markup', () => {
     expect(Array.from(container.querySelectorAll('a'), (a) => a.getAttribute('href'))).toEqual(['/x']);
     // An email address is shown once, not beside its own address.
     expect(container.textContent).toContain('and a@b.example and');
+  });
+
+  it('does not link what only looks like a reference', () => {
+    const { container } = gh('see example.com/foo#12 and a.b/c#1 and x-#2 and owner/..#3 and owner/.#4 and @foo- and @-foo');
+    expect(container.querySelector('a')).toBeNull();
+    cleanup();
+    // A login of one character, and one with a hyphen inside, are logins.
+    const linked = gh('@a and @a-b');
+    expect(Array.from(linked.container.querySelectorAll('a'), (a) => a.getAttribute('href'))).toEqual([`${github}/a`, `${github}/a-b`]);
   });
 
   it('does not link a reference without a repository to link it to', () => {
@@ -283,7 +292,37 @@ describe('taking handlers out of raw HTML before it is parsed', () => {
     ['<!-- <b onclick=x> -->', '<!-- <b onclick=x> -->'],
     ['turn on=off, 1 < 2', 'turn on=off, 1 < 2'],
     ['<details open ontoggle=x>', '<details open >'],
+    // Comments end where the tokenizer ends them, and the tags after them are read.
+    ['<!--><b onclick="a">t</b>', '<!--><b >t</b>'],
+    ['<!---><b onclick="a">t</b>', '<!---><b >t</b>'],
+    ['<!-- a --!><b onclick="a">t</b>', '<!-- a --!><b >t</b>'],
+    ['<!----><b onclick="a">t</b>', '<!----><b >t</b>'],
   ])('%s', (html, want) => {
     expect(withoutHandlers(html)).toBe(want);
+  });
+});
+
+describe('the renderer itself', () => {
+  it('draws a tag named after a property every object has as its text', () => {
+    const { container } = show('Hello <constructor>x</constructor> <toString>y</toString> <valueOf>z</valueOf> <hasOwnProperty>w</hasOwnProperty>');
+    expect(container.textContent).toBe('Hello x y z w');
+  });
+
+  it('does not parse an unchanged text again when the page draws it again', () => {
+    const parse = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    const view = (n: number) => <Markdown key="one" text={`unchanged ${'x'.repeat(n)}`} trusted={[`${github}/example/alpha/pull/12`]} />;
+    const { rerender } = render(view(1));
+    rerender(view(1));
+    rerender(view(1));
+    expect(parse).toHaveBeenCalledTimes(1);
+    rerender(view(2));
+    expect(parse).toHaveBeenCalledTimes(2);
+    parse.mockRestore();
+  });
+
+  it('shows a bare address once, even when its text and its address are written differently', () => {
+    const { container } = show('See https://elsewhere.example/a%20b and https://elsewhere.example/café.');
+    expect(container.textContent).toBe('See https://elsewhere.example/a b and https://elsewhere.example/café.');
+    expect(container.querySelectorAll('.link-text')).toHaveLength(2);
   });
 });

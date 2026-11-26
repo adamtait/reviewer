@@ -66,7 +66,7 @@ const parsers = { text: makeParser(false), github: makeParser(true) };
  *
  * It reads tags the way the HTML tokenizer does: a name, then attributes
  * separated by spaces or slashes, each value quoted or not. Comments are
- * passed over whole.
+ * passed over whole, ended where the tokenizer ends them.
  */
 export function withoutHandlers(html: string): string {
   let out = '';
@@ -74,8 +74,16 @@ export function withoutHandlers(html: string): string {
   const space = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r';
   while (i < html.length) {
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4);
-      const stop = end === -1 ? html.length : end + 3;
+      // As the tokenizer reads a comment: `<!-->` and `<!--->` end at once,
+      // and any other ends at the first `-->` or `--!>`.
+      let stop: number;
+      if (html.startsWith('<!-->', i)) stop = i + 5;
+      else if (html.startsWith('<!--->', i)) stop = i + 6;
+      else {
+        const ends = [html.indexOf('-->', i + 4), html.indexOf('--!>', i + 4)].filter((n) => n !== -1);
+        const end = ends.length === 0 ? -1 : Math.min(...ends);
+        stop = end === -1 ? html.length : end + (html.startsWith('--!>', end) ? 4 : 3);
+      }
       out += html.slice(i, stop);
       i = stop;
       continue;
@@ -144,7 +152,7 @@ const tags: Record<string, string> = {
 };
 
 /** Tags drawn with no children. */
-const empty = new Set(['br', 'hr', 'wbr', 'input']);
+const empty = new Set(['br', 'hr', 'wbr']);
 
 /** Tags dropped with everything inside them. Any other tag not in `tags` is dropped and its contents kept. */
 const dropped = new Set([
@@ -206,7 +214,14 @@ export interface MarkdownProps {
 }
 
 export function Markdown({ text, trusted = [], breaks = false, repository }: MarkdownProps) {
-  const origins = useMemo(() => new Set([window.location.origin, ...trusted.map(originOf).filter((o) => o !== '')]), [trusted]);
+  // Callers build `trusted` afresh on each render. Keyed on its contents, an
+  // unchanged text is not parsed again, such as every earlier answer while a
+  // new one streams in.
+  const trustedKey = trusted.join('\n');
+  const origins = useMemo(
+    () => new Set([window.location.origin, ...trustedKey.split('\n').map(originOf).filter((o) => o !== '')]),
+    [trustedKey],
+  );
   const drawn = useMemo(() => {
     const html = (breaks ? parsers.github : parsers.text).render(text);
     const body = new DOMParser().parseFromString(html, 'text/html').body;
@@ -314,6 +329,10 @@ function markAlerts(body: HTMLElement, marks: Marks): void {
     const text = leadingText(quote);
     const match = text?.data.match(/^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i);
     if (!text || !match?.[1]) continue;
+    // The marker must be alone on its line. When it ends its text rather
+    // than its line, what follows must be a break or nothing.
+    const after = text.nextSibling;
+    if (!match[0].endsWith('\n') && after !== null && !(after instanceof Element && after.localName === 'br')) continue;
     text.data = text.data.slice(match[0].length);
     const paragraph = text.parentElement;
     if (text.data === '' && text.nextSibling instanceof Element && text.nextSibling.localName === 'br') {
@@ -337,7 +356,7 @@ function draw(node: Node, context: Context, key: string): ReactNode[] {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? '';
     if (text.trim() === '' && structural.has(node.parentElement?.localName ?? '')) return [];
-    return context.plain || !context.repository ? [text] : references(text, context, key);
+    return context.plain || !context.repository ? [text] : references(text, context.repository, context, key);
   }
   // Comments, and anything else that is not an element, are not shown.
   if (!(node instanceof Element)) return [];
@@ -363,7 +382,8 @@ function draw(node: Node, context: Context, key: string): ReactNode[] {
     }
   }
 
-  const tag = tags[name];
+  // Only the table's own entries: a tag named `constructor` must not find Object.
+  const tag = Object.hasOwn(tags, name) ? tags[name] : undefined;
   if (!tag) return children(node, context, key);
   const props = attributes(node, name, context, key);
   if (empty.has(tag)) return [createElement(tag, props)];
@@ -407,8 +427,10 @@ function anchor(node: Element, context: Context, key: string): ReactNode {
   const inside = children(node, { ...context, plain: true }, key);
   const address = node.getAttribute('href');
   if (address === null) return <span key={key}>{inside}</span>;
+  // A bare address that markdown-it linked has decoded text and an encoded address.
   const text = node.textContent.trim();
-  return link(address, inside, text === address || `mailto:${text}` === address, context, key);
+  const same = text === address || parsers.text.normalizeLink(text) === address || `mailto:${text}` === address;
+  return link(address, inside, same, context, key);
 }
 
 /**
@@ -445,20 +467,20 @@ function image(node: Element, key: string): ReactNode {
 
 /**
  * `#12`, `owner/repo#12` and `@login`, each preceded by the start of the text
- * or by a character that cannot be part of a word, an address or an email.
+ * or by a character that cannot be part of a word, a host name, a path or an
+ * email address. A login, and so an owner, ends in a letter or a digit.
  */
 const referencePattern =
-  /(^|[^\w/@#&])(?:([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})#([0-9]+)(?!\w)|#([0-9]+)(?!\w)|@([A-Za-z0-9][A-Za-z0-9-]{0,38})(?![\w/-]))/g;
+  /(^|[^\w/@#&.-])(?:([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})#([0-9]+)(?!\w)|#([0-9]+)(?!\w)|@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)(?![\w/-]))/g;
 
-function references(text: string, context: Context, key: string): ReactNode[] {
-  const repository = context.repository;
-  if (!repository) return [text];
+function references(text: string, repository: Repository, context: Context, key: string): ReactNode[] {
   const out: ReactNode[] = [];
   let at = 0;
   for (const match of text.matchAll(referencePattern)) {
     const [whole, before = '', owner, repo, crossNumber, number, login] = match;
     const start = match.index + before.length;
     let address: string;
+    if (repo === '.' || repo === '..') continue; // Not a repository: it would lead out of one.
     if (owner && repo && crossNumber) address = `${repository.origin}/${owner}/${repo}/issues/${crossNumber}`;
     else if (number) address = `${repository.url}/issues/${number}`;
     else if (login) address = `${repository.origin}/${login}`;

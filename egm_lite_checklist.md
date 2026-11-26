@@ -156,7 +156,7 @@ Agreed decisions:
   - `<b>` is drawn bold;
   - no `img` element exists;
   - the title stays `Review workspace`;
-  - **[⏳ ACK] test:** under the real CSP, no request leaves for a host
+  - **Test (done, passes):** under the real CSP, no request leaves for a host
     other than the page's own while the description renders, recorded with
     `page.on('request')`.
   
@@ -192,6 +192,33 @@ Agreed decisions:
 - [x] `go build ./... && go vet ./internal/workspace/...`, for the
   comment-only Go edit.
 
+### Fixes from the diff review (round 1)
+
+- [x] [1] [P0] Look up tags in `Markdown.tsx` with `Object.hasOwn`, so a tag
+  named after an `Object.prototype` key (`<constructor>`) is unwrapped, not
+  drawn as `Object`, which crashed the page. Test: `<constructor>`,
+  `<toString>`, and `<__proto__>` are drawn as their text.
+- [x] [2] [P2] `withoutHandlers()`: treat `<!-->` and `<!--->` as complete
+  comments, and end a comment at the first `-->` or `--!>`, as the HTML
+  tokenizer does. Add these forms to the test table.
+- [x] [3] [P2] Alerts: a marker that ends at the end of its text node counts
+  only if the next sibling is nothing or a `br`. Test:
+  `> [!NOTE] **x**` stays a blockquote.
+- [x] [4] [P2] Key the `Markdown` memos on `trusted.join('\n')`, not on the
+  array, so an unchanged text is not parsed again on every render. Test:
+  three renders of the same text call `parseFromString` once.
+- [x] [5] [P2] References: `.` and `-` may not come just before a reference;
+  `.` and `..` are not repository names; a login ends in a letter or digit.
+  Test each.
+- [x] [6] [P3] `textIsAddress`: also compare `parser.normalizeLink(text)` with
+  the address, so a bare URL with `%20` or non-ASCII characters is shown once.
+  Test it.
+- [x] [7] [P3] The tests for [1], [2], and [3], as listed above.
+- [x] [8] [P3] In this checklist, mark the e2e request check done and
+  relabel the `/issues/N` redirect as an accepted risk with no test.
+- [x] [9] [P3] Delete `'input'` from `empty` and the repeated repository check
+  in `references()`.
+
 ## Execution notes
 
 - **Inline title:** `InlineMarkdown` uses a small backtick pattern, not
@@ -206,7 +233,13 @@ Agreed decisions:
   cannot be followed, and its address is not repeated beside it.
 - **Journey 5** ("an answer is drawn as text") is unchanged and passes. It
   failed only on the CSP report, which `withoutHandlers()` fixed.
-- **Results:** typecheck, lint and 121 unit tests pass. The e2e suite has
+- **Round 1 fixes:** each new regression test was run against the renderer
+  as it was before the fixes, and all 8 new cases failed there. After the
+  fixes: typecheck, lint and 129 unit tests pass, and the e2e suite has 56
+  passed and 16 skipped. `<__proto__>` is not a test case: an HTML tag name
+  starts with a letter, so markdown-it reads it as text and emphasis, as
+  GitHub does.
+- **Results before round 1:** typecheck, lint and 121 unit tests pass. The e2e suite has
   56 passed and 16 skipped (the skips are tests limited to one screen
   size, as before). `go build ./...` and `go vet ./internal/workspace/...`
   pass, and `gofmt` is clean.
@@ -235,9 +268,11 @@ Agreed decisions:
   `withoutHandlers()` takes `on…` attributes out of raw HTML before parsing,
   reading tags the way the HTML tokenizer does. The allowlist copy is still
   the security boundary.
-- **[⏳ ACK]** A link to `/{owner}/{repo}/issues/{n}` redirects to the pull
-  request when `n` is one. This is GitHub's documented behaviour. It is not
-  tested here, because the tests use a fake GitHub host.
+- **Accepted risk (no test):** a link to `/{owner}/{repo}/issues/{n}`
+  redirects to the pull request when `n` is one. This is GitHub's documented
+  behaviour. It cannot be tested here, because the tests use a fake GitHub
+  host. If GitHub changed it, the link would show a not-found page; it
+  would not lead anywhere outside GitHub.
 
 ---
 

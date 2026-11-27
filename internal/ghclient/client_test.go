@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // server records the requests it receives, so the tests can assert on headers and
@@ -597,5 +598,89 @@ func TestRemoveLabelThatIsNotThere(t *testing.T) {
 	})
 	if err := c.RemoveLabel(context.Background(), Repo{"o", "r"}, 7, "risk/auth"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("a 403 is still an error, got %v", err)
+	}
+}
+
+// The contents API sends a file base64-encoded and wrapped at 60 characters,
+// in the shape GitHub documents. The commit is asked for by ref, and each
+// path segment is escaped while the slashes between them are kept.
+func TestGetContentsAt(t *testing.T) {
+	s, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		// "version: 1\nadd:\n  risk/auth: [\"src/session/**\"]\n", wrapped.
+		fmt.Fprint(w, `{"type":"file","encoding":"base64","content":"dmVyc2lvbjogMQphZGQ6CiAg\ncmlzay9hdXRoOiBbInNyYy9zZXNzaW9uLyoqIl0K\n"}`)
+	})
+	got, found, err := c.GetContentsAt(context.Background(), Repo{"o", "r"}, ".review/risk yaml", "c0ffee")
+	if err != nil || !found {
+		t.Fatalf("got found=%v, %v", found, err)
+	}
+	if string(got) != "version: 1\nadd:\n  risk/auth: [\"src/session/**\"]\n" {
+		t.Errorf("content = %q", got)
+	}
+	req := s.requests[0]
+	if req.URL.EscapedPath() != "/repos/o/r/contents/.review/risk%20yaml" || req.URL.Query().Get("ref") != "c0ffee" {
+		t.Errorf("asked for %s?%s", req.URL.EscapedPath(), req.URL.RawQuery)
+	}
+}
+
+// A file that is not there is an answer, not an error: most repositories have
+// no risk.yaml, and CODEOWNERS is looked for in three places.
+func TestGetContentsAtAMissingFile(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message":"Not Found"}`)
+	})
+	got, found, err := c.GetContentsAt(context.Background(), Repo{"o", "r"}, "CODEOWNERS", "c0ffee")
+	if err != nil || found || got != nil {
+		t.Errorf("got %q, found=%v, %v; want nothing and no error", got, found, err)
+	}
+}
+
+// What cannot be read as a file is an error, never an empty file: an empty
+// risk.yaml or CODEOWNERS would be read as a real answer.
+func TestGetContentsAtRefusesWhatIsNotAFile(t *testing.T) {
+	for name, body := range map[string]string{
+		"a directory":    `[{"type":"file","name":"CODEOWNERS"}]`,
+		"a symlink":      `{"type":"symlink","target":"x"}`,
+		"too large":      `{"type":"file","encoding":"none","content":""}`,
+		"not base64":     `{"type":"file","encoding":"base64","content":"!!!"}`,
+		"a server error": ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				if body == "" {
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+				fmt.Fprint(w, body)
+			})
+			if _, found, err := c.GetContentsAt(context.Background(), Repo{"o", "r"}, "CODEOWNERS", "c0ffee"); err == nil || found {
+				t.Errorf("want an error, got found=%v, %v", found, err)
+			}
+		})
+	}
+}
+
+// The history is asked for from the named ref, for one path, since a time,
+// and every page is read.
+func TestListCommits(t *testing.T) {
+	s, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+"http://"+r.Host+r.URL.Path+`?page=2>; rel="next"`)
+			fmt.Fprint(w, `[{"sha":"a","commit":{"message":"Revert \"Add sessions\"\n\nThis reverts commit b."}}]`)
+			return
+		}
+		fmt.Fprint(w, `[{"sha":"c","commit":{"message":"Add sessions"}}]`)
+	})
+	since := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	got, err := c.ListCommits(context.Background(), Repo{"o", "r"}, "base-sha", "src/auth/a b.ts", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Subject() != `Revert "Add sessions"` || got[1].SHA != "c" {
+		t.Errorf("commits = %+v", got)
+	}
+	q := s.requests[0].URL.Query()
+	if s.requests[0].URL.Path != "/repos/o/r/commits" || q.Get("sha") != "base-sha" ||
+		q.Get("path") != "src/auth/a b.ts" || q.Get("since") != "2026-06-01T00:00:00Z" {
+		t.Errorf("asked for %s?%s", s.requests[0].URL.Path, s.requests[0].URL.RawQuery)
 	}
 }

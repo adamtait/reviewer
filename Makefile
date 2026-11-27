@@ -21,7 +21,8 @@ PKGS = $(shell go list ./... | grep -v '/node_modules/')
 LICENSE_IGNORE := -ignore '**/*.md' -ignore '**/*.yml' -ignore '**/*.yaml' \
                   -ignore '**/*.json' -ignore '**/*.txt' -ignore 'testdata/**' -ignore '**/testdata/**' \
                   -ignore '**/node_modules/**' -ignore '**/dist/**' \
-                  -ignore 'web/test-results/**' -ignore 'web/playwright-report/**'
+                  -ignore 'web/test-results/**' -ignore 'web/playwright-report/**' \
+                  -ignore '**/.terraform.lock.hcl' -ignore '**/.terraform/**'
 
 .PHONY: check build plugin plugin-test vet fmt-check test staticcheck license-check adrs licenses tools hooks secrets web web-test web-e2e
 

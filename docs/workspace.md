@@ -613,6 +613,9 @@ or loosen this header. The browser tests run under it.
 ## Deploying on Cloud Run
 
 The service is designed for one container on Cloud Run.
+`deploy/gcp/deploy.sh` sets up everything below in a project you name,
+with Terraform, and deploys again with the same command. See
+[`deploy/gcp/README.md`](../deploy/gcp/README.md).
 
 Build the image from a checkout with `docker build -t workspace .` and push it to a registry your
 project can read. No image is published by this repository. The build needs nothing installed but

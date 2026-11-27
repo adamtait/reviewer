@@ -16,3 +16,4 @@ tools
 web/e2e
 web/test-results
 web/playwright-report
+deploy

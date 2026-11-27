@@ -63,16 +63,28 @@ anything to GitHub:
 ```
 reviewer outcomes --since 90d --allowlist docs/                   # a summary in markdown
 reviewer outcomes --allowlist docs/ --allowlist guides/ --format csv   # one row per pull request
+reviewer outcomes --only-unreviewed                               # the merges nobody reviewed
 ```
 
 It reports the median and 90th percentile hours from ready for review to the first
-human approval; how many pull requests only added or modified files under the
-`--allowlist` directories (a directory, never a file extension; a removal or rename
-never counts); whether each was `reverted` (GitHub's revert title and body), or
-`hotfixed` (a later pull request within 14 days changed lines it added, which is
-approximate) or `clean`; and whether the first human review was followed by changes
-to the files it commented on (`changed-after-review`, `unchanged-after-review`,
-`no-review`). It reads the repository from config, or from `--repo OWNER/NAME`.
+human approval; how many pull requests only touched the `--allowlist` directories
+(a directory, never a file extension), counted strictly (only added or modified
+files) and natively (every changed path, removals and renames included); whether
+each was `reverted` (GitHub's revert title and body), `modified-later` (a pull
+request merged within 14 days removed or changed a line that GitHub's blame, at
+that pull request's merge base, credits to a commit this one introduced, whether it
+was squashed, rebased or merged with a merge commit), `hotfixed` (modified later by
+a pull request with a word such as fix, bug or revert in its title or branch, or a
+phrase such as "fixes #N" naming this one in its description), `not-checked` (the
+merge base, the blame or a commit's pull request could not be read, or the run
+reached its bound of 200 commit lookups) or `clean`. A line changed again in between counts
+against the change in between, and a later pull request branched before this one
+merged never saw its lines and does not count. It reports whether the first human
+review was followed by changes to the files it commented on
+(`changed-after-review`, `unchanged-after-review`, `no-review`). It also lists the
+merged pull requests with no `<!-- rv:risk -->` comment from this tool, and, per
+`risk/` label, how often it fired and the median hours to first approval with and
+without it. It reads the repository from config, or from `--repo OWNER/NAME`.
 
 ## What you get
 

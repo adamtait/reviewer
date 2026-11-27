@@ -96,11 +96,22 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 - `reviewer outcomes`, a read-only measurement of the pull requests merged in a
   window (default 90 days), for `docs/designs/risk-gated-merge.md`: the median
   and 90th percentile hours from ready for review to the first human approval,
-  how many touched only the directories given with `--allowlist`, which were
-  reverted or hotfixed afterwards, and whether the first human review led to
-  changes in the files it commented on. Hotfix detection compares patch line
-  numbers and is approximate, and the output says so. Markdown or CSV; a
-  partial read prints what it has and says what it could not read.
+  how many touched only the directories given with `--allowlist` (counted
+  strictly, added or modified files only, and natively, every changed path),
+  which were reverted, modified later or hotfixed afterwards, and whether the
+  first human review led to changes in the files it commented on. A later
+  change is a line the later pull request removed or changed that GitHub's
+  GraphQL blame, at that pull request's merge base, credits to a commit GitHub
+  says this pull request introduced, however it was merged. A line changed again
+  in between counts against the change in between, and a later pull request
+  branched before this one merged does not count; the output says both. A merge
+  base, blame or commit lookup that cannot be read, or a run past its bound of
+  200 commit lookups, leaves the pull request `not-checked` with the reason. It
+  also lists merged pull requests with no `<!-- rv:risk -->` comment from this
+  tool, and per `risk/` label how often it fired and the median hours to first
+  approval with and without it.
+  `--only-unreviewed` lists only the merges no human reviewed. Markdown or CSV;
+  a partial read prints what it has and says what it could not read.
 
 ## [0.1.0] - 2026-09-16
 

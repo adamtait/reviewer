@@ -60,6 +60,17 @@ type PullRequest struct {
 	// MergedAt is zero for a pull request that was closed without merging, or
 	// is still open. Outcome measurement orders merged pull requests by it.
 	MergedAt time.Time `json:"merged_at"`
+	// MergeCommitSHA is the commit a merge put on the base branch: the squash
+	// commit, the last rebased commit, or the merge commit. Outcome
+	// measurement looks for it in a later blame.
+	MergeCommitSHA string `json:"merge_commit_sha"`
+	// Labels are the pull request's GitHub labels.
+	Labels []Label `json:"labels"`
+}
+
+// Label is a GitHub label, by name.
+type Label struct {
+	Name string `json:"name"`
 }
 
 // RepoInfo is what must be known about a repository before anything of it is
@@ -76,6 +87,15 @@ type RepoInfo struct {
 type Ref struct {
 	Ref string `json:"ref"`
 	SHA string `json:"sha"`
+	// Repo is the repository this end lives in, which for the head of a pull
+	// request from a fork is the fork. GitHub sends null once a fork is
+	// deleted.
+	Repo *RefRepo `json:"repo"`
+}
+
+// RefRepo is the repository one end of a pull request lives in.
+type RefRepo struct {
+	FullName string `json:"full_name"`
 }
 
 // ReviewComment is an existing inline comment. Only the fields dedupe and
@@ -137,6 +157,10 @@ type ChangedFile struct {
 	// PreviousFilename is set for a renamed file: where its old version is to
 	// be read from.
 	PreviousFilename string `json:"previous_filename"`
+	// Deletions is how many lines the change removed. GitHub sends it when it
+	// leaves Patch out of a diff too large to include, so it is how a caller
+	// tells a removal it cannot see from no removal at all.
+	Deletions int `json:"deletions"`
 }
 
 // Client is the read surface. Writes are added in PR-18 as a separate interface,
@@ -321,6 +345,26 @@ type TimelineEvent struct {
 // marked ready for review, which the pull request itself does not record.
 func (c *REST) ListTimelineEvents(ctx context.Context, repo Repo, number int) ([]TimelineEvent, error) {
 	return paginate[TimelineEvent](ctx, c, fmt.Sprintf("/repos/%s/issues/%d/timeline", repo, number))
+}
+
+// PullRequestsForCommit returns the numbers of the pull requests GitHub
+// associates with a commit: for a commit on the default branch, the merged pull
+// request that introduced it, whether as a squash, a rebased commit or a commit
+// of a merged branch. It is a method on REST and not part of Client: only
+// outcome measurement asks, to learn whose a line blame credits to a commit is.
+//
+// The response is decoded in the shape GitHub documents, a list of pull
+// requests, and has not been checked against a live response.
+func (c *REST) PullRequestsForCommit(ctx context.Context, repo Repo, sha string) ([]int, error) {
+	pulls, err := paginate[PullRequest](ctx, c, fmt.Sprintf("/repos/%s/commits/%s/pulls", repo, url.PathEscape(sha)))
+	if err != nil {
+		return nil, err
+	}
+	numbers := make([]int, 0, len(pulls))
+	for _, pr := range pulls {
+		numbers = append(numbers, pr.Number)
+	}
+	return numbers, nil
 }
 
 // MaxCompareFiles is the most files GitHub lists in one comparison. A

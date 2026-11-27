@@ -37,6 +37,7 @@ type options struct {
 	repo         string
 	format       string
 	allowlist    []string
+	unreviewed   bool
 	yes          bool
 	version      bool
 }
@@ -65,6 +66,8 @@ flags:
   --allowlist DIR   with outcomes, a directory whose files count as docs-only,
                     such as docs/. Repeatable. A directory, never a file
                     extension
+  --only-unreviewed with outcomes, list only the merged pull requests no
+                    human reviewed: the ones to sample by hand
   --no-invalidate   skip the model lane's second, disproving pass. For debugging
                     what the first pass produces; the run says its findings are
                     unchecked
@@ -81,9 +84,9 @@ subcommands:
                     acted on, so a rule nobody wants can be deleted on evidence
 
   outcomes          what happened to merged pull requests: time to first
-                    approval, docs-only candidates, reverts, approximate
-                    hotfixes, and whether the first review changed anything.
-                    Read-only
+                    approval, docs-only candidates, reverts, later changes to
+                    their lines and hotfixes, whether the first review changed
+                    anything, risk records and risk/ labels. Read-only
 
   baseline --write  record the type-coverage ratchet's mark, which future runs
                     compare against
@@ -163,6 +166,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.repo, "repo", "", "")
 	fs.StringVar(&o.format, "format", "", "")
 	fs.Var((*repeated)(&o.allowlist), "allowlist", "")
+	fs.BoolVar(&o.unreviewed, "only-unreviewed", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
@@ -206,6 +210,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("--repo applies to metrics and outcomes; a review reads the repository from config")}
 	case len(o.allowlist) > 0 && o.subcommand != "outcomes":
 		return options{}, errUsage{fmt.Errorf("--allowlist applies to outcomes")}
+	case o.unreviewed && o.subcommand != "outcomes":
+		return options{}, errUsage{fmt.Errorf("--only-unreviewed applies to outcomes")}
 	case o.yes && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--yes applies to init, which is the only subcommand that asks anything")}
 	}

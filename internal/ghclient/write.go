@@ -87,7 +87,7 @@ func (c *REST) UpdateIssueComment(ctx context.Context, repo Repo, id int64, body
 }
 
 // graphQL is the second protocol this client speaks, and only because thread
-// resolution has no REST equivalent.
+// resolution, thread state and blame have no REST equivalent.
 func (c *REST) graphQL(ctx context.Context, query string, variables map[string]any, into any) error {
 	body := map[string]any{"query": query, "variables": variables}
 	_, err := c.do(ctx, http.MethodPost, c.GraphQLURL, body, into)

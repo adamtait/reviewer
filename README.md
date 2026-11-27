@@ -63,16 +63,23 @@ anything to GitHub:
 ```
 reviewer outcomes --since 90d --allowlist docs/                   # a summary in markdown
 reviewer outcomes --allowlist docs/ --allowlist guides/ --format csv   # one row per pull request
+reviewer outcomes --only-unreviewed                               # the merges nobody reviewed
 ```
 
 It reports the median and 90th percentile hours from ready for review to the first
-human approval; how many pull requests only added or modified files under the
-`--allowlist` directories (a directory, never a file extension; a removal or rename
-never counts); whether each was `reverted` (GitHub's revert title and body), or
-`hotfixed` (a later pull request within 14 days changed lines it added, which is
-approximate) or `clean`; and whether the first human review was followed by changes
-to the files it commented on (`changed-after-review`, `unchanged-after-review`,
-`no-review`). It reads the repository from config, or from `--repo OWNER/NAME`.
+human approval; how many pull requests only touched the `--allowlist` directories
+(a directory, never a file extension), counted strictly (only added or modified
+files) and natively (every changed path, removals and renames included); whether
+each was `reverted` (GitHub's revert title and body), `modified-later` (a pull
+request merged within 14 days removed or changed a line that GitHub's blame credits
+to this one's merge commit, which finds a squash merge's lines but not a merge
+commit's), `hotfixed` (modified later by a pull request that says it is a fix or
+names this one), `not-checked` (the blame could not be read) or `clean`; and whether
+the first human review was followed by changes to the files it commented on
+(`changed-after-review`, `unchanged-after-review`, `no-review`). It also lists the
+merged pull requests with no `<!-- rv:risk -->` comment from this tool, and, per
+`risk/` label, how often it fired and the median hours to first approval with and
+without it. It reads the repository from config, or from `--repo OWNER/NAME`.
 
 ## What you get
 

@@ -9,6 +9,7 @@ import { AssistantPanel } from '../components/AssistantPanel';
 import { CodePane, type LineRef, type PaneHandle, type SelectedLines } from '../components/CodePane';
 import { IndexStatus } from '../components/IndexStatus';
 import { Link } from '../components/Link';
+import { MarkdownFile, isMarkdown } from '../components/MarkdownFile';
 import { type LookupResult, LookupResults, ReportWrong } from '../components/References';
 import { SearchPanel } from '../components/SearchPanel';
 import { ShortcutHelp } from '../components/ShortcutHelp';
@@ -64,6 +65,13 @@ export function CodeView({ owner, repo, sha, path, line, pull, assistant = false
   const [sheet, setSheet] = useState<LineRef | null>(null);
   const [shown, setShown] = useState<{ origin: Origin; lookup: LookupResult } | null>(null);
   const [notice, setNotice] = useState('');
+  // A Markdown file opens drawn, unless the address marks a line: then it
+  // opens as text, so the line can be shown. The reader's choice holds for
+  // this file at this line, and a new address starts again from its default.
+  const place = `${path}#${line ?? ''}`;
+  const [rawChoice, setRawChoice] = useState<{ place: string; raw: boolean } | null>(null);
+  const markdown = isMarkdown(path);
+  const raw = !markdown || (rawChoice?.place === place ? rawChoice.raw : line !== undefined);
   const narrow = useNarrow();
   const pane = useRef<PaneHandle>(null);
   // How this page was reached, if a lookup led here. It is in the history
@@ -276,6 +284,17 @@ export function CodeView({ owner, repo, sha, path, line, pull, assistant = false
             </p>
           ) : null}
           <div className="toolbar">
+            {markdown && state.phase === 'ready' && state.file.kind === 'text' ? (
+              <button
+                type="button"
+                aria-pressed={raw}
+                onClick={() => {
+                  setRawChoice({ place, raw: !raw });
+                }}
+              >
+                {raw ? 'Show rendered Markdown' : 'Show raw Markdown'}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -308,7 +327,8 @@ export function CodeView({ owner, repo, sha, path, line, pull, assistant = false
         {state.phase === 'loading' ? <p className="muted pad">Reading from GitHub…</p> : null}
         {state.phase === 'failed' ? <p className="error pad">{state.message}</p> : null}
         {state.phase === 'ready' && state.file.kind !== 'text' ? <p className="muted pad">{whyNoText[state.file.kind]}</p> : null}
-        {state.phase === 'ready' && state.file.kind === 'text' ? (
+        {state.phase === 'ready' && state.file.kind === 'text' && !raw ? <MarkdownFile text={state.file.text} github={from?.webUrl} /> : null}
+        {state.phase === 'ready' && state.file.kind === 'text' && raw ? (
           <CodePane
             ref={pane}
             path={path}

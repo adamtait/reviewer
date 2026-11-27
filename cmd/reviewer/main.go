@@ -83,6 +83,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 	if o.subcommand == "rules test" {
 		return rulesTest(ctx, o, stdout, stderr, getenv)
 	}
+	if o.subcommand == "risk" {
+		return runRisk(ctx, o, stdout, stderr, getenv)
+	}
 	if o.subcommand == "owners check" {
 		return ownersCheck(o, stdout, getenv)
 	}

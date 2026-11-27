@@ -54,8 +54,8 @@ flags:
   --pr N            review pull request N
   --config PATH     configuration file (default: .review/config.yaml under --root)
   --reporter NAME   text, rdjson or github (default: text)
-  --dry-run         with --reporter github, print what would be posted and post nothing;
-                    with init, print the plan and write nothing
+  --dry-run         with --reporter github or risk, print what would be posted and
+                    post nothing; with init, print the plan and write nothing
   --force           with init, replace files that already exist
   --rules DIR       with rules test, the rule directory (default: .review/rules)
   --write           with baseline, record the measurement
@@ -95,6 +95,11 @@ subcommands:
                     rules share an id, that every rule has a matching and a
                     non-matching case, and that the patterns agree with them
 
+  risk --pr N       attach the advisory risk record to pull request N: one
+                    comment and risk/ labels saying where to look first. Its
+                    inputs are read at the merge base, so the pull request
+                    cannot change its own record. Decides nothing; exits 0
+
   owners check      check CODEOWNERS for the docs-only merge class: that the
                     first rule owns *, the file owns itself, every rule with no
                     owner is a directory, and nothing a model, an agent or the
@@ -119,7 +124,7 @@ they exit 1 when what they check fails.
 // --dry-run unparsed and report it as a stray argument.
 var subcommands = map[string]bool{
 	"init": true, "watch": true, "version": true, "rules": true, "baseline": true,
-	"metrics": true, "outcomes": true, "owners": true,
+	"metrics": true, "outcomes": true, "owners": true, "risk": true,
 }
 
 // twoWordSubcommands take a second bare word. Recognised before flag parsing for

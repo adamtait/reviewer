@@ -286,6 +286,20 @@ describe('a Markdown file in the diff', () => {
     expect((await findByTestId('markdown-file')).querySelector('strong')?.textContent).toBe('new');
   });
 
+  it('draws both versions of a changed file with the changes marked', async () => {
+    serve({
+      [`${mergeBase}:docs/guide.md`]: { path: 'docs/guide.md', kind: 'text', text: '# Guide\n\nOld advice.\n' },
+      [`${head}:docs/guide.md`]: { path: 'docs/guide.md', kind: 'text', text: '# Guide\n\nNew advice.\n' },
+    });
+    const { findByTestId, getByRole, queryByTestId } = showFile(guide, 'diff');
+    await findByTestId('merge');
+    fireEvent.click(getByRole('button', { name: 'Rendered' }));
+    const diff = await findByTestId('rendered-diff');
+    expect(diff.querySelector('[data-change="removed"]')?.textContent).toContain('Old advice.');
+    expect(diff.querySelector('[data-change="added"]')?.textContent).toContain('New advice.');
+    expect(queryByTestId('merge')).toBeNull();
+  });
+
   it('has no switch on a file that is not Markdown, or on a deleted file while only the new code is shown', async () => {
     serve();
     const code = show('src/tax.ts');

@@ -57,6 +57,47 @@ function makeParser(breaks: boolean) {
 
 const parsers = { text: makeParser(false), github: makeParser(true) };
 
+/** A block of a Markdown text: its lines, counted from 0, `end` not included. */
+export interface Block {
+  start: number;
+  end: number;
+  /** Whether the block is one item of a list. */
+  item: boolean;
+  /** For an item of an ordered list, the number it is drawn with. */
+  number?: number;
+}
+
+/**
+ * The blocks a Markdown text is drawn as, in order, found by the same parser
+ * that draws it: each paragraph, heading, quote, table, code block or rule,
+ * and each item of a list rather than the whole list, so that a change to one
+ * item of a long list marks that item. Lines that belong to no block, such as
+ * blank lines and link reference definitions, are left out.
+ */
+export function markdownBlocks(text: string): Block[] {
+  const tokens = parsers.text.parse(text, {});
+  const found: Block[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token?.map || token.level !== 0) continue;
+    if (token.type !== 'bullet_list_open' && token.type !== 'ordered_list_open') {
+      found.push({ start: token.map[0], end: token.map[1], item: false });
+      continue;
+    }
+    const close = token.type.replace('_open', '_close');
+    let number = Number(token.attrGet('start') ?? 1);
+    for (i++; i < tokens.length; i++) {
+      const inner = tokens[i];
+      if (!inner || (inner.level === 0 && inner.type === close)) break;
+      if (inner.level !== 1 || inner.type !== 'list_item_open' || !inner.map) continue;
+      const item: Block = { start: inner.map[0], end: inner.map[1], item: true };
+      if (token.type === 'ordered_list_open') item.number = number++;
+      found.push(item);
+    }
+  }
+  return found;
+}
+
 /**
  * Tags that may be drawn, from GitHub's sanitizer allowlist, and the tag each
  * becomes. `img`, `picture` and `source` are left out: images are not loaded.

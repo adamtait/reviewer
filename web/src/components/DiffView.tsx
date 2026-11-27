@@ -7,6 +7,7 @@ import type { ChangedFile, File, PullView } from '../api/types';
 import { blobUrl } from '../github/links';
 import { CodePane, type LineRef, MergePane, type PaneHandle, type SymbolIntent } from './CodePane';
 import { MarkdownFile, isMarkdown } from './MarkdownFile';
+import { RenderedDiff } from './RenderedDiff';
 
 /** Where one side of a changed file is read from. */
 export interface Source {
@@ -120,13 +121,13 @@ export function FileDiff({
   const [lineShown, setLineShown] = useState<number | undefined>(undefined);
   const paneLine = line === lineShown ? undefined : line;
   const section = useRef<HTMLElement>(null);
-  // A Markdown file can be drawn in place of its text, where one version of
-  // it is shown: an added or deleted file, or any file while only the new
-  // code is shown. It starts as text, as the rest of the diff is. Drawn, it
-  // has no pane, so moving through the changes passes it by.
+  // A Markdown file can be drawn in place of its text: one version of it, or
+  // both with the changes marked block by block. It starts as text, as the
+  // rest of the diff is. Drawn, it has no pane, so moving through the changes
+  // passes it by.
   const [rendered, setRendered] = useState(false);
-  const single = file.status === 'added' || (file.status === 'deleted' ? mode === 'diff' : mode === 'new');
-  const renderable = single && (isMarkdown(file.path) || isMarkdown(file.previousPath || file.path));
+  const shown = !(file.status === 'deleted' && mode === 'new');
+  const renderable = shown && (isMarkdown(file.path) || isMarkdown(file.previousPath || file.path));
 
   // A large pull request has hundreds of files. Each is read when it comes
   // near the screen, not all at once.
@@ -261,6 +262,9 @@ export function FileDiff({
     const newText = after && 'file' in after ? after.file.text : null;
 
     if (renderable && rendered) {
+      if (mode === 'diff' && oldText !== null && newText !== null) {
+        return <RenderedDiff oldText={oldText} newText={newText} github={pull.webUrl} />;
+      }
       const text = newText ?? oldText;
       if (text !== null) return <MarkdownFile text={text} github={pull.webUrl} />;
     }

@@ -1178,3 +1178,43 @@ test.describe('read a Markdown file in the diff drawn or as text', () => {
     await expect(page.locator('[data-path="docs/old.md"] .file-view')).toBeVisible();
   });
 });
+
+test.describe('read the changes to a Markdown file drawn', () => {
+  // The recorded pull request changes no Markdown file in place, so this adds one.
+  const guide = { path: 'docs/guide.md', previousPath: '', status: 'modified' as const };
+  const versions: Record<string, string> = {
+    [pullView.mergeBaseSha]: '# Guide\n\nRound **down**.\n\n- one\n- two\n',
+    [pullView.headSha]: '# Guide\n\nRound **half up**.\n\n- one\n- two\n- three\n',
+  };
+
+  test('a changed Markdown file is drawn with each changed block marked', async ({ page }) => {
+    await fakeApi(page);
+    await page.route(/\/api\/v1\/repos\/example\/alpha\//, async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith(`/pulls/${String(pullView.number)}`)) {
+        return route.fulfill({ json: { ...pullView, files: [guide, ...pullView.files] } });
+      }
+      const sha = /\/commits\/([0-9a-f]{40})\/file$/.exec(url.pathname)?.[1];
+      const text = sha ? versions[sha] : undefined;
+      if (text !== undefined && url.searchParams.get('path') === guide.path) {
+        return route.fulfill({ json: { path: guide.path, kind: 'text', text } });
+      }
+      return route.fallback();
+    });
+    await page.goto(pull);
+    const file = page.locator('[data-path="docs/guide.md"]');
+    await expect(file.locator('.cm-content').first()).toBeVisible();
+
+    await file.getByRole('button', { name: 'Rendered' }).click();
+    const diff = file.getByTestId('rendered-diff');
+    await expect(diff).toContainText('1 block removed, 2 blocks added.');
+    await expect(diff.locator('[data-change="removed"]')).toHaveText(['Removed: Round down.']);
+    await expect(diff.locator('[data-change="added"]')).toHaveText(['Added: Round half up.', 'Added: three']);
+    await expect(diff.locator('[data-change="same"]')).toHaveText(['Guide', 'one', 'two']);
+    await expect(file.locator('.cm-editor')).toHaveCount(0);
+
+    // Turned off, the file's diff is text again.
+    await file.getByRole('button', { name: 'Rendered' }).click();
+    await expect(file.locator('.cm-content').first()).toBeVisible();
+  });
+});

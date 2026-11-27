@@ -56,7 +56,6 @@ const whyNoText: Record<Exclude<File['kind'], 'text'>, string> = {
 
 /** One file at one commit: where a search result or a "go to" lands, often outside the pull request's changes. */
 export function CodeView({ owner, repo, sha, path, line, pull, assistant = false }: CodeViewProps) {
-  const available: ReadonlySet<Action> = new Set<Action>(assistant ? [...always, 'ask'] : always);
   const conversation = useConversation(owner, repo, pull);
   const [quoted, setQuoted] = useState<Quoted | null>(null);
   const [state, setState] = useState<State>({ phase: 'loading' });
@@ -72,6 +71,7 @@ export function CodeView({ owner, repo, sha, path, line, pull, assistant = false
   const [rawChoice, setRawChoice] = useState<{ place: string; raw: boolean } | null>(null);
   const markdown = isMarkdown(path);
   const raw = !markdown || (rawChoice?.place === place ? rawChoice.raw : line !== undefined);
+  const available: ReadonlySet<Action> = new Set<Action>([...always, ...(assistant ? ['ask' as const] : []), ...(markdown ? ['toggleRendered' as const] : [])]);
   const narrow = useNarrow();
   const pane = useRef<PaneHandle>(null);
   // How this page was reached, if a lookup led here. It is in the history
@@ -155,6 +155,13 @@ export function CodeView({ owner, repo, sha, path, line, pull, assistant = false
   };
 
   useHotkeys({
+    ...(markdown
+      ? {
+          toggleRendered: () => {
+            if (state.phase === 'ready' && state.file.kind === 'text') setRawChoice({ place, raw: !raw });
+          },
+        }
+      : {}),
     ...(assistant
       ? {
           ask: () => {

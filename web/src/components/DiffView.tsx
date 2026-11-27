@@ -39,6 +39,16 @@ export function sources(
   }
 }
 
+/**
+ * Whether a changed file can be drawn in place of its text: a Markdown file,
+ * one version of it or both with the changes marked, unless it is deleted and
+ * only the new code is shown, which leaves nothing to draw.
+ */
+export function renderable(file: ChangedFile, mode: 'diff' | 'new'): boolean {
+  if (file.status === 'deleted' && mode === 'new') return false;
+  return isMarkdown(file.path) || isMarkdown(file.previousPath || file.path);
+}
+
 /** One side once read: the file, or the fact that the commit's archive does not hold it. */
 type Loaded = { file: File } | { absent: true } | null;
 
@@ -91,6 +101,14 @@ export interface FileDiffProps {
   open?: boolean;
   /** The reader clicked or tapped the file's name, to close it or open it again. */
   onToggle?: () => void;
+  /**
+   * Whether a Markdown file is drawn in place of its text, where it can be
+   * (see `renderable`). Drawn, it has no pane, so moving through the changes
+   * passes it by.
+   */
+  rendered?: boolean;
+  /** The reader pressed the file's "Rendered" switch. */
+  onRenderedToggle?: () => void;
   ref?: Ref<PaneHandle>;
 }
 
@@ -110,6 +128,8 @@ export function FileDiff({
   onActivate,
   open = true,
   onToggle,
+  rendered: drawn = false,
+  onRenderedToggle,
   ref,
 }: FileDiffProps) {
   const [state, setState] = useState<State>({ phase: 'waiting' });
@@ -121,13 +141,8 @@ export function FileDiff({
   const [lineShown, setLineShown] = useState<number | undefined>(undefined);
   const paneLine = line === lineShown ? undefined : line;
   const section = useRef<HTMLElement>(null);
-  // A Markdown file can be drawn in place of its text: one version of it, or
-  // both with the changes marked block by block. It starts as text, as the
-  // rest of the diff is. Drawn, it has no pane, so moving through the changes
-  // passes it by.
-  const [rendered, setRendered] = useState(false);
-  const shown = !(file.status === 'deleted' && mode === 'new');
-  const renderable = shown && (isMarkdown(file.path) || isMarkdown(file.previousPath || file.path));
+  const canRender = renderable(file, mode);
+  const rendered = canRender && drawn;
 
   // A large pull request has hundreds of files. Each is read when it comes
   // near the screen, not all at once.
@@ -213,7 +228,7 @@ export function FileDiff({
             )}
           </span>
         </button>
-        {renderable && open ? (
+        {canRender && open ? (
           <button
             type="button"
             className="file-view"
@@ -221,7 +236,7 @@ export function FileDiff({
             title={rendered ? 'Show this file’s Markdown as text' : 'Draw this file’s Markdown'}
             onClick={() => {
               onActivate?.();
-              setRendered((r) => !r);
+              onRenderedToggle?.();
             }}
           >
             Rendered
@@ -261,7 +276,7 @@ export function FileDiff({
     const oldText = before && 'file' in before ? before.file.text : null;
     const newText = after && 'file' in after ? after.file.text : null;
 
-    if (renderable && rendered) {
+    if (rendered) {
       if (mode === 'diff' && oldText !== null && newText !== null) {
         return <RenderedDiff oldText={oldText} newText={newText} github={pull.webUrl} />;
       }

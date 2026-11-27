@@ -50,6 +50,9 @@ func (f *fakeGitHub) ListReviewComments(context.Context, ghclient.Repo, int) ([]
 func (f *fakeGitHub) ListIssueComments(context.Context, ghclient.Repo, int) ([]ghclient.IssueComment, error) {
 	return f.issueComments, nil
 }
+func (f *fakeGitHub) ListReviews(context.Context, ghclient.Repo, int) ([]ghclient.Review, error) {
+	return nil, nil
+}
 func (f *fakeGitHub) CreateReviewComment(_ context.Context, _ ghclient.Repo, _ int, c ghclient.NewReviewComment) (ghclient.ReviewComment, error) {
 	if f.failPost != nil {
 		return ghclient.ReviewComment{}, f.failPost

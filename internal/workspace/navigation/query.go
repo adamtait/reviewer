@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/adamtait/reviewer/internal/workspace/navigation/scip"
+	"github.com/adamtait/reviewer/internal/scip"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 )
 

@@ -49,3 +49,4 @@ precede any code land in PR-00.
 | [0032](0032-identity-behind-one-interface.md) | Sign users in with their own GitHub token, sealed in the session cookie | Proposed | PR-49 |
 | [0033](0033-conversation-interface-beside-provider.md) | A conversation interface beside `Provider` | Proposed | PR-53 |
 | [0034](0034-scip-index-built-on-push.md) | Build a SCIP navigation index in CI on every push | Proposed | PR-47 |
+| [0036](0036-codeowners-lint-exits-nonzero.md) | Exit 1 when the CODEOWNERS lint fails: it is a check, not a review | Accepted | PR-59 |

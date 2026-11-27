@@ -42,17 +42,24 @@ var stdin io.Reader = os.Stdin
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, os.Getenv); err != nil {
 		fmt.Fprintf(os.Stderr, "reviewer: %v\n", err)
-		var usageErr errUsage
-		if errors.As(err, &usageErr) {
-			os.Exit(exitUsage)
-		}
-		var checkErr errCheckFailed
-		if errors.As(err, &checkErr) {
-			os.Exit(exitCheckFailed)
-		}
-		// Everything else is a failure to review, not a review that failed.
-		os.Exit(0)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode is the status run's error exits with. Separate from main so that a
+// test can check the status a check command's failure becomes, not only the
+// error it returns.
+func exitCode(err error) int {
+	var usageErr errUsage
+	if errors.As(err, &usageErr) {
+		return exitUsage
+	}
+	var checkErr errCheckFailed
+	if errors.As(err, &checkErr) {
+		return exitCheckFailed
+	}
+	// Everything else is a failure to review, not a review that failed.
+	return 0
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) error {
@@ -75,6 +82,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 	}
 	if o.subcommand == "rules test" {
 		return rulesTest(ctx, o, stdout, stderr, getenv)
+	}
+	if o.subcommand == "owners check" {
+		return ownersCheck(o, stdout, getenv)
 	}
 	if o.subcommand == "init" {
 		return initialize(o, stdin, stdout, stderr)

@@ -319,6 +319,8 @@ main {
 }
 
 .file-header {
+  display: flex;
+  align-items: center;
   margin: 0;
   font: inherit;
   background: var(--panel);
@@ -332,8 +334,11 @@ main {
   border-bottom: none;
 }
 
-/* The whole header is the button that closes and opens the file. */
+/* The header is the button that closes and opens the file, beside a
+   Markdown file's switch between its text and the file drawn. */
 .file-toggle {
+  flex: 1;
+  min-width: 0;
   display: flex;
   gap: 0.6rem;
   align-items: center;
@@ -384,6 +389,24 @@ main {
 }
 
 /* A Markdown file drawn for reading, under the rules in Markdown.tsx. */
+.file-view {
+  flex: none;
+  margin: 0.25rem 0.5rem;
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+}
+
+.file-view[aria-pressed='true'] {
+  background: var(--focus);
+  border-color: var(--focus);
+  color: var(--bg);
+}
+
+.file-body .markdown-file {
+  border: none;
+  border-radius: 0;
+}
+
 .markdown-file {
   overflow-wrap: anywhere;
   border: 1px solid var(--border);

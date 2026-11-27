@@ -407,6 +407,77 @@ main {
   border-radius: 0;
 }
 
+/* Both versions of a Markdown file drawn, the changes marked block by block. */
+.rendered-diff {
+  overflow-wrap: anywhere;
+  padding: 0.75rem 1rem 1rem;
+  line-height: 1.5;
+}
+
+.rendered-diff-summary {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+}
+
+.md-block {
+  position: relative;
+  margin: 0 0 1rem;
+  padding: 0.1rem 0.75rem 0.1rem 1.25rem;
+  border-left: 3px solid transparent;
+}
+
+/* A sign as well as a colour, for a reader who cannot tell the two apart.
+   A screen reader hears "Added" or "Removed" instead. */
+.md-added::before,
+.md-removed::before {
+  position: absolute;
+  left: 0.35rem;
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.md-added::before {
+  content: '+' / '';
+  color: var(--added);
+}
+
+.md-removed::before {
+  content: '−' / '';
+  color: var(--deleted);
+}
+
+.md-block.md-item {
+  margin-bottom: 0.25rem;
+}
+
+.md-item + .md-block:not(.md-item) {
+  margin-top: 0.75rem;
+}
+
+.md-block.md-item ul,
+.md-block.md-item ol {
+  margin: 0;
+}
+
+.md-added {
+  border-left-color: var(--added);
+  background: color-mix(in srgb, var(--added) 10%, transparent);
+}
+
+.md-removed {
+  border-left-color: var(--deleted);
+  background: color-mix(in srgb, var(--deleted) 10%, transparent);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .markdown-file {
   overflow-wrap: anywhere;
   border: 1px solid var(--border);

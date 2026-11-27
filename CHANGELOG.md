@@ -39,6 +39,10 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 
 ### Added
 
+- `deploy/gcp`: Terraform and a script that deploy the review workspace to
+  Cloud Run in any Google Cloud project, with its image repository, a runtime
+  service account and its secrets in Secret Manager. No key passes through
+  Terraform's state. See `deploy/gcp/README.md`.
 - `cmd/workspace`, the skeleton of the review workspace service described in
   `docs/designs/review-workspace.md`: configuration, logging and a health
   address, with a container image. It does nothing for a user yet. See

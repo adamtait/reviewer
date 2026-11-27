@@ -22,3 +22,12 @@ plugins/typescript/dist/
 /web/playwright-report/
 /internal/workspace/web/dist/*
 !/internal/workspace/web/dist/placeholder.txt
+
+# Terraform's working files for deploy/gcp, one directory per project and
+# service, and a configuration kept beside it: it names the operator's
+# repositories, which do not belong in this history (ADR-0010).
+/deploy/gcp/.terraform/
+/deploy/gcp/*.tfstate
+/deploy/gcp/*.tfstate.*
+/deploy/gcp/*.tfvars
+/deploy/gcp/workspace.config.yaml

@@ -383,6 +383,15 @@ main {
   border-radius: 6px;
 }
 
+/* A Markdown file drawn for reading, under the rules in Markdown.tsx. */
+.markdown-file {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.5rem;
+  line-height: 1.5;
+}
+
 /* Search */
 
 .side-panel {

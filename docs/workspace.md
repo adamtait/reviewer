@@ -573,6 +573,10 @@ What a user should know:
   `owner/repo#12` and `@login` are drawn as on GitHub. In a description, a line break is a break,
   as on GitHub. Text in backticks in a title is drawn as code. A diagram is shown as its source.
   Emoji codes, footnotes and mathematics are shown as typed.
+- **A Markdown file opened on its own is drawn**, under the same limits, unless its address
+  selects a line: then it opens as text, so the line can be shown. "Show raw Markdown" and "Show
+  rendered Markdown" switch between the two. Go to definition and find references work on the
+  text only. In the diff, a Markdown file is always text.
 - **Asking is `a`**, with the cursor on a line or with lines selected, or "Ask" after clicking a
   line number. The code asked about is quoted above the question. The conversation is kept in the
   page and is gone on reload. Under each answer, the lines the model was given are listed by file,

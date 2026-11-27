@@ -1117,3 +1117,38 @@ test.describe('shortcuts', () => {
     await expect(cart.getByTestId('merge-pane')).toHaveCount(0);
   });
 });
+
+test.describe('read a Markdown file drawn or as text', () => {
+  const readme = `/example/alpha/blob/${pullView.headSha}/README.md`;
+
+  test('it opens drawn, and the reader can switch to its text and back', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(readme);
+    const drawn = page.getByTestId('markdown-file');
+    await expect(drawn.getByRole('heading', { name: 'Alpha' })).toBeVisible();
+    await expect(page.locator('.code-view .cm-editor')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Show raw Markdown' }).click();
+    await expect(drawn).toHaveCount(0);
+    await expect(page.locator('.code-view .cm-content')).toContainText('# Alpha');
+    await expect(page.getByRole('button', { name: 'Show rendered Markdown' })).toHaveAttribute('aria-pressed', 'true');
+
+    await page.getByRole('button', { name: 'Show rendered Markdown' }).click();
+    await expect(drawn.getByRole('heading', { name: 'Alpha' })).toBeVisible();
+  });
+
+  test('an address that marks a line opens it as text, so the line can be shown', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(`${readme}#L3`);
+    await expect(page.locator('.code-view .cm-content')).toContainText('A shop.');
+    await expect(page.getByTestId('markdown-file')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Show rendered Markdown' })).toBeVisible();
+  });
+
+  test('a file that is not Markdown has no switch', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(`/example/alpha/blob/${pullView.headSha}/src/round.ts`);
+    await expect(page.locator('.code-view .cm-content')).toContainText('export function round');
+    await expect(page.getByRole('button', { name: /Markdown/ })).toHaveCount(0);
+  });
+});

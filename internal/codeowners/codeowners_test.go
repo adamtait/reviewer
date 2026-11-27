@@ -226,3 +226,31 @@ func TestParseRefusesWhatCODEOWNERSDoesNotSupport(t *testing.T) {
 		}
 	}
 }
+
+// ParseAll names every bad line, not only the first, and keeps the rules it
+// could read with their own line numbers.
+func TestParseAllReportsEveryBadLineAndKeepsTheRest(t *testing.T) {
+	f, problems, err := ParseAll(strings.NewReader("* @a\n!docs/ @b\n/src/ @c\nsrc/?.go @d\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 2 {
+		t.Fatalf("problems: %v, want two", problems)
+	}
+	for i, want := range []string{"line 2", "line 4"} {
+		if !strings.Contains(problems[i].Error(), want) {
+			t.Errorf("problem %d: %v does not say %q", i, problems[i], want)
+		}
+	}
+	var lines []int
+	for _, r := range f.Rules {
+		lines = append(lines, r.Line)
+	}
+	if !reflect.DeepEqual(lines, []int{1, 3}) {
+		t.Errorf("rules on lines %v, want [1 3]", lines)
+	}
+	// Parse still refuses the same file outright.
+	if _, err := Parse(strings.NewReader("* @a\n!docs/ @b\n")); err == nil {
+		t.Error("Parse accepted a file with a bad line")
+	}
+}

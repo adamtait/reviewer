@@ -66,9 +66,27 @@ type File struct {
 	Rules []Rule
 }
 
-// Parse reads a CODEOWNERS file.
+// Parse reads a CODEOWNERS file, refusing the whole file at the first line it
+// cannot read.
 func Parse(r io.Reader) (File, error) {
-	var f File
+	f, problems, err := ParseAll(r)
+	switch {
+	case err != nil:
+		return File{}, err
+	case len(problems) > 0:
+		return File{}, problems[0]
+	}
+	return f, nil
+}
+
+// ParseAll reads every line it can, and returns one problem for each line it
+// cannot, in file order. err is set only when the file itself cannot be read.
+//
+// Parse is for answering who owns a path, where a half-read file is worse than
+// none. ParseAll is for the lint, which has to name every bad line in one run
+// and checks the rest of the file as GitHub applies it: GitHub documents that
+// it skips a line with invalid syntax and uses the others.
+func ParseAll(r io.Reader) (f File, problems []error, err error) {
 	sc := bufio.NewScanner(r)
 	// GitHub ignores a CODEOWNERS file over 3 MB; a line longer than the
 	// scanner's default is not one worth reading.
@@ -88,14 +106,15 @@ func Parse(r io.Reader) (File, error) {
 		}
 		rule, err := parseRule(line, fields[0], fields[1:])
 		if err != nil {
-			return File{}, err
+			problems = append(problems, err)
+			continue
 		}
 		f.Rules = append(f.Rules, rule)
 	}
 	if err := sc.Err(); err != nil {
-		return File{}, fmt.Errorf("reading CODEOWNERS: %w", err)
+		return File{}, nil, fmt.Errorf("reading CODEOWNERS: %w", err)
 	}
-	return f, nil
+	return f, problems, nil
 }
 
 func parseRule(line int, pattern string, owners []string) (Rule, error) {

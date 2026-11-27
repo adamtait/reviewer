@@ -95,7 +95,12 @@ subcommands:
                     rules share an id, that every rule has a matching and a
                     non-matching case, and that the patterns agree with them
 
-  init              inspect this repository and print what installing the
+  owners check      check CODEOWNERS for the docs-only merge class: that the
+                    first rule owns *, the file owns itself, every rule with no
+                    owner is a directory, and nothing a model, an agent or the
+                    build reads is left unowned. See docs/merge-classes.md
+
+  init             inspect this repository and print what installing the
                     reviewer into it would change
 
   watch             review every open pull request that changed since the last
@@ -103,7 +108,8 @@ subcommands:
                     scheduling is not this tool's job.
 
 reviewer is advisory and never fails a build: it exits 0 whatever it finds.
-A usage error exits 2.
+A usage error exits 2. rules test and owners check are checks, not reviews:
+they exit 1 when what they check fails.
 `
 
 // parse reads the command line. It returns an error only for genuine misuse,
@@ -113,14 +119,17 @@ A usage error exits 2.
 // --dry-run unparsed and report it as a stray argument.
 var subcommands = map[string]bool{
 	"init": true, "watch": true, "version": true, "rules": true, "baseline": true,
-	"metrics": true, "outcomes": true,
+	"metrics": true, "outcomes": true, "owners": true,
 }
 
 // twoWordSubcommands take a second bare word. Recognised before flag parsing for
 // the same reason as the first: Go's flag package stops at the first positional
 // argument, so `reviewer rules test --rules x` would otherwise leave both the word
 // and the flag unparsed.
-var twoWordSubcommands = map[string]map[string]bool{"rules": {"test": true}}
+var twoWordSubcommands = map[string]map[string]bool{
+	"rules":  {"test": true},
+	"owners": {"check": true},
+}
 
 func parse(args []string, stderr io.Writer) (options, error) {
 	var o options

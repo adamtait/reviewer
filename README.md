@@ -74,9 +74,10 @@ each was `reverted` (GitHub's revert title and body), `modified-later` (a pull
 request merged within 14 days removed or changed a line that GitHub's blame, at
 that pull request's merge base, credits to a commit this one introduced, whether it
 was squashed, rebased or merged with a merge commit), `hotfixed` (modified later by
-a pull request that says it is a fix or names this one), `not-checked` (the merge
-base, the blame or a commit's pull request could not be read, or the run reached its
-bound of 200 commit lookups) or `clean`. A line changed again in between counts
+a pull request with a word such as fix, bug or revert in its title or branch, or a
+phrase such as "fixes #N" naming this one in its description), `not-checked` (the
+merge base, the blame or a commit's pull request could not be read, or the run
+reached its bound of 200 commit lookups) or `clean`. A line changed again in between counts
 against the change in between, and a later pull request branched before this one
 merged never saw its lines and does not count. It reports whether the first human
 review was followed by changes to the files it commented on

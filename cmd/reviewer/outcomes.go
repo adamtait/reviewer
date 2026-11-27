@@ -553,7 +553,7 @@ func (a *attribution) laterOutcome(ctx context.Context, p ghclient.PullRequest, 
 		if !changed {
 			continue
 		}
-		if fixes(l, p.Number) {
+		if fixes(l, p.Number, a.repo) {
 			return outcomeHotfixed, l.Number, ""
 		}
 		if modifiedBy == 0 {
@@ -786,22 +786,33 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-// fixWords are the words in a later pull request's title, body or branch that
-// say it fixes something. A prefix match, so "fixes", "bugfix/" and
-// "regression" count, and "prefix" does not.
-var fixWords = regexp.MustCompile(`(?i)\b(fix|bug|hotfix|regress|revert)`)
+// fixWord is a word in a later pull request's title or branch that says it
+// fixes something. Whole words only, bounded by anything that is not a letter,
+// so "fix(model):", "fix:", "hotfix/login" and "bugfix-y" count, with a
+// branch's "/", "-" and "_" as separators, and "fixture", "prefix" and
+// "debugging" do not.
+var fixWord = regexp.MustCompile(
+	`(?i)(^|[^a-z])(fix|fixes|fixed|hotfix|bugfix|bug|regression|regress|revert|reverts)([^a-z]|$)`)
 
-// fixes reports whether a later pull request says it is a fix, or names the
-// pull request whose lines it changed. A judgement about intent from a few
-// words, which is why the hotfixed label is audited by hand.
-func fixes(l ghclient.PullRequest, target int) bool {
-	text := l.Title + "\n" + l.Body + "\n" + l.Head.Ref
-	if fixWords.MatchString(text) {
+// fixes reports whether a later pull request says it is a fix: in its title or
+// branch, or in its body by a phrase that links it to the pull request whose
+// lines it changed. A judgement about intent from a few words, which is why
+// the hotfixed label is audited by hand.
+//
+// The body is held to the linking phrase because a description is long. Run
+// over one, a loose word match found "fixture" and "fixing what review found"
+// in nearly every milestone's description and called it a fix of the one
+// before, and a bare "#12" there is more often "the plan in #12" than a claim
+// that #12 was wrong.
+func fixes(l ghclient.PullRequest, target int, repo ghclient.Repo) bool {
+	if fixWord.MatchString(l.Title) || fixWord.MatchString(l.Head.Ref) {
 		return true
 	}
-	// "#12" names twelve, and "#123" does not.
-	mention := regexp.MustCompile(`#` + strconv.Itoa(target) + `(?:[^0-9]|$)`)
-	return mention.MatchString(text)
+	// \b after the number: "#12" names twelve, and "#123" does not.
+	linked := regexp.MustCompile(`(?i)\b(fix(es|ed)?|resolve[sd]?|close[sd]?|revert(s|ed)?|` +
+		`regression (from|in|introduced (by|in)))\s+(` + regexp.QuoteMeta(repo.String()) + `)?#` +
+		strconv.Itoa(target) + `\b`)
+	return linked.MatchString(l.Body)
 }
 
 // allowEntry is one --allowlist directory, as the path segments it must start
@@ -1028,7 +1039,9 @@ func writeOutcomesMarkdown(w io.Writer, r outcomeReport, repo ghclient.Repo, q o
 	}
 
 	fmt.Fprintf(b, "\n\n`%s` means a pull request merged within 14 days removed or changed a line of "+
-		"this one; `%s` means that pull request also says it is a fix, or names this one. `%s` and `%s` %s. "+
+		"this one; `%s` means that pull request also says it is a fix, with a word such as fix, bug or revert "+
+		"in its title or branch, or a phrase such as \"fixes #N\" naming this one in its description. "+
+		"`%s` and `%s` %s. "+
 		"`%s` %s.", outcomeModified, outcomeHotfixed, outcomeModified, outcomeHotfixed, attributionCaveat,
 		outcomeHotfixed, intentCaveat)
 	if r.WindowOpen > 0 {

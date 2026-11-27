@@ -326,22 +326,76 @@ func TestFixesReadsTitleBodyAndBranch(t *testing.T) {
 		pr   ghclient.PullRequest
 		want bool
 	}{
-		{"title", pr("Fixes the build", "", ""), true},
-		{"body", pr("Tidy", "This was a regression.", ""), true},
-		{"branch", pr("Tidy", "", "alice/hotfix-login"), true},
-		{"a bug branch", pr("Tidy", "", "bug/123"), true},
+		// The title and the branch: whole words, bounded by anything that
+		// is not a letter.
+		{"a conventional commit", pr("fix(model): normalize the provider name", "", ""), true},
+		{"a colon", pr("fix: the build", "", ""), true},
+		{"a title", pr("Fixes the build", "", ""), true},
 		{"a revert", pr(`Revert "Add foo"`, "", ""), true},
-		{"names it", pr("Tidy", "Follows up #12.", ""), true},
-		{"names it last", pr("Follow-up to #12", "", ""), true},
+		{"a regression", pr("Regression in login", "", ""), true},
+		{"a hotfix branch", pr("Tidy", "", "hotfix/login"), true},
+		{"a bugfix branch", pr("Tidy", "", "alice/bugfix-y"), true},
+		{"a bug branch", pr("Tidy", "", "bug_123"), true},
 		{"a feature", pr("Add feature", "Widens bar.", "alice/feature"), false},
-		// Inside a word is not the word.
-		{"a prefix", pr("Add a prefix option", "", "alice/debugger"), false},
+		{"a prefix", pr("Add prefix support", "", ""), false},
+		{"inside a branch's word", pr("Tidy", "", "alice/debugging-fixture"), false},
+		{"fixing, in a title", pr("Fixing what review found", "", ""), false},
+		// The body only through a phrase that links it to #12.
+		{"fixes it", pr("Tidy", "Fixes #12", ""), true},
+		{"resolves it in full", pr("Tidy", "This resolves owner/name#12.", ""), true},
+		{"closes it", pr("Tidy", "Closed #12 by retrying.", ""), true},
+		{"reverts it", pr("Tidy", "reverted #12 in part", ""), true},
+		{"a regression it caused", pr("Tidy", "A regression introduced by #12.", ""), true},
+		{"follows it", pr("Tidy", "This follows #12.", ""), false},
+		{"mentions it", pr("Tidy", "The plan in #12.", ""), false},
+		{"a fix word in the body", pr("Tidy", "This was a regression, and a fix.", ""), false},
+		{"another repository's", pr("Tidy", "Fixes other/repo#12", ""), false},
 		// #123 is not #12.
-		{"another number", pr("Tidy", "Follows up #123.", ""), false},
+		{"another number", pr("Tidy", "Fixes #123.", ""), false},
 	} {
-		if got := fixes(tt.pr, 12); got != tt.want {
+		if got := fixes(tt.pr, 12, outcomesRepo); got != tt.want {
 			t.Errorf("%s: fixes = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// A milestone pull request's long description, as one read from GitHub said
+// it: "fixture", "fixing" and a mention of the plan's pull request are not a
+// claim that the earlier pull request was wrong. Changing its lines makes it
+// modified-later and no more.
+func TestALongDescriptionIsNotAFix(t *testing.T) {
+	later := func(number int, title, body, branch string) ghclient.PullRequest {
+		pr := mergedPR(number, title, body, day0.AddDate(0, 0, 3))
+		pr.Head.Ref = branch
+		return pr
+	}
+	for _, tt := range []struct {
+		name string
+		l    ghclient.PullRequest
+		want string
+	}{
+		{"a milestone", later(2, "M0: foundation, plugin protocol, and the open-source seam",
+			"Implements the plan in #1.\n\nAdds a fixture repository for the analyzers, and one "+
+				"commit fixing what review found.", "claude/impl-m0"), outcomeModified},
+		{"a conventional fix", later(2, "fix(model): normalize the provider name", "", "alice/model"), outcomeHotfixed},
+		{"a linked fix", later(2, "Tidy the parser", "Fixes #1", "alice/parser"), outcomeHotfixed},
+		{"a follow-up", later(2, "Tidy the parser", "This follows #1.", "alice/parser"), outcomeModified},
+		{"a hotfix branch", later(2, "Login", "", "hotfix/login"), outcomeHotfixed},
+		{"a prefix", later(2, "Add prefix support", "", "alice/prefix"), outcomeModified},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeOutcomes{
+				prs: []ghclient.PullRequest{mergedPR(1, "Add foo", "", day0), tt.l},
+				files: map[int][]ghclient.ChangedFile{
+					1: {file("a.go", "modified", addFoo)},
+					2: {file("a.go", "modified", changeBar)},
+				},
+				blame: map[string][]ghclient.BlameRange{"base2:a.go": fooBlame("merge1")},
+			}
+			if p := measure(t, f)[1]; p.Outcome != tt.want || p.By != 2 {
+				t.Errorf("#1 = %s by #%d, want %s by #2", p.Outcome, p.By, tt.want)
+			}
+		})
 	}
 }
 

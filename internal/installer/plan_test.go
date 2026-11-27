@@ -35,6 +35,7 @@ func TestPlanForTheFixtureRepository(t *testing.T) {
 		".review/config.yaml",
 		".github/workflows/review.yml",
 		".github/workflows/review-index.yml",
+		"with the advisory risk job commented out",
 		"no dependency-cruiser config",
 		"8 files to create",
 	} {

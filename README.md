@@ -130,6 +130,53 @@ check. Write them as [Opengrep rules](docs/writing-rules.md) in `.review/rules/`
 with a test case that matches and one that does not, and `reviewer rules test`
 checks both.
 
+## Risk labels
+
+`reviewer risk` tells a reviewer where to look first. It attaches one comment,
+updated in place on every push, and labels from a fixed set, each naming a reason
+to look:
+
+| Label | Set when |
+|---|---|
+| `risk/auth`, `risk/data`, `risk/ci`, `risk/deps`, `risk/infra` | a changed path, at either end of a rename, matches that label's patterns |
+| `risk/wide` | the change crosses 3 or more CODEOWNERS groups, or more than 40 files change |
+| `risk/reach` | a changed TypeScript symbol is used from 10 or more other files |
+| `risk/history` | a changed file had a `Revert "…"` commit in the last 180 days |
+| `risk/review-config` | the change touches `.review/`, `.github/` or a CODEOWNERS file |
+
+```
+reviewer risk --pr 42 --dry-run   # print the comment and the label changes
+reviewer risk --pr 42             # post them
+```
+
+It is advisory: it decides nothing, blocks nothing, and exits 0 whatever it finds
+or fails at, saying in the comment what it could not check. No label means no
+rule matched; it does not mean the change is safe, and the comment says so every
+time. Everything that decides the labels is read from the merge base, not the pull
+request, so a pull request cannot change its own record: the built-in patterns
+plus a repository's additions in `.review/risk.yaml` (which can add patterns to the
+five path labels and nothing else), CODEOWNERS, the base branch's history, and the
+index `review-index.yml` builds on every push (without it, `risk/reach` is not
+available and the comment says why).
+
+```yaml
+# .review/risk.yaml
+version: 1
+add:
+  risk/auth: ["src/session/**", "src/tokens/**"]
+  risk/data: ["db/**"]
+```
+
+It removes only a label it set itself, named in its own earlier comment, and never
+one a person set. To know which comments are its own it needs the token's login:
+GitHub tells a personal token, but not a workflow's `GITHUB_TOKEN`, so set
+`github.selfLogin: github-actions[bot]` in `.review/config.yaml`; without it, it
+only adds labels. `reviewer init` writes the job into `review.yml` commented out,
+with its own permissions (`contents: read`, `pull-requests: write`, and `actions:
+read` for the index) and skipping drafts. Whether a workflow token with only
+`pull-requests: write` may create and remove labels is unverified; if it may not,
+the comment says the label changes failed. See ADR-0035.
+
 ## Docs-only merges
 
 A repository can let pull requests that change only documentation merge without

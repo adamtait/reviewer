@@ -2,8 +2,9 @@
 #
 # On every push this builds an index of the TypeScript code at the pushed commit
 # and saves it as a workflow artifact. The review workspace reads it to offer
-# go-to-definition and find-references on a pull request. Nothing else uses it:
-# deleting this file turns that navigation off and changes nothing else.
+# go-to-definition and find-references on a pull request, and the risk job in
+# review.yml, if turned on, reads it to count how widely a changed symbol is
+# used. Deleting this file turns those two off and changes nothing else.
 #
 # push, not pull_request: a pull request with a merge conflict gets no
 # pull_request run at all, and a pull_request run checks out a temporary merge

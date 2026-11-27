@@ -13,6 +13,7 @@ package ghclient
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,9 @@ type ChangedFile struct {
 	// leaves Patch out of a diff too large to include, so it is how a caller
 	// tells a removal it cannot see from no removal at all.
 	Deletions int `json:"deletions"`
+	// Changes is how many lines the change added and removed together. The
+	// risk record reads the history of the most-changed files first.
+	Changes int `json:"changes"`
 }
 
 // Client is the read surface. Writes are added in PR-18 as a separate interface,
@@ -388,6 +392,83 @@ func (c *REST) CompareFiles(ctx context.Context, repo Repo, base, head string) (
 		return nil, err
 	}
 	return out.Files, nil
+}
+
+// GetContentsAt reads one file as it is at a commit. The bool is false, with no
+// error, when the file is not there: GitHub answers 404 for that, and also for
+// a repository this token cannot see, which a caller has usually ruled out by
+// then. It is a method on REST and not part of Client: only the risk record
+// reads files, and only at the merge base, so that a pull request cannot change
+// the configuration its own record is computed from.
+//
+// sha should be a full commit hash, for the reason Archive gives.
+func (c *REST) GetContentsAt(ctx context.Context, repo Repo, path, sha string) ([]byte, bool, error) {
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+	target := fmt.Sprintf("/repos/%s/contents/%s?ref=%s", repo, strings.Join(segments, "/"), url.QueryEscape(sha))
+
+	var raw json.RawMessage
+	_, err := c.do(ctx, http.MethodGet, target, nil, &raw)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, err
+	}
+	// A directory answers with a list of its entries, not an object.
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '[' {
+		return nil, false, fmt.Errorf("GET %s: %s is a directory, not a file", redact(c.BaseURL+target), path)
+	}
+	var file struct {
+		Type     string `json:"type"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return nil, false, fmt.Errorf("decoding %s response: %w", redact(c.BaseURL+target), err)
+	}
+	switch {
+	case file.Type != "" && file.Type != "file":
+		return nil, false, fmt.Errorf("GET %s: %s is a %s, not a file", redact(c.BaseURL+target), path, file.Type)
+	case file.Encoding != "base64":
+		// GitHub leaves the content out, with encoding "none", for a file over
+		// one megabyte. Nothing this tool reads that way should be that large.
+		return nil, false, fmt.Errorf("GET %s: %s is too large to read through the contents API", redact(c.BaseURL+target), path)
+	}
+	// The content is wrapped at 60 characters, which StdEncoding refuses.
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(file.Content, "\n", ""))
+	if err != nil {
+		return nil, false, fmt.Errorf("decoding %s content: %w", redact(c.BaseURL+target), err)
+	}
+	return content, true, nil
+}
+
+// Commit is one commit, as far as the risk record reads it.
+type Commit struct {
+	SHA    string `json:"sha"`
+	Commit struct {
+		Message string `json:"message"`
+	} `json:"commit"`
+}
+
+// Subject is the first line of the commit message.
+func (c Commit) Subject() string {
+	subject, _, _ := strings.Cut(c.Commit.Message, "\n")
+	return subject
+}
+
+// ListCommits returns the commits reachable from ref that touch path and were
+// made after since, newest first. It is a method on REST and not part of
+// Client: only the risk record asks, for recent reverts of a changed file.
+//
+// ref is named explicitly rather than left to GitHub's default, which is the
+// repository's default branch: a pull request may target another branch, and
+// its history is the one that matters.
+func (c *REST) ListCommits(ctx context.Context, repo Repo, ref, path string, since time.Time) ([]Commit, error) {
+	return paginate[Commit](ctx, c, fmt.Sprintf("/repos/%s/commits?sha=%s&path=%s&since=%s",
+		repo, url.QueryEscape(ref), url.QueryEscape(path), url.QueryEscape(since.UTC().Format(time.RFC3339))))
 }
 
 // paginate follows GitHub's Link headers to the end.

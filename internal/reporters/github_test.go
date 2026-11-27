@@ -23,6 +23,7 @@ type fakeGitHub struct {
 	postedIssues   []string
 	updatedIssues  map[int64]string
 	resolved       []string
+	labelled       []string
 	threads        []ghclient.ReviewThread
 	failPost       error
 	failResolve    map[string]error
@@ -82,6 +83,17 @@ func (f *fakeGitHub) ReviewThreads(context.Context, ghclient.Repo, int) ([]ghcli
 	return f.threads, nil
 }
 
+// The review reporter never labels; these record a call so a test would see
+// one if it started to.
+func (f *fakeGitHub) AddLabels(_ context.Context, _ ghclient.Repo, _ int, labels []string) error {
+	f.labelled = append(f.labelled, labels...)
+	return nil
+}
+func (f *fakeGitHub) RemoveLabel(_ context.Context, _ ghclient.Repo, _ int, label string) error {
+	f.labelled = append(f.labelled, "-"+label)
+	return nil
+}
+
 func reporter(f *fakeGitHub, out *bytes.Buffer) GitHub {
 	return GitHub{
 		Client: f, Writer: f,
@@ -125,6 +137,9 @@ func TestOnlyHighConfidenceIsPostedInline(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "1 in the summary") {
 		t.Fatalf("want the deferred finding accounted for, got %q", out.String())
+	}
+	if len(f.labelled) != 0 {
+		t.Fatalf("the review reporter must not touch labels; that is `reviewer risk` (ADR-0035): %v", f.labelled)
 	}
 	if len(f.postedIssues) != 1 {
 		t.Fatalf("want the medium-confidence finding in one summary comment, got %v", f.postedIssues)

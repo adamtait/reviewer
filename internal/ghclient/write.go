@@ -4,22 +4,27 @@ package ghclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // Writer is everything this tool can change on a pull request. Kept separate from
 // Client so that the read path demonstrably needs no write access.
 //
-// The whole list is three verbs: post an inline comment, post or update one
-// conversation comment, and resolve a thread this tool itself created. Nothing
-// here can merge, approve, close, or push.
+// The whole list is four verbs: post an inline comment, post or update one
+// conversation comment, resolve a thread this tool itself created, and add or
+// remove a label. Nothing here can merge, approve, close, or push (ADR-0018,
+// ADR-0035).
 type Writer interface {
 	CreateReviewComment(ctx context.Context, repo Repo, number int, c NewReviewComment) (ReviewComment, error)
 	CreateIssueComment(ctx context.Context, repo Repo, number int, body string) (IssueComment, error)
 	UpdateIssueComment(ctx context.Context, repo Repo, id int64, body string) (IssueComment, error)
 	ResolveReviewThread(ctx context.Context, threadID string) error
 	ReviewThreads(ctx context.Context, repo Repo, number int) ([]ReviewThread, error)
+	AddLabels(ctx context.Context, repo Repo, number int, labels []string) error
+	RemoveLabel(ctx context.Context, repo Repo, number int, label string) error
 }
 
 // NewReviewComment is an inline comment to post.
@@ -84,6 +89,39 @@ func (c *REST) UpdateIssueComment(ctx context.Context, repo Repo, id int64, body
 		fmt.Sprintf("/repos/%s/issues/comments/%d", repo, id),
 		map[string]string{"body": body}, &updated)
 	return updated, err
+}
+
+// AddLabels adds labels to a pull request, through the issues API that pull
+// requests share. Labels already on it are left as they are.
+//
+// A name the repository has no label for yet is created by GitHub, with the
+// colour ededed, and added: checked against github.com with a personal token.
+// Whether a workflow's GITHUB_TOKEN holding only pull-requests: write may do
+// the same is unverified (Q3 in docs/designs/risk-gated-merge.md).
+func (c *REST) AddLabels(ctx context.Context, repo Repo, number int, labels []string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	// The response is the pull request's whole label list, which no caller
+	// needs: it would only ever be read back by the next run.
+	_, err := c.do(ctx, http.MethodPost,
+		fmt.Sprintf("/repos/%s/issues/%d/labels", repo, number),
+		map[string][]string{"labels": labels}, nil)
+	return err
+}
+
+// RemoveLabel takes one label off a pull request. A label that is not on it is
+// not an error: GitHub answers 404 for that (checked against github.com), and
+// the state the caller wanted is the state it is in. The name is a path
+// segment, so it is escaped: every label this tool sets has a "/" in it, which
+// unescaped would address a different resource.
+func (c *REST) RemoveLabel(ctx context.Context, repo Repo, number int, label string) error {
+	_, err := c.do(ctx, http.MethodDelete,
+		fmt.Sprintf("/repos/%s/issues/%d/labels/%s", repo, number, url.PathEscape(label)), nil, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 // graphQL is the second protocol this client speaks, and only because thread

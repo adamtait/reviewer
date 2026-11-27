@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -522,5 +523,79 @@ func TestPullRequestsForACommitWithNone(t *testing.T) {
 	got, err := c.PullRequestsForCommit(context.Background(), Repo{"o", "r"}, "c0ffee")
 	if err != nil || len(got) != 0 {
 		t.Errorf("got %v, %v; want none and no error", got, err)
+	}
+}
+
+// Labels go through the issues API, which pull requests share, in one call
+// with every name in the body. The response shape is GitHub's: the label list
+// after the change, which AddLabels does not need and must not choke on.
+func TestAddLabels(t *testing.T) {
+	var body string
+	s, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		fmt.Fprint(w, `[{"name":"risk/auth","color":"ededed"},{"name":"needs review"}]`)
+	})
+	err := c.AddLabels(context.Background(), Repo{"o", "r"}, 7, []string{"risk/auth", "needs review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := s.requests[0]
+	if req.Method != http.MethodPost || req.URL.Path != "/repos/o/r/issues/7/labels" {
+		t.Errorf("asked %s %s", req.Method, req.URL.Path)
+	}
+	if body != `{"labels":["risk/auth","needs review"]}` {
+		t.Errorf("body = %s", body)
+	}
+}
+
+// Adding nothing is not a request: it would be a wasted call.
+func TestAddLabelsWithNoneMakesNoRequest(t *testing.T) {
+	s, c := newServer(t, func(http.ResponseWriter, *http.Request) {})
+	if err := c.AddLabels(context.Background(), Repo{"o", "r"}, 7, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.requests) != 0 {
+		t.Errorf("made %d requests", len(s.requests))
+	}
+}
+
+// A label name is a path segment. Every label this tool sets has a "/" in it,
+// which unescaped would address a different resource, and a person's label may
+// have a space.
+func TestRemoveLabelEscapesTheName(t *testing.T) {
+	for name, want := range map[string]string{
+		"risk/auth":    "/repos/o/r/issues/7/labels/risk%2Fauth",
+		"needs review": "/repos/o/r/issues/7/labels/needs%20review",
+	} {
+		s, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, `[]`) })
+		if err := c.RemoveLabel(context.Background(), Repo{"o", "r"}, 7, name); err != nil {
+			t.Fatal(err)
+		}
+		req := s.requests[0]
+		if req.Method != http.MethodDelete || req.URL.EscapedPath() != want {
+			t.Errorf("%q: asked %s %s, want DELETE %s", name, req.Method, req.URL.EscapedPath(), want)
+		}
+	}
+}
+
+// GitHub answers 404 when the label is not on the pull request (checked
+// against github.com). The caller wanted it gone and it is gone, so that is
+// success; any other failure is still an error.
+func TestRemoveLabelThatIsNotThere(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message":"Label does not exist"}`)
+	})
+	if err := c.RemoveLabel(context.Background(), Repo{"o", "r"}, 7, "risk/auth"); err != nil {
+		t.Errorf("a 404 is not an error here, got %v", err)
+	}
+
+	_, c = newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
+	})
+	if err := c.RemoveLabel(context.Background(), Repo{"o", "r"}, 7, "risk/auth"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("a 403 is still an error, got %v", err)
 	}
 }

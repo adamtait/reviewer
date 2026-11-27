@@ -450,3 +450,46 @@ func TestReviewCommentCarriesItsReview(t *testing.T) {
 		t.Errorf("review id = %d, want 42", got[0].PullRequestReviewID)
 	}
 }
+
+// Outcome measurement finds a merge in a later blame by its merge commit, reads
+// the risk/ labels, and tells a fork's pull request from one in the repository.
+func TestPullRequestCarriesWhatOutcomesReads(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"number":1,"merge_commit_sha":"m1","labels":[{"name":"risk/auth"},{"name":"docs"}],`+
+			`"head":{"ref":"fix/x","sha":"h1","repo":{"full_name":"someone/fork"}},"base":{"sha":"b1"}},`+
+			`{"number":2,"head":{"sha":"h2","repo":null}}]`)
+	})
+	prs, err := c.ListPullRequests(context.Background(), Repo{"o", "r"}, "closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := prs[0]
+	if first.MergeCommitSHA != "m1" || first.Base.SHA != "b1" || first.Head.Ref != "fix/x" {
+		t.Errorf("pull request = %+v", first)
+	}
+	if len(first.Labels) != 2 || first.Labels[0].Name != "risk/auth" {
+		t.Errorf("labels = %+v", first.Labels)
+	}
+	if first.Head.Repo == nil || first.Head.Repo.FullName != "someone/fork" {
+		t.Errorf("head repo = %+v", first.Head.Repo)
+	}
+	// A deleted fork's head repository is null.
+	if prs[1].Head.Repo != nil {
+		t.Errorf("head repo = %+v, want nil", prs[1].Head.Repo)
+	}
+}
+
+// A diff too large to include comes without its patch, and the deletion count
+// is what says lines were removed anyway.
+func TestChangedFileCarriesDeletions(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"filename":"big.go","status":"modified","deletions":4000}]`)
+	})
+	got, err := c.ListFiles(context.Background(), Repo{"o", "r"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Deletions != 4000 || got[0].Patch != "" {
+		t.Errorf("file = %+v", got[0])
+	}
+}

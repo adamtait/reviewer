@@ -60,6 +60,17 @@ type PullRequest struct {
 	// MergedAt is zero for a pull request that was closed without merging, or
 	// is still open. Outcome measurement orders merged pull requests by it.
 	MergedAt time.Time `json:"merged_at"`
+	// MergeCommitSHA is the commit a merge put on the base branch: the squash
+	// commit, the last rebased commit, or the merge commit. Outcome
+	// measurement looks for it in a later blame.
+	MergeCommitSHA string `json:"merge_commit_sha"`
+	// Labels are the pull request's GitHub labels.
+	Labels []Label `json:"labels"`
+}
+
+// Label is a GitHub label, by name.
+type Label struct {
+	Name string `json:"name"`
 }
 
 // RepoInfo is what must be known about a repository before anything of it is
@@ -76,6 +87,15 @@ type RepoInfo struct {
 type Ref struct {
 	Ref string `json:"ref"`
 	SHA string `json:"sha"`
+	// Repo is the repository this end lives in, which for the head of a pull
+	// request from a fork is the fork. GitHub sends null once a fork is
+	// deleted.
+	Repo *RefRepo `json:"repo"`
+}
+
+// RefRepo is the repository one end of a pull request lives in.
+type RefRepo struct {
+	FullName string `json:"full_name"`
 }
 
 // ReviewComment is an existing inline comment. Only the fields dedupe and
@@ -137,6 +157,10 @@ type ChangedFile struct {
 	// PreviousFilename is set for a renamed file: where its old version is to
 	// be read from.
 	PreviousFilename string `json:"previous_filename"`
+	// Deletions is how many lines the change removed. GitHub sends it when it
+	// leaves Patch out of a diff too large to include, so it is how a caller
+	// tells a removal it cannot see from no removal at all.
+	Deletions int `json:"deletions"`
 }
 
 // Client is the read surface. Writes are added in PR-18 as a separate interface,

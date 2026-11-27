@@ -130,6 +130,26 @@ check. Write them as [Opengrep rules](docs/writing-rules.md) in `.review/rules/`
 with a test case that matches and one that does not, and `reviewer rules test`
 checks both.
 
+## Docs-only merges
+
+A repository can let pull requests that change only documentation merge without
+an approval, using GitHub's own settings: CODEOWNERS owns every path except a list
+of documentation directories, and the ruleset requires code-owner review with 0
+approvals. A wrong CODEOWNERS file then removes review with no visible sign, so
+the setup makes this lint a required check:
+
+```
+reviewer owners check
+```
+
+It fails, and exits 1, unless the first rule owns `*`, CODEOWNERS owns itself,
+every rule with no owner is a directory, and nothing a model, an agent or the build
+reads is left unowned: agent instruction files, `.github/`, `.review/`, the
+model lane's guidance and prompts, and files a `//go:embed` directive names. It is
+a check, not a review, which is why it can fail (ADR-0036). Read
+[docs/merge-classes.md](docs/merge-classes.md) before changing a ruleset: the
+GitHub behaviour it depends on is unverified until its sandbox steps have run.
+
 ## The model lane
 
 Off by default. Six access paths — four APIs and two that drive a CLI you are
@@ -171,6 +191,7 @@ It has not yet been used by a team. To deploy one, see
 - [How it fits together](docs/architecture.md)
 - [Running the review workspace](docs/workspace.md)
 - [Writing convention rules](docs/writing-rules.md)
+- [Docs-only merges](docs/merge-classes.md)
 - [Model access paths](docs/providers.md)
 - [The plugin protocol](docs/plugin-protocol.md)
 - [Architecture decisions](docs/adr/) — every significant decision, why, and what

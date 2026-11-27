@@ -1218,3 +1218,66 @@ test.describe('read the changes to a Markdown file drawn', () => {
     await expect(file.locator('.cm-content').first()).toBeVisible();
   });
 });
+
+test.describe('m draws a Markdown file, or shows its text', () => {
+  test('in the diff, m acts on the file the keyboard is in, and the keys go on working from it', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    await fakeApi(page);
+    await page.goto(pull);
+    const old = page.locator('[data-path="docs/old.md"]');
+    const toggle = old.getByRole('button', { name: 'Rendered' });
+    await old.locator('.cm-content').click();
+    await expect(old.locator('.cm-editor.cm-focused')).toHaveCount(1);
+
+    await page.keyboard.press('m');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(old.getByTestId('markdown-file')).toHaveText('Notes nobody reads.');
+    // The keyboard stays on this file, at its switch.
+    await expect(toggle).toBeFocused();
+
+    await page.keyboard.press('m');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(old.locator('.cm-editor.cm-focused')).toHaveCount(1);
+  });
+
+  test('m does nothing on a file that is not Markdown', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    await fakeApi(page);
+    await page.goto(pull);
+    const cart = page.locator('[data-path="src/cart.ts"]');
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await page.keyboard.press(']');
+    await expect(cart.locator('.cm-editor.cm-focused')).toHaveCount(1);
+    await page.keyboard.press('m');
+    await expect(cart.getByTestId('merge-pane')).toBeVisible();
+    await expect(page.getByTestId('markdown-file')).toHaveCount(0);
+  });
+
+  test('in the code view, m switches between the drawn file and its text, and the help lists it', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    await fakeApi(page);
+    await page.goto(`/example/alpha/blob/${pullView.headSha}/README.md`);
+    await expect(page.getByTestId('markdown-file')).toBeVisible();
+
+    await page.keyboard.press('m');
+    await expect(page.locator('.code-view .cm-content')).toContainText('# Alpha');
+    await page.keyboard.press('m');
+    await expect(page.getByTestId('markdown-file')).toBeVisible();
+
+    await page.keyboard.press('?');
+    const row = page.getByRole('dialog', { name: 'Shortcuts' }).getByRole('row', { name: /Draw this Markdown file/ });
+    await expect(row).toContainText('m');
+    await expect(row).not.toContainText('not on this page');
+  });
+
+  test('the help says m is not for a page with no Markdown file', async ({ page }) => {
+    test.skip(narrow(page), 'a keyboard');
+    await fakeApi(page);
+    await page.goto(`/example/alpha/blob/${pullView.headSha}/src/round.ts`);
+    await expect(page.locator('.code-view .cm-content')).toContainText('export function round');
+    await page.keyboard.press('?');
+    await expect(page.getByRole('dialog', { name: 'Shortcuts' }).getByRole('row', { name: /Draw this Markdown file/ })).toContainText(
+      'not on this page',
+    );
+  });
+});

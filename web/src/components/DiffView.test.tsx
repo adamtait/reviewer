@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { type ComponentProps, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiFailure } from '../api/client';
@@ -257,13 +258,26 @@ describe('a changed file', () => {
 
 describe('a Markdown file in the diff', () => {
   const guide: ChangedFile = { path: 'docs/guide.md', previousPath: '', status: 'modified' };
+  // Which files are drawn is the pull request page's to keep. Here it is kept for one file.
+  function Switchable(props: ComponentProps<typeof FileDiff>) {
+    const [rendered, setRendered] = useState(false);
+    return (
+      <FileDiff
+        {...props}
+        rendered={rendered}
+        onRenderedToggle={() => {
+          setRendered((r) => !r);
+        }}
+      />
+    );
+  }
   const showFile = (target: ChangedFile, mode: 'diff' | 'new') =>
-    render(<FileDiff owner="example" repo="alpha" pull={pull} file={target} mode={mode} layout="split" eager />);
+    render(<Switchable owner="example" repo="alpha" pull={pull} file={target} mode={mode} layout="split" eager />);
   const rendered = (container: HTMLElement) => container.querySelector('.file-view');
 
   it('starts as text, and can be drawn where one version of it is shown', async () => {
     serve({ [`${mergeBase}:docs/old.md`]: { path: 'docs/old.md', kind: 'text', text: '# Old notes\n\nNobody reads them.\n' } });
-    const { findByTestId, getByRole, queryByTestId } = show('docs/old.md');
+    const { findByTestId, getByRole, queryByTestId } = showFile(changed('docs/old.md'), 'diff');
     expect((await findByTestId('code')).textContent).toContain('# Old notes');
 
     const toggle = getByRole('button', { name: 'Rendered' });

@@ -8,7 +8,7 @@ import { ActionSheet, type SheetAction } from '../components/ActionSheet';
 import { AssistantPanel } from '../components/AssistantPanel';
 import type { LineRef, PaneHandle, SelectedLines } from '../components/CodePane';
 import { Description } from '../components/Description';
-import { FileDiff, sources } from '../components/DiffView';
+import { FileDiff, renderable, sources } from '../components/DiffView';
 import { IndexStatus } from '../components/IndexStatus';
 import { Link } from '../components/Link';
 import { InlineMarkdown } from '../components/Markdown';
@@ -65,7 +65,6 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
   const [panel, setPanel] = useState<'none' | 'search' | 'help' | 'lookup' | 'assistant'>('none');
   const conversation = useConversation(owner, repo, number);
   const [quoted, setQuoted] = useState<Quoted | null>(null);
-  const available = useMemo(() => new Set<Action>(assistant ? [...always, 'ask'] : always), [assistant]);
   const [sheet, setSheet] = useState<{ file: ChangedFile; at: LineRef } | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [notice, setNotice] = useState('');
@@ -79,6 +78,9 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
   useEffect(() => {
     writeClosed(owner, repo, number, closed);
   }, [owner, repo, number, closed]);
+  // The Markdown files the reader has drawn in place of their text. Each
+  // starts as text, as the rest of the diff is.
+  const [rendered, setRendered] = useState<ReadonlySet<string>>(() => new Set());
   // A file gone to before its code was on the page: its editor takes focus
   // once it is made, unless the reader has moved on by then.
   const focusWhenReady = useRef<string | null>(null);
@@ -103,6 +105,13 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
 
   const pull = state.phase === 'ready' ? state.pull : null;
   const files = useMemo(() => pull?.files ?? [], [pull]);
+  const hasMarkdown = files.some((f) => renderable(f, 'diff'));
+  const available = useMemo(() => {
+    const actions = new Set<Action>(always);
+    if (assistant) actions.add('ask');
+    if (hasMarkdown) actions.add('toggleRendered');
+    return actions;
+  }, [assistant, hasMarkdown]);
 
   const scrollTo = useCallback((path: string) => {
     document.querySelector(`[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start' });
@@ -110,6 +119,14 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
 
   const toggleFile = useCallback((path: string) => {
     setClosed((now) => {
+      const next = new Set(now);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+  }, []);
+
+  const toggleRendered = useCallback((path: string) => {
+    setRendered((now) => {
       const next = new Set(now);
       if (!next.delete(path)) next.add(path);
       return next;
@@ -315,6 +332,23 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
             section.querySelector<HTMLElement>('.file-toggle')?.focus({ preventScroll: true });
             if (section.getBoundingClientRect().top < 0) section.scrollIntoView({ block: 'start' });
           },
+          toggleRendered: () => {
+            const target = files[active];
+            if (!target || closed.has(target.path) || !renderable(target, mode)) return;
+            const drawing = !rendered.has(target.path);
+            toggleRendered(target.path);
+            if (drawing) {
+              // The code with the keyboard's focus is about to be taken off
+              // the page. Focus moves to the file's switch, so the keys go on
+              // working from this file.
+              document
+                .querySelector<HTMLElement>(`[data-path="${CSS.escape(target.path)}"] .file-view`)
+                ?.focus({ preventScroll: true });
+            } else {
+              // Its code takes the focus back once it is on the page again.
+              focusWhenReady.current = target.path;
+            }
+          },
           comment: () => {
             const target = files[active];
             const at = target ? panes.current.get(target.path)?.cursor() : null;
@@ -512,6 +546,10 @@ export function PullView({ owner, repo, number, file, line, assistant = false }:
               open={!closed.has(f.path)}
               onToggle={() => {
                 toggleFile(f.path);
+              }}
+              rendered={rendered.has(f.path)}
+              onRenderedToggle={() => {
+                toggleRendered(f.path);
               }}
               onSymbolAction={(target, at, intent) => {
                 setActive(i);

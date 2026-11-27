@@ -465,12 +465,18 @@ func firstReviewLabel(ctx context.Context, client outcomeReader, repo ghclient.R
 // short form a person writes by hand, "Reverts #123".
 var revertBody = regexp.MustCompile(`\bReverts (?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#(\d+)\b`)
 
+// revertTitle matches a revert written by hand that names its target at the
+// start of the title: "Revert #34; record ADR 0007", "Revert owner/repo#34".
+var revertTitle = regexp.MustCompile(`(?i)^revert(?:s|ed)?:?\s+(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#(\d+)\b`)
+
 // findReverts maps each reverted pull request to the earliest later one that
 // reverted it.
 //
-// Both halves of GitHub's convention are required. The title alone matches a
-// revert of a different pull request with the same title, and the body alone
-// matches a description that merely mentions one.
+// Two forms count. GitHub's own needs both halves of its convention: the title
+// alone matches a revert of a different pull request with the same title, and
+// the body alone matches a description that merely mentions one. A title that
+// starts "Revert #N" names its target outright and counts by itself; a pilot
+// run found a hand-written revert in that form labelled hotfixed instead.
 func findReverts(merged []ghclient.PullRequest, repo ghclient.Repo) map[int]int {
 	mergedAt := map[int]time.Time{}
 	for _, pr := range merged {
@@ -478,10 +484,16 @@ func findReverts(merged []ghclient.PullRequest, repo ghclient.Repo) map[int]int 
 	}
 	reverts := map[int]int{}
 	for _, pr := range merged {
-		if !strings.HasPrefix(pr.Title, `Revert "`) {
+		var found [][]string
+		switch {
+		case strings.HasPrefix(pr.Title, `Revert "`):
+			found = revertBody.FindAllStringSubmatch(pr.Body, -1)
+		case revertTitle.MatchString(pr.Title):
+			found = revertTitle.FindAllStringSubmatch(pr.Title, 1)
+		default:
 			continue
 		}
-		for _, m := range revertBody.FindAllStringSubmatch(pr.Body, -1) {
+		for _, m := range found {
 			if m[1] != "" && !strings.EqualFold(m[1], repo.String()) {
 				continue
 			}

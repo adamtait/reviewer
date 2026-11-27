@@ -210,6 +210,33 @@ func TestARevertOfADifferentPullRequestDoesNotMatch(t *testing.T) {
 	}
 }
 
+// A revert written by hand that names its target at the start of the title is
+// a revert, with no body convention. A pilot run labelled one hotfixed. The
+// number has to start the title: one mentioned later, a different number that
+// starts the same, and another repository's number do not count.
+func TestAHandWrittenRevertTitleIsRecognised(t *testing.T) {
+	f := &fakeOutcomes{prs: []ghclient.PullRequest{
+		mergedPR(34, "Sync: restore own namespace", "", day0),
+		mergedPR(36, "Revert #34; record ADR 0007", "Workstation ids are unique.", day0.AddDate(0, 0, 1)),
+		mergedPR(40, "Add gadget", "", day0.AddDate(0, 0, 2)),
+		mergedPR(41, "revert: owner/name#40", "", day0.AddDate(0, 0, 3)),
+		mergedPR(50, "Add widget", "", day0.AddDate(0, 0, 4)),
+		mergedPR(51, "Tidy up; Revert #50 later", "", day0.AddDate(0, 0, 5)),
+		mergedPR(52, "Revert #500", "", day0.AddDate(0, 0, 6)),
+		mergedPR(53, "Revert other/repo#50", "", day0.AddDate(0, 0, 7)),
+	}}
+	got := measure(t, f)
+	if p := got[34]; p.Outcome != outcomeReverted || p.By != 36 {
+		t.Errorf("#34 = %s by #%d, want reverted by #36", p.Outcome, p.By)
+	}
+	if p := got[40]; p.Outcome != outcomeReverted || p.By != 41 {
+		t.Errorf("#40 = %s by #%d, want reverted by #41", p.Outcome, p.By)
+	}
+	if p := got[50]; p.Outcome == outcomeReverted {
+		t.Errorf("#50 = reverted by #%d, want not reverted", p.By)
+	}
+}
+
 // addFoo is a patch that adds lines 10 to 12 of a.go.
 const addFoo = "@@ -8,4 +8,7 @@ func a() {\n" +
 	" \tx := 1\n" +

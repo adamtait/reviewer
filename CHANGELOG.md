@@ -93,6 +93,14 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   (ADR-0034). An existing install gains this one file on its next `init`; every
   other file is left as it is. Deleting the workflow turns that navigation off
   and changes nothing else.
+- `reviewer outcomes`, a read-only measurement of the pull requests merged in a
+  window (default 90 days), for `docs/designs/risk-gated-merge.md`: the median
+  and 90th percentile hours from ready for review to the first human approval,
+  how many touched only the directories given with `--allowlist`, which were
+  reverted or hotfixed afterwards, and whether the first human review led to
+  changes in the files it commented on. Hotfix detection compares patch line
+  numbers and is approximate, and the output says so. Markdown or CSV; a
+  partial read prints what it has and says what it could not read.
 
 ## [0.1.0] - 2026-09-16
 

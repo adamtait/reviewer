@@ -67,6 +67,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 	if o.subcommand == "metrics" {
 		return metrics(ctx, o, stdout, stderr, getenv)
 	}
+	if o.subcommand == "outcomes" {
+		return outcomes(ctx, o, stdout, stderr, getenv)
+	}
 	if o.subcommand == "baseline" {
 		return baseline(ctx, o, stdout, stderr, getenv)
 	}

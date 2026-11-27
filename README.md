@@ -57,6 +57,23 @@ Nothing is ever reported outside the lines you changed. A pre-existing problem t
 lines away is real and is not this change's to fix, and reporting it is the fastest
 way to teach a team to ignore the tool.
 
+To measure what happened to the pull requests that merged, without writing
+anything to GitHub:
+
+```
+reviewer outcomes --since 90d --allowlist docs/                   # a summary in markdown
+reviewer outcomes --allowlist docs/ --allowlist guides/ --format csv   # one row per pull request
+```
+
+It reports the median and 90th percentile hours from ready for review to the first
+human approval; how many pull requests only added or modified files under the
+`--allowlist` directories (a directory, never a file extension; a removal or rename
+never counts); whether each was `reverted` (GitHub's revert title and body), or
+`hotfixed` (a later pull request within 14 days changed lines it added, which is
+approximate) or `clean`; and whether the first human review was followed by changes
+to the files it commented on (`changed-after-review`, `unchanged-after-review`,
+`no-review`). It reads the repository from config, or from `--repo OWNER/NAME`.
+
 ## What you get
 
 ```

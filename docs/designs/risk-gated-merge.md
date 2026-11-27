@@ -530,14 +530,24 @@ prints, as markdown or CSV:
     under the allowlist);
 *   an outcome label per pull request:
     *   **reverted**: a later merged pull request whose title starts `Revert "` and whose body
-        says `Reverts <owner>/<repo>#<n>` or `Reverts #<n>`;
-    *   **modified-later**: a pull request merged within 14 days removes or changes a line that
-        GitHub's GraphQL `blame`, run on that later pull request's base commit, attributes to this
-        pull request's merge commit. This is exact. It costs one blame call per (later pull
-        request, file) pair, only for files both pull requests touched;
-    *   **hotfixed**: `modified-later`, and the later pull request's title, body or branch matches
-        `fix|bug|hotfix|regress|revert`, or it mentions this pull request by number. This is a
-        judgement about intent, so it is audited;
+        says `Reverts <owner>/<repo>#<n>` or `Reverts #<n>` (GitHub's form), or whose title starts
+        `Revert #<n>` (the form people write by hand);
+    *   **modified-later**: a pull request L merged within 14 days removes or changes a line of
+        this one. Each line L removed is blamed with GitHub's GraphQL `blame` at L's merge base
+        (the commit L's patch is numbered against), and the blamed commit is credited to the pull
+        request GitHub says introduced it (`GET /repos/{o}/{r}/commits/{sha}/pulls`), so it works
+        however this pull request was merged. A commit that is this pull request's merge commit
+        skips the lookup. Limits: a line changed again between this pull request and L is credited
+        to the change in between, an L that branched before this one merged never saw its lines,
+        and at most 200 commit lookups are made per run;
+    *   **hotfixed**: `modified-later`, and L's title or head branch contains a fix word
+        (`fix`, `fixes`, `fixed`, `hotfix`, `bugfix`, `bug`, `regression`, `revert`, bounded by
+        non-letters, so "fixture" does not count), or L's body names this pull request through a
+        linking phrase such as `Fixes #<n>` or `regression introduced by #<n>`. A bare `#<n>`
+        mention does not count. This is a judgement about intent, so it is audited;
+    *   **not-checked**: nothing was found, but a merge base, blame or lookup could not be read
+        (for example, GitHub sends no patch for a very large file), or the lookup bound was
+        reached; the reason is listed;
     *   **clean**: none of these;
 *   a first-review label per pull request, describing the revision a human first reviewed rather
     than the one that merged, so problems a reviewer caught count as evidence. Author and bot
@@ -557,8 +567,9 @@ prints, as markdown or CSV:
 
 A pull request labelled `changed-after-review` is treated as "would have been wrong if merged
 unreviewed" when a merge class is tested against history. No outcome label feeds a merge decision
-until a hand-audited sample of 30 agrees with it at 90% or better. A first version of this command
-already exists (PR-55); exact attribution, the native count and the extra reports follow in PR-55b.
+until a hand-audited sample of 30 agrees with it at 90% or better. The command exists (PR-55 and
+PR-55b); a pilot run over sister repositories is recorded in
+`docs/designs/trials/risk-gated-merge-baseline.md`.
 The command writes nothing to GitHub. Results go into a trials file without organisation or
 repository names, as `docs/designs/trials/` already does. The first candidate count is taken before
 any code, with a one-off `gh pr list` query (see the Detailed Implementation Plan).
@@ -1016,8 +1027,9 @@ and the `clientMethods` list in `internal/ghclient/client_test.go`.
 
 *   **Proposed Changes**: `Blame(ctx, repo, sha, path string) ([]BlameRange, error)` on `*REST`,
     using the GraphQL `blame` field on a commit's file. `BlameRange` holds `StartLine`, `EndLine`
-    and the commit SHA. Uses the existing `GraphQLURL`. Test against `httptest` with a recorded
-    response shape (unverified until run against GitHub).
+    and the commit SHA. Uses the existing `GraphQLURL`. Test against `httptest`. As built, a
+    second read, `PullRequestsForCommit(ctx, repo, sha) ([]int, error)`, maps a blamed commit to
+    its pull requests. Both response shapes were confirmed by a live, read-only run.
 
 ##### 5. `cmd/reviewer/outcomes.go` and `outcomes_test.go` (Modify)
 
@@ -1025,7 +1037,8 @@ and the `clientMethods` list in `internal/ghclient/client_test.go`.
     *   Replace line-range overlap with `modified-later`: for a later pull request L merged within
         14 days that touches a file this pull request P touched, take L's removed lines
         (`diff.BaseLines` on L's patch), blame that file at L's base commit, and mark P
-        `modified-later` if any removed line is attributed to P's merge commit.
+        `modified-later` if any removed line is blamed to a commit GitHub associates with P and
+        not with L. As built, blame runs at L's merge base, not L's base commit.
     *   `hotfixed`: `modified-later` and L's title, body or head branch matches
         `(?i)\b(fix|bug|hotfix|regress|revert)` or contains `#<P>`.
     *   Report the native docs-only count (every changed path, including removals and renames,

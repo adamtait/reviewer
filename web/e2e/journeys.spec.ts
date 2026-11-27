@@ -1152,3 +1152,29 @@ test.describe('read a Markdown file drawn or as text', () => {
     await expect(page.getByRole('button', { name: /Markdown/ })).toHaveCount(0);
   });
 });
+
+test.describe('read a Markdown file in the diff drawn or as text', () => {
+  test('a deleted Markdown file can be drawn, and turned back to text', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(pull);
+    const old = page.locator('[data-path="docs/old.md"]');
+    await expect(old.locator('.cm-content')).toContainText('Notes nobody reads.');
+
+    const toggle = old.getByRole('button', { name: 'Rendered' });
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await toggle.click();
+    await expect(old.getByTestId('markdown-file')).toHaveText('Notes nobody reads.');
+    await expect(old.locator('.cm-editor')).toHaveCount(0);
+
+    await toggle.click();
+    await expect(old.locator('.cm-content')).toContainText('Notes nobody reads.');
+  });
+
+  test('only Markdown files have the switch', async ({ page }) => {
+    await fakeApi(page);
+    await page.goto(pull);
+    await expect(page.locator('[data-path="src/cart.ts"] .cm-content').first()).toBeVisible();
+    await expect(page.locator('.file-diff .file-view')).toHaveCount(1);
+    await expect(page.locator('[data-path="docs/old.md"] .file-view')).toBeVisible();
+  });
+});

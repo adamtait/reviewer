@@ -254,3 +254,58 @@ describe('a changed file', () => {
     }
   });
 });
+
+describe('a Markdown file in the diff', () => {
+  const guide: ChangedFile = { path: 'docs/guide.md', previousPath: '', status: 'modified' };
+  const showFile = (target: ChangedFile, mode: 'diff' | 'new') =>
+    render(<FileDiff owner="example" repo="alpha" pull={pull} file={target} mode={mode} layout="split" eager />);
+  const rendered = (container: HTMLElement) => container.querySelector('.file-view');
+
+  it('starts as text, and can be drawn where one version of it is shown', async () => {
+    serve({ [`${mergeBase}:docs/old.md`]: { path: 'docs/old.md', kind: 'text', text: '# Old notes\n\nNobody reads them.\n' } });
+    const { findByTestId, getByRole, queryByTestId } = show('docs/old.md');
+    expect((await findByTestId('code')).textContent).toContain('# Old notes');
+
+    const toggle = getByRole('button', { name: 'Rendered' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    const drawn = await findByTestId('markdown-file');
+    expect(drawn.querySelector('h3')?.textContent).toBe('Old notes');
+    expect(queryByTestId('code')).toBeNull();
+
+    fireEvent.click(toggle);
+    expect((await findByTestId('code')).textContent).toContain('# Old notes');
+  });
+
+  it('draws the new version while only the new code is shown', async () => {
+    serve({ [`${head}:docs/guide.md`]: { path: 'docs/guide.md', kind: 'text', text: 'The **new** guide.\n' } });
+    const { findByTestId, getByRole } = showFile(guide, 'new');
+    await findByTestId('code');
+    fireEvent.click(getByRole('button', { name: 'Rendered' }));
+    expect((await findByTestId('markdown-file')).querySelector('strong')?.textContent).toBe('new');
+  });
+
+  it('has no switch on a file that is not Markdown, or on a deleted file while only the new code is shown', async () => {
+    serve();
+    const code = show('src/tax.ts');
+    await code.findByTestId('code');
+    expect(rendered(code.container)).toBeNull();
+    cleanup();
+
+    const deleted = show('docs/old.md', 'new');
+    await deleted.findByText('This pull request deletes this file.');
+    expect(rendered(deleted.container)).toBeNull();
+  });
+
+  it('has no switch on a closed file', async () => {
+    serve();
+    const { container } = render(
+      <FileDiff owner="example" repo="alpha" pull={pull} file={changed('docs/old.md')} mode="diff" layout="split" eager open={false} />,
+    );
+    await waitFor(() => {
+      expect(file).toHaveBeenCalled();
+    });
+    expect(rendered(container)).toBeNull();
+  });
+});

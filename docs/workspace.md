@@ -576,7 +576,8 @@ What a user should know:
 - **A Markdown file opened on its own is drawn**, under the same limits, unless its address
   selects a line: then it opens as text, so the line can be shown. "Show raw Markdown" and "Show
   rendered Markdown" switch between the two. Go to definition and find references work on the
-  text only. In the diff, a Markdown file is always text.
+  text only. In the diff, a Markdown file shows as text, and "Rendered" on its bar draws it where
+  one version is shown: an added or deleted file, or any file under "Show new code only".
 - **Asking is `a`**, with the cursor on a line or with lines selected, or "Ask" after clicking a
   line number. The code asked about is quoted above the question. The conversation is kept in the
   page and is gone on reload. Under each answer, the lines the model was given are listed by file,

@@ -6,6 +6,7 @@ import { ApiFailure, api, isNotFound } from '../api/client';
 import type { ChangedFile, File, PullView } from '../api/types';
 import { blobUrl } from '../github/links';
 import { CodePane, type LineRef, MergePane, type PaneHandle, type SymbolIntent } from './CodePane';
+import { MarkdownFile, isMarkdown } from './MarkdownFile';
 
 /** Where one side of a changed file is read from. */
 export interface Source {
@@ -119,6 +120,13 @@ export function FileDiff({
   const [lineShown, setLineShown] = useState<number | undefined>(undefined);
   const paneLine = line === lineShown ? undefined : line;
   const section = useRef<HTMLElement>(null);
+  // A Markdown file can be drawn in place of its text, where one version of
+  // it is shown: an added or deleted file, or any file while only the new
+  // code is shown. It starts as text, as the rest of the diff is. Drawn, it
+  // has no pane, so moving through the changes passes it by.
+  const [rendered, setRendered] = useState(false);
+  const single = file.status === 'added' || (file.status === 'deleted' ? mode === 'diff' : mode === 'new');
+  const renderable = single && (isMarkdown(file.path) || isMarkdown(file.previousPath || file.path));
 
   // A large pull request has hundreds of files. Each is read when it comes
   // near the screen, not all at once.
@@ -204,6 +212,20 @@ export function FileDiff({
             )}
           </span>
         </button>
+        {renderable && open ? (
+          <button
+            type="button"
+            className="file-view"
+            aria-pressed={rendered}
+            title={rendered ? 'Show this file’s Markdown as text' : 'Draw this file’s Markdown'}
+            onClick={() => {
+              onActivate?.();
+              setRendered((r) => !r);
+            }}
+          >
+            Rendered
+          </button>
+        ) : null}
       </h3>
       <div className="file-body" id={bodyId} hidden={!open}>
         {open ? body() : null}
@@ -237,6 +259,11 @@ export function FileDiff({
 
     const oldText = before && 'file' in before ? before.file.text : null;
     const newText = after && 'file' in after ? after.file.text : null;
+
+    if (renderable && rendered) {
+      const text = newText ?? oldText;
+      if (text !== null) return <MarkdownFile text={text} github={pull.webUrl} />;
+    }
 
     if (newText === null && oldText !== null) {
       if (mode === 'new') return <p className="muted pad">This pull request deletes this file.</p>;

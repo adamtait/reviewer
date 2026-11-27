@@ -57,6 +57,9 @@ type PullRequest struct {
 	// is present when one pull request is read and absent from a list. The
 	// files call stops at 3,000, so this is how a caller knows it was cut short.
 	ChangedFiles int `json:"changed_files"`
+	// MergedAt is zero for a pull request that was closed without merging, or
+	// is still open. Outcome measurement orders merged pull requests by it.
+	MergedAt time.Time `json:"merged_at"`
 }
 
 // RepoInfo is what must be known about a repository before anything of it is
@@ -87,6 +90,9 @@ type ReviewComment struct {
 	User     User      `json:"user"`
 	NodeID   string    `json:"node_id"`
 	CreateAt time.Time `json:"created_at"`
+	// PullRequestReviewID is the review the comment was submitted with, which
+	// is how outcome measurement finds what one review commented on.
+	PullRequestReviewID int64 `json:"pull_request_review_id"`
 }
 
 // Outdated reports whether GitHub has detached this comment from the diff, which
@@ -99,6 +105,20 @@ type IssueComment struct {
 	Body   string `json:"body"`
 	User   User   `json:"user"`
 	NodeID string `json:"node_id"`
+}
+
+// Review is one review of a pull request.
+type Review struct {
+	ID   int64 `json:"id"`
+	User User  `json:"user"`
+	// State is APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED or PENDING. A
+	// dismissed approval reads DISMISSED, not APPROVED.
+	State string `json:"state"`
+	// CommitID is the head the reviewer was looking at when they submitted,
+	// which is not necessarily the head that merged.
+	CommitID string `json:"commit_id"`
+	// SubmittedAt is zero for a PENDING review, which nobody else can see yet.
+	SubmittedAt time.Time `json:"submitted_at"`
 }
 
 // User is a comment's author. Login is what distinguishes this tool's own
@@ -130,6 +150,7 @@ type Client interface {
 	ListFiles(ctx context.Context, repo Repo, number int) ([]ChangedFile, error)
 	ListReviewComments(ctx context.Context, repo Repo, number int) ([]ReviewComment, error)
 	ListIssueComments(ctx context.Context, repo Repo, number int) ([]IssueComment, error)
+	ListReviews(ctx context.Context, repo Repo, number int) ([]Review, error)
 }
 
 // ErrNotFound distinguishes "this pull request does not exist" from "the token
@@ -278,6 +299,51 @@ func (c *REST) ListReviewComments(ctx context.Context, repo Repo, number int) ([
 
 func (c *REST) ListIssueComments(ctx context.Context, repo Repo, number int) ([]IssueComment, error) {
 	return paginate[IssueComment](ctx, c, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number))
+}
+
+func (c *REST) ListReviews(ctx context.Context, repo Repo, number int) ([]Review, error) {
+	return paginate[Review](ctx, c, fmt.Sprintf("/repos/%s/pulls/%d/reviews", repo, number))
+}
+
+// TimelineEvent is one entry of a pull request's timeline, reduced to what it
+// was and when.
+type TimelineEvent struct {
+	// Event is GitHub's name for the entry: "ready_for_review",
+	// "convert_to_draft", "committed", and so on.
+	Event string `json:"event"`
+	// CreatedAt is zero for the kinds of entry that carry their time under
+	// another name, such as a commit's.
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListTimelineEvents reads a pull request's timeline. It is a method on REST and
+// not part of Client: only outcome measurement asks, for the moment a draft was
+// marked ready for review, which the pull request itself does not record.
+func (c *REST) ListTimelineEvents(ctx context.Context, repo Repo, number int) ([]TimelineEvent, error) {
+	return paginate[TimelineEvent](ctx, c, fmt.Sprintf("/repos/%s/issues/%d/timeline", repo, number))
+}
+
+// MaxCompareFiles is the most files GitHub lists in one comparison. A
+// comparison that returns this many may have been cut short, so a caller
+// looking for a file in it cannot conclude from its absence that it is absent.
+const MaxCompareFiles = 300
+
+// CompareFiles returns the files changed between two commits, with their
+// patches, as GitHub's three-dot comparison reports them. It is a method on
+// REST and not part of Client, for the same reason as ListTimelineEvents.
+//
+// Not Compare, which wants the merge base alone and asks GitHub to leave the
+// files out. No paging parameter here: GitHub sends the file list with the
+// first page only.
+func (c *REST) CompareFiles(ctx context.Context, repo Repo, base, head string) ([]ChangedFile, error) {
+	var out struct {
+		Files []ChangedFile `json:"files"`
+	}
+	path := fmt.Sprintf("/repos/%s/compare/%s...%s", repo, url.PathEscape(base), url.PathEscape(head))
+	if err := c.get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return out.Files, nil
 }
 
 // paginate follows GitHub's Link headers to the end.

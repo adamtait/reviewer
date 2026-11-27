@@ -36,6 +36,7 @@ type options struct {
 	since        string
 	repo         string
 	format       string
+	allowlist    []string
 	yes          bool
 	version      bool
 }
@@ -57,9 +58,13 @@ flags:
   --force           with init, replace files that already exist
   --rules DIR       with rules test, the rule directory (default: .review/rules)
   --write           with baseline, record the measurement
-  --since WINDOW    with metrics, how far back to look: 7d, 2w, 36h (default: 7d)
-  --repo OWNER/NAME with metrics, the repository, overriding config
-  --format NAME     with metrics, markdown or csv (default: markdown)
+  --since WINDOW    with metrics or outcomes, how far back to look: 7d, 2w, 36h
+                    (default: 7d for metrics, 90d for outcomes)
+  --repo OWNER/NAME with metrics or outcomes, the repository, overriding config
+  --format NAME     with metrics or outcomes, markdown or csv (default: markdown)
+  --allowlist DIR   with outcomes, a directory whose files count as docs-only,
+                    such as docs/. Repeatable. A directory, never a file
+                    extension
   --no-invalidate   skip the model lane's second, disproving pass. For debugging
                     what the first pass produces; the run says its findings are
                     unchecked
@@ -74,6 +79,11 @@ flags:
 subcommands:
   metrics           acceptance by rule: how many of this tool's findings anybody
                     acted on, so a rule nobody wants can be deleted on evidence
+
+  outcomes          what happened to merged pull requests: time to first
+                    approval, docs-only candidates, reverts, approximate
+                    hotfixes, and whether the first review changed anything.
+                    Read-only
 
   baseline --write  record the type-coverage ratchet's mark, which future runs
                     compare against
@@ -100,7 +110,7 @@ A usage error exits 2.
 // --dry-run unparsed and report it as a stray argument.
 var subcommands = map[string]bool{
 	"init": true, "watch": true, "version": true, "rules": true, "baseline": true,
-	"metrics": true,
+	"metrics": true, "outcomes": true,
 }
 
 // twoWordSubcommands take a second bare word. Recognised before flag parsing for
@@ -152,6 +162,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.since, "since", "", "")
 	fs.StringVar(&o.repo, "repo", "", "")
 	fs.StringVar(&o.format, "format", "", "")
+	fs.Var((*repeated)(&o.allowlist), "allowlist", "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.version, "version", false, "")
 
@@ -189,14 +200,34 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errUsage{fmt.Errorf("--rules applies to `rules test`; a review reads the rule directory from config")}
 	case o.write && o.subcommand != "baseline":
 		return options{}, errUsage{fmt.Errorf("--write applies to baseline; a review never writes to the repository")}
-	case (o.since != "" || o.format != "") && o.subcommand != "metrics":
-		return options{}, errUsage{fmt.Errorf("--since and --format apply to metrics")}
-	case o.repo != "" && o.subcommand != "metrics":
-		return options{}, errUsage{fmt.Errorf("--repo applies to metrics; a review reads the repository from config")}
+	case (o.since != "" || o.format != "") && !measures(o.subcommand):
+		return options{}, errUsage{fmt.Errorf("--since and --format apply to metrics and outcomes")}
+	case o.repo != "" && !measures(o.subcommand):
+		return options{}, errUsage{fmt.Errorf("--repo applies to metrics and outcomes; a review reads the repository from config")}
+	case len(o.allowlist) > 0 && o.subcommand != "outcomes":
+		return options{}, errUsage{fmt.Errorf("--allowlist applies to outcomes")}
 	case o.yes && o.subcommand != "init":
 		return options{}, errUsage{fmt.Errorf("--yes applies to init, which is the only subcommand that asks anything")}
 	}
 	return o, nil
+}
+
+// measures reports whether a subcommand is one of the read-only measurements,
+// which share --since, --format and --repo.
+func measures(subcommand string) bool {
+	return subcommand == "metrics" || subcommand == "outcomes"
+}
+
+// repeated is a flag that may be given more than once, each value kept.
+// Repeated rather than comma-separated like --only, because a comma is a legal
+// character in a directory name and an analyzer id never contains one.
+type repeated []string
+
+func (r *repeated) String() string { return strings.Join(*r, ",") }
+
+func (r *repeated) Set(v string) error {
+	*r = append(*r, v)
+	return nil
 }
 
 func splitList(s string) []string {

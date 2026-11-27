@@ -233,7 +233,7 @@ func TestClientInterfaceIsReadOnly(t *testing.T) {
 // clientMethods is the interface's method set as source text. A compile-time
 // reflection check cannot see an interface's method names without instantiating
 // them, and the point here is to catch a *human* widening the interface.
-const clientMethods = "Viewer GetPullRequest ListPullRequests ListFiles ListReviewComments ListIssueComments"
+const clientMethods = "Viewer GetPullRequest ListPullRequests ListFiles ListReviewComments ListIssueComments ListReviews"
 
 func TestNextLink(t *testing.T) {
 	tests := map[string]string{
@@ -344,5 +344,109 @@ func TestListOpenPullRequestsSaysWhenItHasThemAll(t *testing.T) {
 	pulls, more, err := c.ListOpenPullRequests(context.Background(), Repo{Owner: "o", Name: "r"}, 2)
 	if err != nil || len(pulls) != 2 || more {
 		t.Errorf("pulls %d, more %v, err %v; want 2, false, nil", len(pulls), more, err)
+	}
+}
+
+// A pending review has no submitted_at, and a deleted account has no user. Both
+// must decode rather than fail the whole list.
+func TestListReviews(t *testing.T) {
+	var asked []string
+	_, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+		switch r.URL.Query().Get("page") {
+		case "":
+			w.Header().Set("Link", `<`+baseOf(r)+`/repos/o/r/pulls/7/reviews?page=2>; rel="next"`)
+			fmt.Fprint(w, `[{"id":1,"user":{"login":"alice","type":"User"},"state":"CHANGES_REQUESTED",`+
+				`"commit_id":"aaa","submitted_at":"2026-11-01T10:00:00Z"}]`)
+		default:
+			fmt.Fprint(w, `[{"id":2,"user":null,"state":"PENDING","commit_id":"bbb","submitted_at":null}]`)
+		}
+	})
+	got, err := c.ListReviews(context.Background(), Repo{"o", "r"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want both pages, got %+v", got)
+	}
+	first := got[0]
+	if first.ID != 1 || first.User.Login != "alice" || first.User.Type != "User" ||
+		first.State != "CHANGES_REQUESTED" || first.CommitID != "aaa" || first.SubmittedAt.IsZero() {
+		t.Errorf("first review = %+v", first)
+	}
+	if !got[1].SubmittedAt.IsZero() || got[1].User.Login != "" {
+		t.Errorf("pending review = %+v", got[1])
+	}
+	if asked[0] != "/repos/o/r/pulls/7/reviews" {
+		t.Errorf("asked for %q", asked[0])
+	}
+}
+
+func TestListTimelineEvents(t *testing.T) {
+	var asked string
+	_, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Path
+		// A commit carries its time under another name and must not break the list.
+		fmt.Fprint(w, `[{"event":"committed","sha":"aaa","author":{"date":"2026-11-01T09:00:00Z"}},
+		                {"event":"ready_for_review","created_at":"2026-11-01T10:00:00Z"}]`)
+	})
+	got, err := c.ListTimelineEvents(context.Background(), Repo{"o", "r"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != "/repos/o/r/issues/7/timeline" {
+		t.Errorf("asked for %q", asked)
+	}
+	if len(got) != 2 || got[1].Event != "ready_for_review" || got[1].CreatedAt.IsZero() || !got[0].CreatedAt.IsZero() {
+		t.Errorf("events = %+v", got)
+	}
+}
+
+// The file list is what is wanted, so the request must not carry the paging
+// parameter that Compare uses to leave it out.
+func TestCompareFiles(t *testing.T) {
+	s, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"merge_base_commit":{"sha":"base"},"files":[`+
+			`{"filename":"docs/b.md","previous_filename":"docs/a.md","status":"renamed","patch":"@@ -1 +1 @@"}]}`)
+	})
+	got, err := c.CompareFiles(context.Background(), Repo{"o", "r"}, "aaa", "bbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Filename != "docs/b.md" || got[0].PreviousFilename != "docs/a.md" || got[0].Patch == "" {
+		t.Errorf("files = %+v", got)
+	}
+	req := s.requests[0]
+	if req.URL.Path != "/repos/o/r/compare/aaa...bbb" {
+		t.Errorf("asked for %q", req.URL.Path)
+	}
+	if req.URL.RawQuery != "" {
+		t.Errorf("query %q would leave the file list out", req.URL.RawQuery)
+	}
+}
+
+func TestPullRequestCarriesMergedAt(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"number":1,"merged_at":"2026-11-01T10:00:00Z"},{"number":2,"merged_at":null}]`)
+	})
+	prs, err := c.ListPullRequests(context.Background(), Repo{"o", "r"}, "closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prs[0].MergedAt.IsZero() || !prs[1].MergedAt.IsZero() {
+		t.Errorf("merged_at = %v, %v; want set, then zero", prs[0].MergedAt, prs[1].MergedAt)
+	}
+}
+
+func TestReviewCommentCarriesItsReview(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"id":1,"path":"a.go","line":3,"pull_request_review_id":42}]`)
+	})
+	got, err := c.ListReviewComments(context.Background(), Repo{"o", "r"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].PullRequestReviewID != 42 {
+		t.Errorf("review id = %d, want 42", got[0].PullRequestReviewID)
 	}
 }

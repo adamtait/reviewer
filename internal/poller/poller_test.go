@@ -34,6 +34,9 @@ func (f *fakeClient) ListReviewComments(context.Context, ghclient.Repo, int) ([]
 func (f *fakeClient) ListIssueComments(context.Context, ghclient.Repo, int) ([]ghclient.IssueComment, error) {
 	return nil, nil
 }
+func (f *fakeClient) ListReviews(context.Context, ghclient.Repo, int) ([]ghclient.Review, error) {
+	return nil, nil
+}
 
 func at(minute int) time.Time {
 	return time.Date(2026, 9, 13, 10, minute, 0, 0, time.UTC)

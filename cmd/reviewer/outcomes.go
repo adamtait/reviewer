@@ -11,6 +11,7 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,8 +95,8 @@ type outcomeQuery struct {
 
 // outcomeReader is the part of the GitHub API outcomes reads. Narrower than
 // *ghclient.REST so the tests can stand in for it, and wider than ghclient.Client
-// because the timeline, a comparison's files and blame are reads only this
-// command needs.
+// because the timeline, comparisons, blame and a commit's pull requests are
+// reads only this command needs.
 type outcomeReader interface {
 	ListPullRequestsUpdatedSince(ctx context.Context, repo ghclient.Repo, since time.Time) ([]ghclient.PullRequest, error)
 	ListFiles(ctx context.Context, repo ghclient.Repo, number int) ([]ghclient.ChangedFile, error)
@@ -104,7 +105,9 @@ type outcomeReader interface {
 	ListIssueComments(ctx context.Context, repo ghclient.Repo, number int) ([]ghclient.IssueComment, error)
 	ListTimelineEvents(ctx context.Context, repo ghclient.Repo, number int) ([]ghclient.TimelineEvent, error)
 	CompareFiles(ctx context.Context, repo ghclient.Repo, base, head string) ([]ghclient.ChangedFile, error)
+	Compare(ctx context.Context, repo ghclient.Repo, base, head string) (string, error)
 	Blame(ctx context.Context, repo ghclient.Repo, sha, path string) ([]ghclient.BlameRange, error)
+	PullRequestsForCommit(ctx context.Context, repo ghclient.Repo, sha string) ([]int, error)
 }
 
 // The labels, as they appear in the output.
@@ -265,9 +268,7 @@ func measureOutcomes(ctx context.Context, client outcomeReader, repo ghclient.Re
 		report.PRs = append(report.PRs, record)
 	}
 
-	// Several earlier pull requests can share a later one and a file, and the
-	// blame of that file at that base is the same for all of them.
-	blames := blameCache{}
+	att := newAttribution(client, repo, merged)
 	for i := range report.PRs {
 		p := &report.PRs[i]
 		if by := reverts[p.Number]; by != 0 {
@@ -277,7 +278,7 @@ func measureOutcomes(ctx context.Context, client outcomeReader, repo ghclient.Re
 			// report.PRs[i] is merged[i]: both are in merge order, and the
 			// read stops at the first failure.
 			later := merged[i+1 : len(report.PRs)]
-			p.Outcome, p.By, p.Unchecked = laterOutcome(ctx, client, repo, merged[i], later, files, blames)
+			p.Outcome, p.By, p.Unchecked = att.laterOutcome(ctx, merged[i], later, files)
 		}
 		if q.Now.Sub(p.MergedAt) < laterWindow {
 			report.WindowOpen++
@@ -507,25 +508,26 @@ func findReverts(merged []ghclient.PullRequest, repo ghclient.Repo) map[int]int 
 // not-checked or clean, with the later pull request that decided it and, when
 // some blame could not be read, why.
 //
-// A later pull request L counts against P when a line L removed or changed is
-// one that blame, run on L's base commit, attributes to P's merge commit.
-// That replaces comparing the line numbers each patch reports, which a pull
-// request merged in between could shift. Blame follows the lines to where they
-// are by the time L is written, whatever moved them.
+// A later pull request L counts against P when a line L removed or changed was
+// last written by a commit of P's. Blame, run at the merge base L's patch is
+// numbered against, names the commit that last wrote each removed line, and
+// GitHub names the pull request that introduced that commit: P's squash
+// commit, one of its rebased commits, or a commit of the branch a merge commit
+// brought in. That replaces comparing the line numbers each patch reports,
+// which a pull request merged in between could shift; blame follows the lines
+// to where they are when L starts from them.
 //
-// It is exact for what blame credits to the merge commit, and blind to the
-// rest. A squash merge writes every line under that commit; a merge commit
-// leaves its lines credited to the branch's own commits, and a rebase merge of
-// several commits credits all but the last to commits that are not the merge
-// commit, so in both cases most of P's lines are not found. And L's base
-// commit is where the base branch stood when GitHub last updated L, while L's
-// patch is numbered against the merge base: if the file changed between the
-// two, a removed line's number points a little off.
+// What it cannot see, it does not claim. A line of P's that somebody changed
+// again before L is credited to that change, not to P. A later pull request
+// whose merge base predates P's merge never saw P's lines, so changed none of
+// them, and is not counted. A merge base GitHub cannot work out, a file blame
+// cannot read there, and a commit past the lookup bound leave P not-checked
+// rather than clean.
 //
 // A hotfix is preferred to a modification wherever both occur, because a fix
 // is the stronger claim about P.
-func laterOutcome(ctx context.Context, client outcomeReader, repo ghclient.Repo, p ghclient.PullRequest,
-	later []ghclient.PullRequest, files map[int][]ghclient.ChangedFile, blames blameCache) (string, int, string) {
+func (a *attribution) laterOutcome(ctx context.Context, p ghclient.PullRequest, later []ghclient.PullRequest,
+	files map[int][]ghclient.ChangedFile) (string, int, string) {
 
 	// Only files P left behind have lines of P's in them.
 	touched := map[string]bool{}
@@ -544,7 +546,7 @@ func laterOutcome(ctx context.Context, client outcomeReader, repo ghclient.Repo,
 			// later is in merge order, so every one after this is later too.
 			break
 		}
-		changed, why := changesLinesOf(ctx, client, repo, p, l, files[l.Number], touched, blames)
+		changed, why := a.changesLinesOf(ctx, p, l, files[l.Number], touched)
 		if why != "" && unchecked == "" {
 			unchecked = why
 		}
@@ -568,15 +570,20 @@ func laterOutcome(ctx context.Context, client outcomeReader, repo ghclient.Repo,
 }
 
 // changesLinesOf reports whether a later pull request L removed or changed a
-// line blame attributes to P's merge commit, and, when it could not tell for
-// some file, why.
+// line a commit of P's last wrote, and, when it could not tell for some file,
+// why.
 //
 // One blame per file both touched, and only for a file L removed lines from: a
 // pure addition changes nobody's lines.
-func changesLinesOf(ctx context.Context, client outcomeReader, repo ghclient.Repo, p, l ghclient.PullRequest,
-	lFiles []ghclient.ChangedFile, touched map[string]bool, blames blameCache) (bool, string) {
+func (a *attribution) changesLinesOf(ctx context.Context, p, l ghclient.PullRequest,
+	lFiles []ghclient.ChangedFile, touched map[string]bool) (bool, string) {
 
 	why := ""
+	note := func(reason string) {
+		if why == "" {
+			why = reason
+		}
+	}
 	for _, f := range lFiles {
 		// The file as it was before L, which is where P's lines were:
 		// renamed or not.
@@ -591,64 +598,192 @@ func changesLinesOf(ctx context.Context, client outcomeReader, repo ghclient.Rep
 		if len(removed) == 0 {
 			// GitHub leaves the patch out of a diff too large to send, and
 			// then only the count says lines went.
-			if f.Patch == "" && f.Deletions > 0 && why == "" {
-				why = fmt.Sprintf("GitHub sent no patch for %s in #%d", name, l.Number)
+			if f.Patch == "" && f.Deletions > 0 {
+				note(fmt.Sprintf("GitHub sent no patch for %s in #%d", name, l.Number))
 			}
 			continue
 		}
-		switch {
-		case p.MergeCommitSHA == "":
-			why = fmt.Sprintf("GitHub gave no merge commit for #%d", p.Number)
-			continue
-		case l.Base.SHA == "":
-			why = fmt.Sprintf("GitHub gave no base commit for #%d", l.Number)
-			continue
-		}
-		ranges, err := blames.blame(ctx, client, repo, l.Base.SHA, name)
+		base, err := a.mergeBase(ctx, l)
 		if err != nil {
-			if why == "" {
-				why = fmt.Sprintf("blaming %s at #%d's base: %v", name, l.Number, err)
-			}
+			note(fmt.Sprintf("finding #%d's merge base: %v", l.Number, err))
 			continue
 		}
-		if attributed(removed, ranges, p.MergeCommitSHA) {
+		ranges, err := a.blame(ctx, base, name)
+		if err != nil {
+			note(fmt.Sprintf("blaming %s at #%d's merge base: %v", name, l.Number, err))
+			continue
+		}
+		credited, err := a.credits(ctx, removed, ranges, p, l)
+		if credited {
 			return true, ""
+		}
+		if err != nil {
+			note(err.Error())
 		}
 	}
 	return false, why
 }
 
-// attributed reports whether blame credits any of the lines to the commit.
-func attributed(lines []int, ranges []ghclient.BlameRange, commit string) bool {
-	for _, line := range lines {
-		for _, r := range ranges {
-			if line >= r.StartLine && line <= r.EndLine && strings.EqualFold(r.Commit, commit) {
-				return true
-			}
-		}
-	}
-	return false
+// commitLookupCap bounds how many commits one run asks GitHub to name the pull
+// requests of. Each is a request, and a later pull request that rewrites old
+// code can name dozens of commits nobody in the window wrote, so without a
+// bound one large cleanup could spend the rate limit. A variable so the tests
+// can lower it.
+var commitLookupCap = 200
+
+// attribution works out whose lines a later pull request removed, and keeps
+// what it asked GitHub so that nothing is asked twice: several earlier pull
+// requests can share a later one, its merge base, a file, and the commits
+// blame names in it.
+type attribution struct {
+	client outcomeReader
+	repo   ghclient.Repo
+	// mergeCommits maps the merge commit of every pull request merged in the
+	// window, lower-cased, to its number. A blamed commit found here needs no
+	// lookup: a merge's own commit belongs to the pull request it merged.
+	mergeCommits map[string]int
+	mergeBases   map[int]shaResult
+	blames       map[string]blameResult
+	commitPulls  map[string]pullsResult
+	lookups      int
 }
 
-// blameCache holds each blame read, and each failure, by commit and path, so
-// neither is asked for twice.
-type blameCache map[string]blameResult
+type shaResult struct {
+	sha string
+	err error
+}
 
 type blameResult struct {
 	ranges []ghclient.BlameRange
 	err    error
 }
 
-func (c blameCache) blame(ctx context.Context, client outcomeReader, repo ghclient.Repo,
-	sha, path string) ([]ghclient.BlameRange, error) {
+type pullsResult struct {
+	numbers []int
+	err     error
+}
 
+func newAttribution(client outcomeReader, repo ghclient.Repo, merged []ghclient.PullRequest) *attribution {
+	a := &attribution{
+		client: client, repo: repo,
+		mergeCommits: map[string]int{},
+		mergeBases:   map[int]shaResult{},
+		blames:       map[string]blameResult{},
+		commitPulls:  map[string]pullsResult{},
+	}
+	for _, pr := range merged {
+		if pr.MergeCommitSHA != "" {
+			a.mergeCommits[strings.ToLower(pr.MergeCommitSHA)] = pr.Number
+		}
+	}
+	return a
+}
+
+// mergeBase is the commit L's patch is numbered against: the merge base of
+// its base and head, not its base, which is where the base branch stood when
+// GitHub last updated L and may hold lines L's patch never saw.
+func (a *attribution) mergeBase(ctx context.Context, l ghclient.PullRequest) (string, error) {
+	if r, ok := a.mergeBases[l.Number]; ok {
+		return r.sha, r.err
+	}
+	var r shaResult
+	if l.Base.SHA == "" || l.Head.SHA == "" {
+		r.err = errors.New("GitHub gave no base or head commit")
+	} else {
+		r.sha, r.err = a.client.Compare(ctx, a.repo, l.Base.SHA, l.Head.SHA)
+	}
+	a.mergeBases[l.Number] = r
+	return r.sha, r.err
+}
+
+func (a *attribution) blame(ctx context.Context, sha, path string) ([]ghclient.BlameRange, error) {
 	key := sha + "\x00" + path
-	if r, ok := c[key]; ok {
+	if r, ok := a.blames[key]; ok {
 		return r.ranges, r.err
 	}
-	ranges, err := client.Blame(ctx, repo, sha, path)
-	c[key] = blameResult{ranges: ranges, err: err}
+	ranges, err := a.client.Blame(ctx, a.repo, sha, path)
+	a.blames[key] = blameResult{ranges: ranges, err: err}
 	return ranges, err
+}
+
+// credits reports whether blame credits any of the removed lines to a commit
+// of P's that is not also L's, and, when a commit could not be looked up, why.
+//
+// A commit both pull requests carry, as when L was branched from P's branch,
+// is not P's line being changed by somebody else, so it does not count.
+func (a *attribution) credits(ctx context.Context, lines []int, ranges []ghclient.BlameRange,
+	p, l ghclient.PullRequest) (bool, error) {
+
+	var commits []string
+	seen := map[string]bool{}
+	for _, line := range lines {
+		commit := strings.ToLower(blamedAt(ranges, line))
+		if commit == "" || seen[commit] {
+			continue
+		}
+		seen[commit] = true
+		// P's own merge commit answers without a lookup, so it is looked
+		// for before anything spends one.
+		if strings.EqualFold(commit, p.MergeCommitSHA) {
+			return true, nil
+		}
+		commits = append(commits, commit)
+	}
+
+	var failed error
+	for _, commit := range commits {
+		if _, ok := a.mergeCommits[commit]; ok {
+			// Another pull request's merge, and not P's: that was checked.
+			continue
+		}
+		pulls, err := a.pullsOf(ctx, commit)
+		if err != nil {
+			if failed == nil {
+				failed = err
+			}
+			continue
+		}
+		if slices.Contains(pulls, p.Number) && !slices.Contains(pulls, l.Number) {
+			return true, nil
+		}
+	}
+	return false, failed
+}
+
+// pullsOf names the pull requests GitHub associates with a commit, within the
+// run's lookup bound.
+func (a *attribution) pullsOf(ctx context.Context, commit string) ([]int, error) {
+	if r, ok := a.commitPulls[commit]; ok {
+		return r.numbers, r.err
+	}
+	if a.lookups >= commitLookupCap {
+		return nil, fmt.Errorf("reached the bound of %d commit lookups in one run before commit %s",
+			commitLookupCap, shortSHA(commit))
+	}
+	a.lookups++
+	numbers, err := a.client.PullRequestsForCommit(ctx, a.repo, commit)
+	if err != nil {
+		err = fmt.Errorf("finding the pull requests of commit %s: %w", shortSHA(commit), err)
+	}
+	a.commitPulls[commit] = pullsResult{numbers: numbers, err: err}
+	return numbers, err
+}
+
+// blamedAt is the commit blame credits a line to, or "" when no range holds it.
+func blamedAt(ranges []ghclient.BlameRange, line int) string {
+	for _, r := range ranges {
+		if line >= r.StartLine && line <= r.EndLine {
+			return r.Commit
+		}
+	}
+	return ""
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // fixWords are the words in a later pull request's title, body or branch that
@@ -790,9 +925,11 @@ func docsOnlyNative(files []ghclient.ChangedFile, allow []allowEntry) bool {
 // attributionCaveat is said of modified-later and hotfixed wherever they are
 // counted, and intentCaveat of hotfixed alone.
 const (
-	attributionCaveat = "find a later change by blame at the later pull request's base, which credits " +
-		"a line to a pull request only when it was squash-merged or rebased as one commit: lines a merge " +
-		"commit brought in stay with the branch's own commits and are not found"
+	attributionCaveat = "find a later change by blame at the later pull request's merge base, crediting " +
+		"each line it removed to the pull request GitHub says introduced the commit that last wrote it, " +
+		"however that pull request was merged. A line changed again in between is credited to the change " +
+		"in between; a later pull request that branched before this one merged never saw its lines and is " +
+		"not counted; and a file blame cannot read at the merge base leaves the pull request not-checked"
 	intentCaveat = "also judges intent from the later pull request's title, body and branch, so audit it " +
 		"by hand before relying on it"
 )

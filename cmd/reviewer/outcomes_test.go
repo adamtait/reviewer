@@ -30,16 +30,26 @@ type fakeOutcomes struct {
 	timeline      map[int][]ghclient.TimelineEvent
 	// compare is keyed "base...head".
 	compare map[string][]ghclient.ChangedFile
+	// mergeBase and mergeBaseErr are keyed "base...head". A merge base not
+	// set is the base itself, as it is for a branch up to date with it.
+	mergeBase    map[string]string
+	mergeBaseErr map[string]error
 	// blame and blameErr are keyed "sha:path". A blame asked for and in
 	// neither fails, so an unexpected one shows up as not-checked.
 	blame    map[string][]ghclient.BlameRange
 	blameErr map[string]error
+	// pulls maps a commit to the pull requests GitHub associates with it. A
+	// commit not set has none, as one pushed straight to the branch does.
+	pulls map[string][]int
 	// failFilesOf makes reading that pull request's files fail with failErr.
 	failFilesOf int
 	failErr     error
-	// compared and blamed record every comparison and blame asked for.
-	compared []string
-	blamed   []string
+	// compared, mergeBases, blamed and looked record every comparison,
+	// merge base, blame and commit lookup asked for.
+	compared   []string
+	mergeBases []string
+	blamed     []string
+	looked     []string
 }
 
 func (f *fakeOutcomes) ListPullRequestsUpdatedSince(context.Context, ghclient.Repo, time.Time) ([]ghclient.PullRequest, error) {
@@ -71,6 +81,21 @@ func (f *fakeOutcomes) CompareFiles(_ context.Context, _ ghclient.Repo, base, he
 		return nil, fmt.Errorf("%w (unexpected comparison %s)", ghclient.ErrNotFound, key)
 	}
 	return files, nil
+}
+func (f *fakeOutcomes) Compare(_ context.Context, _ ghclient.Repo, base, head string) (string, error) {
+	key := base + "..." + head
+	f.mergeBases = append(f.mergeBases, key)
+	if err := f.mergeBaseErr[key]; err != nil {
+		return "", err
+	}
+	if sha, ok := f.mergeBase[key]; ok {
+		return sha, nil
+	}
+	return base, nil
+}
+func (f *fakeOutcomes) PullRequestsForCommit(_ context.Context, _ ghclient.Repo, sha string) ([]int, error) {
+	f.looked = append(f.looked, sha)
+	return f.pulls[sha], nil
 }
 func (f *fakeOutcomes) Blame(_ context.Context, _ ghclient.Repo, sha, path string) ([]ghclient.BlameRange, error) {
 	key := sha + ":" + path
@@ -237,6 +262,10 @@ func TestALaterChangeToItsLinesIsModifiedLater(t *testing.T) {
 	got := measure(t, f)
 	if p := got[1]; p.Outcome != outcomeModified || p.By != 2 || p.Unchecked != "" {
 		t.Errorf("#1 = %s by #%d (%q), want modified-later by #2", p.Outcome, p.By, p.Unchecked)
+	}
+	// A squash merge's own commit answers without asking GitHub whose it is.
+	if len(f.looked) != 0 {
+		t.Errorf("looked up %v; P's merge commit needs no lookup", f.looked)
 	}
 }
 
@@ -422,7 +451,7 @@ func TestABlameErrorIsReportedAsNotChecked(t *testing.T) {
 		},
 	}
 	got := measure(t, f)
-	if p := got[1]; p.Outcome != outcomeUnchecked || !strings.Contains(p.Unchecked, "blaming a.go at #2's base") {
+	if p := got[1]; p.Outcome != outcomeUnchecked || !strings.Contains(p.Unchecked, "blaming a.go at #2's merge base") {
 		t.Errorf("#1 = %s (%q), want not-checked with the blame's error", p.Outcome, p.Unchecked)
 	}
 	if p := got[3]; p.Outcome != outcomeUnchecked || !strings.Contains(p.Unchecked, "no patch for a.go in #4") {
@@ -433,7 +462,7 @@ func TestABlameErrorIsReportedAsNotChecked(t *testing.T) {
 	for _, want := range []string{
 		"| not-checked | 2 |",
 		"| clean | 2 |",
-		"#1 (blaming a.go at #2's base: Something went wrong",
+		"#1 (blaming a.go at #2's merge base: Something went wrong",
 		"#3 (GitHub sent no patch for a.go in #4)",
 	} {
 		if !strings.Contains(out, want) {
@@ -442,6 +471,143 @@ func TestABlameErrorIsReportedAsNotChecked(t *testing.T) {
 	}
 	if strings.Contains(out, "incomplete") {
 		t.Errorf("a blame error is not a partial read:\n%s", out)
+	}
+}
+
+// In a repository that merges with merge commits, blame credits P's lines to
+// the commits of its branch, never to its merge commit. GitHub's answer to
+// which pull request introduced that commit is what makes them P's.
+func TestALineFromAMergedBranchIsCreditedThroughItsPullRequest(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		pulls []int
+		want  string
+	}{
+		{"a commit of P's branch", []int{1}, outcomeModified},
+		// L was branched from P's branch, so the commit is L's as much as
+		// P's, and L changing it is not somebody else changing P's work.
+		{"a commit both carry", []int{1, 2}, outcomeClean},
+		// Pushed straight to the branch: nobody's pull request.
+		{"a commit no pull request introduced", nil, outcomeClean},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeOutcomes{
+				prs: []ghclient.PullRequest{
+					mergedPR(1, "Add foo", "", day0),
+					mergedPR(2, "Add feature", "", day0.AddDate(0, 0, 3)),
+				},
+				files: map[int][]ghclient.ChangedFile{
+					1: {file("a.go", "modified", addFoo)},
+					2: {file("a.go", "modified", changeBar)},
+				},
+				blame: map[string][]ghclient.BlameRange{"base2:a.go": fooBlame("p1-branch")},
+				pulls: map[string][]int{"p1-branch": tt.pulls},
+			}
+			p := measure(t, f)[1]
+			if p.Outcome != tt.want || p.Unchecked != "" {
+				t.Errorf("#1 = %s by #%d (%q), want %s", p.Outcome, p.By, p.Unchecked, tt.want)
+			}
+			if strings.Join(f.looked, " ") != "p1-branch" {
+				t.Errorf("looked up %v, want p1-branch once", f.looked)
+			}
+		})
+	}
+}
+
+// Each commit looked up is a request, so a run stops looking past a bound and
+// says which pull requests that left unchecked, rather than calling them clean.
+func TestTheLookupBoundLeavesTheRestNotChecked(t *testing.T) {
+	defer func(was int) { commitLookupCap = was }(commitLookupCap)
+	commitLookupCap = 1
+	// Replaces lines 11 and 12.
+	twoLines := "@@ -10,3 +10,3 @@ func a() {\n" +
+		" \tfoo()\n" +
+		"-\tbar()\n" +
+		"-\tbaz()\n" +
+		"+\tbar(ctx)\n" +
+		"+\tbaz(ctx)"
+	f := &fakeOutcomes{
+		prs: []ghclient.PullRequest{
+			mergedPR(1, "Add foo", "", day0),
+			mergedPR(2, "Add feature", "", day0.AddDate(0, 0, 3)),
+		},
+		files: map[int][]ghclient.ChangedFile{
+			1: {file("a.go", "modified", addFoo)},
+			2: {file("a.go", "modified", twoLines)},
+		},
+		blame: map[string][]ghclient.BlameRange{"base2:a.go": {
+			{StartLine: 1, EndLine: 11, Commit: "x1"},
+			{StartLine: 12, EndLine: 40, Commit: "x2"},
+		}},
+	}
+	p := measure(t, f)[1]
+	if p.Outcome != outcomeUnchecked || !strings.Contains(p.Unchecked, "bound of 1 commit lookups") {
+		t.Errorf("#1 = %s (%q), want not-checked at the lookup bound", p.Outcome, p.Unchecked)
+	}
+	if strings.Join(f.looked, " ") != "x1" {
+		t.Errorf("looked up %v, want only x1 before the bound", f.looked)
+	}
+}
+
+// L's patch is numbered against the merge base of its branch, not against its
+// base commit, which is wherever the base branch stood when GitHub last
+// updated L. Blame has to read the file the line numbers describe.
+func TestBlameRunsAtTheMergeBase(t *testing.T) {
+	both := []ghclient.ChangedFile{file("a.go", "modified", changeBar), file("b.go", "modified", changeBar)}
+	f := &fakeOutcomes{
+		prs: []ghclient.PullRequest{
+			mergedPR(1, "Add foo", "", day0),
+			mergedPR(2, "Add foo to b", "", day0.AddDate(0, 0, 1)),
+			mergedPR(3, "Add feature", "", day0.AddDate(0, 0, 3)),
+		},
+		files: map[int][]ghclient.ChangedFile{
+			1: {file("a.go", "modified", addFoo)},
+			2: {file("b.go", "modified", addFoo)},
+			3: both,
+		},
+		mergeBase: map[string]string{"base3...head3": "mb3"},
+		blame: map[string][]ghclient.BlameRange{
+			"mb3:a.go": fooBlame("merge1"),
+			"mb3:b.go": fooBlame("merge2"),
+		},
+	}
+	got := measure(t, f)
+	for _, n := range []int{1, 2} {
+		if p := got[n]; p.Outcome != outcomeModified || p.By != 3 {
+			t.Errorf("#%d = %s by #%d (%q), want modified-later by #3", n, p.Outcome, p.By, p.Unchecked)
+		}
+	}
+	if strings.Join(f.blamed, " ") != "mb3:a.go mb3:b.go" {
+		t.Errorf("blamed %v, want both files at the merge base mb3", f.blamed)
+	}
+	// Two earlier pull requests share the later one: one merge base.
+	if strings.Join(f.mergeBases, " ") != "base3...head3" {
+		t.Errorf("asked for merge bases %v, want #3's once", f.mergeBases)
+	}
+	// Each line is a merge commit of the window's, so nothing is looked up.
+	if len(f.looked) != 0 {
+		t.Errorf("looked up %v; a merge commit needs no lookup", f.looked)
+	}
+}
+
+func TestAMergeBaseGitHubCannotFindLeavesItNotChecked(t *testing.T) {
+	f := &fakeOutcomes{
+		prs: []ghclient.PullRequest{
+			mergedPR(1, "Add foo", "", day0),
+			mergedPR(2, "Add feature", "", day0.AddDate(0, 0, 3)),
+		},
+		files: map[int][]ghclient.ChangedFile{
+			1: {file("a.go", "modified", addFoo)},
+			2: {file("a.go", "modified", changeBar)},
+		},
+		mergeBaseErr: map[string]error{"base2...head2": fmt.Errorf("%w (head force-pushed)", ghclient.ErrNotFound)},
+	}
+	p := measure(t, f)[1]
+	if p.Outcome != outcomeUnchecked || !strings.Contains(p.Unchecked, "finding #2's merge base") {
+		t.Errorf("#1 = %s (%q), want not-checked for the merge base", p.Outcome, p.Unchecked)
+	}
+	if len(f.blamed) != 0 {
+		t.Errorf("blamed %v with no merge base to blame at", f.blamed)
 	}
 }
 
@@ -908,7 +1074,7 @@ func TestTheSummaryStatesItsMeasures(t *testing.T) {
 		"| unchanged-after-review | 2 |",
 		"| no-review | 0 |",
 		"`modified-later` and `hotfixed` find a later change by blame",
-		"squash-merged",
+		"however that pull request was merged",
 		"audit it by hand",
 	} {
 		if !strings.Contains(out, want) {
@@ -916,7 +1082,7 @@ func TestTheSummaryStatesItsMeasures(t *testing.T) {
 		}
 	}
 	// Nothing went unchecked, so nothing says so.
-	if strings.Contains(out, "not-checked") {
+	if strings.Contains(out, "| not-checked |") {
 		t.Errorf("a not-checked row with nothing unchecked:\n%s", out)
 	}
 }
@@ -960,7 +1126,7 @@ func TestOutcomesCSVHasOneRowPerPullRequest(t *testing.T) {
 		t.Errorf("row 2 = %s", got)
 	}
 	// A CSV has nowhere to carry the caveat, so it goes to stderr.
-	if !strings.Contains(stderr.String(), "squash-merged") {
+	if !strings.Contains(stderr.String(), "merge base") {
 		t.Errorf("want the attribution caveat on stderr:\n%s", stderr.String())
 	}
 }
@@ -1045,9 +1211,10 @@ func TestOutcomesRunsAgainstTheAPI(t *testing.T) {
 				writes++
 			}
 			blamed = append(blamed, fmt.Sprintf("%v:%v", request.Variables["oid"], request.Variables["path"]))
+			// c1 is a commit of #1's branch, which a merge commit brought in.
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{
 				"object": map[string]any{"blame": map[string]any{"ranges": []map[string]any{
-					{"startingLine": 1, "endingLine": 2, "commit": map[string]string{"oid": "m1"}},
+					{"startingLine": 1, "endingLine": 2, "commit": map[string]string{"oid": "c1"}},
 				}}}}}})
 			return
 		}
@@ -1077,6 +1244,10 @@ func TestOutcomesRunsAgainstTheAPI(t *testing.T) {
 				"user": map[string]string{"login": "reviewer-bot", "type": "Bot"}}})
 		case strings.HasSuffix(r.URL.Path, "/issues/4/comments"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case strings.HasSuffix(r.URL.Path, "/compare/b4...def"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"merge_base_commit": map[string]string{"sha": "mb4"}})
+		case strings.HasSuffix(r.URL.Path, "/commits/c1/pulls"):
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"number": 1}})
 		case strings.HasSuffix(r.URL.Path, "/pulls"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"number": 4, "title": "Correct the docs", "updated_at": fixed.Format(time.RFC3339),
@@ -1124,8 +1295,8 @@ func TestOutcomesRunsAgainstTheAPI(t *testing.T) {
 		"owner/name, 2 pull requests merged since",
 		"| hours to first approval, median | 3.0 |",
 		"| docs-only candidates, strict | 2 |",
-		// #4 removed a line blame credits to #1's merge commit, from a fix/
-		// branch.
+		// #4 removed a line blame credits to a commit GitHub says #1
+		// introduced, from a fix- branch.
 		"| hotfixed | 1 |",
 		"| clean | 1 |",
 		"1 of 2 merged pull requests read have no `<!-- rv:risk -->` comment by `reviewer-bot`: #4.",
@@ -1135,8 +1306,8 @@ func TestOutcomesRunsAgainstTheAPI(t *testing.T) {
 			t.Errorf("want %q in:\n%s\nstderr:\n%s", want, out, stderr.String())
 		}
 	}
-	if strings.Join(blamed, " ") != "b4:docs/a.md" {
-		t.Errorf("blamed %v, want docs/a.md at #4's base only", blamed)
+	if strings.Join(blamed, " ") != "mb4:docs/a.md" {
+		t.Errorf("blamed %v, want docs/a.md at #4's merge base only", blamed)
 	}
 	if writes != 0 {
 		t.Errorf("made %d writes; outcomes is read-only", writes)

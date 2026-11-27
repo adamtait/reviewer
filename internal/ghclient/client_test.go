@@ -493,3 +493,34 @@ func TestChangedFileCarriesDeletions(t *testing.T) {
 		t.Errorf("file = %+v", got[0])
 	}
 }
+
+// The response below is in the shape GitHub documents for a commit's pull
+// requests, a list of pull requests. It has not been compared with a response
+// from GitHub itself.
+func TestPullRequestsForCommit(t *testing.T) {
+	s, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"number":12,"state":"closed","merged_at":"2026-11-01T10:00:00Z",`+
+			`"merge_commit_sha":"m12","head":{"ref":"alice/feature","sha":"h12"}}]`)
+	})
+	got, err := c.PullRequestsForCommit(context.Background(), Repo{"o", "r"}, "c0ffee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != 12 {
+		t.Errorf("pull requests = %v, want [12]", got)
+	}
+	req := s.requests[0]
+	if req.Method != http.MethodGet || req.URL.Path != "/repos/o/r/commits/c0ffee/pulls" {
+		t.Errorf("asked %s %s", req.Method, req.URL.Path)
+	}
+}
+
+// A commit no pull request introduced, pushed straight to the branch, has
+// none, and that is an answer rather than an error.
+func TestPullRequestsForACommitWithNone(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, `[]`) })
+	got, err := c.PullRequestsForCommit(context.Background(), Repo{"o", "r"}, "c0ffee")
+	if err != nil || len(got) != 0 {
+		t.Errorf("got %v, %v; want none and no error", got, err)
+	}
+}

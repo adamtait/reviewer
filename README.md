@@ -71,11 +71,15 @@ human approval; how many pull requests only touched the `--allowlist` directorie
 (a directory, never a file extension), counted strictly (only added or modified
 files) and natively (every changed path, removals and renames included); whether
 each was `reverted` (GitHub's revert title and body), `modified-later` (a pull
-request merged within 14 days removed or changed a line that GitHub's blame credits
-to this one's merge commit, which finds a squash merge's lines but not a merge
-commit's), `hotfixed` (modified later by a pull request that says it is a fix or
-names this one), `not-checked` (the blame could not be read) or `clean`; and whether
-the first human review was followed by changes to the files it commented on
+request merged within 14 days removed or changed a line that GitHub's blame, at
+that pull request's merge base, credits to a commit this one introduced, whether it
+was squashed, rebased or merged with a merge commit), `hotfixed` (modified later by
+a pull request that says it is a fix or names this one), `not-checked` (the merge
+base, the blame or a commit's pull request could not be read, or the run reached its
+bound of 200 commit lookups) or `clean`. A line changed again in between counts
+against the change in between, and a later pull request branched before this one
+merged never saw its lines and does not count. It reports whether the first human
+review was followed by changes to the files it commented on
 (`changed-after-review`, `unchanged-after-review`, `no-review`). It also lists the
 merged pull requests with no `<!-- rv:risk -->` comment from this tool, and, per
 `risk/` label, how often it fired and the median hours to first approval with and

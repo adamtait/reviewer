@@ -347,6 +347,26 @@ func (c *REST) ListTimelineEvents(ctx context.Context, repo Repo, number int) ([
 	return paginate[TimelineEvent](ctx, c, fmt.Sprintf("/repos/%s/issues/%d/timeline", repo, number))
 }
 
+// PullRequestsForCommit returns the numbers of the pull requests GitHub
+// associates with a commit: for a commit on the default branch, the merged pull
+// request that introduced it, whether as a squash, a rebased commit or a commit
+// of a merged branch. It is a method on REST and not part of Client: only
+// outcome measurement asks, to learn whose a line blame credits to a commit is.
+//
+// The response is decoded in the shape GitHub documents, a list of pull
+// requests, and has not been checked against a live response.
+func (c *REST) PullRequestsForCommit(ctx context.Context, repo Repo, sha string) ([]int, error) {
+	pulls, err := paginate[PullRequest](ctx, c, fmt.Sprintf("/repos/%s/commits/%s/pulls", repo, url.PathEscape(sha)))
+	if err != nil {
+		return nil, err
+	}
+	numbers := make([]int, 0, len(pulls))
+	for _, pr := range pulls {
+		numbers = append(numbers, pr.Number)
+	}
+	return numbers, nil
+}
+
 // MaxCompareFiles is the most files GitHub lists in one comparison. A
 // comparison that returns this many may have been cut short, so a caller
 // looking for a file in it cannot conclude from its absence that it is absent.

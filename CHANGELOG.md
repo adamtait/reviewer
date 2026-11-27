@@ -100,13 +100,16 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   strictly, added or modified files only, and natively, every changed path),
   which were reverted, modified later or hotfixed afterwards, and whether the
   first human review led to changes in the files it commented on. A later
-  change is found with GitHub's GraphQL blame at the later pull request's base:
-  a line it removed or changed that blame credits to this pull request's merge
-  commit. That finds squash merges' lines and not a merge commit's, and the
-  output says so; a blame that cannot be read leaves the pull request
-  `not-checked` with the reason. It also lists merged pull requests with no
-  `<!-- rv:risk -->` comment from this tool, and per `risk/` label how often it
-  fired and the median hours to first approval with and without it.
+  change is a line the later pull request removed or changed that GitHub's
+  GraphQL blame, at that pull request's merge base, credits to a commit GitHub
+  says this pull request introduced, however it was merged. A line changed again
+  in between counts against the change in between, and a later pull request
+  branched before this one merged does not count; the output says both. A merge
+  base, blame or commit lookup that cannot be read, or a run past its bound of
+  200 commit lookups, leaves the pull request `not-checked` with the reason. It
+  also lists merged pull requests with no `<!-- rv:risk -->` comment from this
+  tool, and per `risk/` label how often it fired and the median hours to first
+  approval with and without it.
   `--only-unreviewed` lists only the merges no human reviewed. Markdown or CSV;
   a partial read prints what it has and says what it could not read.
 

@@ -1,9 +1,20 @@
 # SPDX-License-Identifier: MIT
 name: reviewer
-description: Advisory code review on a pull request. Never fails a build.
+description: >
+  Advisory code review on a pull request. Never fails a build. With mode
+  "risk", attaches the advisory risk record instead: one comment and risk/
+  labels saying where to look first, which needs a job of its own with
+  actions: read.
 author: Adam Tait
 
 inputs:
+  mode:
+    description: >
+      "review" (the default) runs the review. "risk" runs `reviewer risk`,
+      the advisory risk record, in place of the review; give it its own job,
+      with contents: read, pull-requests: write and actions: read (ADR-0035).
+    required: false
+    default: review
   version:
     description: >
       The reviewer release to use, without a leading "v". Pin this: a floating
@@ -35,6 +46,18 @@ inputs:
 runs:
   using: composite
   steps:
+    # A mistyped mode would otherwise run the review, in a job meant for the
+    # risk record.
+    - name: Check the mode
+      shell: bash
+      run: |
+        case "${MODE}" in
+          review|risk) ;;
+          *) echo "::error::mode is review or risk, not '${MODE}'"; exit 2 ;;
+        esac
+      env:
+        MODE: ${{ inputs.mode }}
+
     # fetch-depth: 0 is the caller's responsibility and is checked rather than
     # assumed: without full history there is no merge base, and the diff would
     # silently cover the wrong commits.
@@ -73,6 +96,7 @@ runs:
         CHECKSUM: ${{ inputs.checksum }}
 
     - name: Review
+      if: inputs.mode != 'risk'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       # reviewer exits 0 whatever it finds (ADR-0009), so there is no
@@ -86,5 +110,19 @@ runs:
       env:
         BASE_REF: ${{ inputs.base || github.base_ref }}
         REPORTER: ${{ inputs.reporter }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        DRY_RUN: ${{ inputs.dry-run == 'true' && '1' || '' }}
+
+    - name: Risk
+      if: inputs.mode == 'risk'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # Advisory, like the review: it exits 0 whatever it finds or fails at,
+      # and says what failed in its comment.
+      run: |
+        reviewer risk \
+          --pr "${PR_NUMBER}" \
+          ${DRY_RUN:+--dry-run}
+      env:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         DRY_RUN: ${{ inputs.dry-run == 'true' && '1' || '' }}

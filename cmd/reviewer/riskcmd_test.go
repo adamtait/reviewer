@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/adamtait/reviewer/internal/ghclient"
 	"github.com/adamtait/reviewer/internal/reporters"
 	"github.com/adamtait/reviewer/internal/risk"
@@ -703,5 +705,52 @@ func TestRiskEndToEndWithArtifactsForbidden(t *testing.T) {
 	}
 	if labelled != `{"labels":["risk/auth"]}` {
 		t.Errorf("labels request = %s", labelled)
+	}
+}
+
+// The composite action runs `reviewer risk` with mode: risk, in place of the
+// review, and the review by default. The install and history-check steps are
+// shared, so they carry no condition.
+func TestActionModeRunsRisk(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Inputs map[string]struct {
+			Default string `yaml:"default"`
+		} `yaml:"inputs"`
+		Runs struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				If   string `yaml:"if"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(raw, &action); err != nil {
+		t.Fatal(err)
+	}
+	if got := action.Inputs["mode"].Default; got != "review" {
+		t.Errorf("mode defaults to %q, want review", got)
+	}
+	type step struct{ cond, run string }
+	steps := map[string]step{}
+	for _, s := range action.Runs.Steps {
+		steps[s.Name] = step{s.If, s.Run}
+	}
+	if s := steps["Review"]; s.cond != "inputs.mode != 'risk'" || strings.Contains(s.run, "reviewer risk") {
+		t.Errorf("the review step should run unless mode is risk: %+v", s)
+	}
+	if s := steps["Risk"]; s.cond != "inputs.mode == 'risk'" || !strings.Contains(s.run, "reviewer risk") || !strings.Contains(s.run, `--pr "${PR_NUMBER}"`) {
+		t.Errorf("the risk step should run reviewer risk --pr when mode is risk: %+v", s)
+	}
+	for _, shared := range []string{"Check the checkout has history", "Install reviewer"} {
+		if s, ok := steps[shared]; !ok || s.cond != "" {
+			t.Errorf("%q should be shared by both modes: %+v", shared, s)
+		}
+	}
+	if s := steps["Check the mode"]; !strings.Contains(s.run, "review|risk)") {
+		t.Errorf("a mistyped mode should be refused: %+v", s)
 	}
 }

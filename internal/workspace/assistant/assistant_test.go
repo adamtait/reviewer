@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/adamtait/reviewer/internal/model"
+	"github.com/adamtait/reviewer/internal/scip"
 	"github.com/adamtait/reviewer/internal/workspace/gateway"
 	"github.com/adamtait/reviewer/internal/workspace/navigation"
-	"github.com/adamtait/reviewer/internal/workspace/navigation/scip"
 	"github.com/adamtait/reviewer/internal/workspace/obs"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/testgithub"

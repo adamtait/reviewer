@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adamtait/reviewer/internal/workspace/navigation/scip"
+	"github.com/adamtait/reviewer/internal/scip"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 	"github.com/adamtait/reviewer/internal/workspace/testgithub"
 )

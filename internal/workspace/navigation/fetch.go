@@ -3,35 +3,35 @@
 package navigation
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"sync"
 	"time"
 
 	"github.com/adamtait/reviewer/internal/ghclient"
-	"github.com/adamtait/reviewer/internal/workspace/navigation/scip"
+	"github.com/adamtait/reviewer/internal/scip"
+	"github.com/adamtait/reviewer/internal/scipfetch"
 	"github.com/adamtait/reviewer/internal/workspace/source"
 )
 
-// The four states an index for a commit can be in.
+// The four states an index for a commit can be in. They are defined in
+// scipfetch, which decides them, and named here too so that callers of
+// navigation keep reading Status.State against navigation's own names.
 const (
 	// StateNone: there is no index for this commit. Lookups use text search.
-	StateNone = "none"
+	StateNone = scipfetch.StateNone
 	// StateRunning: CI is still building it.
-	StateRunning = "running"
+	StateRunning = scipfetch.StateRunning
 	// StateFailed: the index job ran and did not succeed.
-	StateFailed = "failed"
+	StateFailed = scipfetch.StateFailed
 	// StateReady: the index is loaded.
-	StateReady = "ready"
+	StateReady = scipfetch.StateReady
 )
 
 // IndexFile is the one file an index artifact must hold.
-const IndexFile = "index.scip"
+const IndexFile = scipfetch.IndexFile
 
 // whatIndex is the cache's name for a commit's index.
 const whatIndex = "index"
@@ -132,7 +132,7 @@ func (s *Service) Lookup(ctx context.Context, gh GitHub, owner, repo, sha string
 	if err != nil {
 		return nil, Status{}, fmt.Errorf("listing the index workflow's runs: %w", err)
 	}
-	state, run := classify(runs, sha, ".github/workflows/"+s.cfg.WorkflowFile)
+	state, run := scipfetch.Classify(runs, sha, ".github/workflows/"+s.cfg.WorkflowFile)
 	if state != StateReady {
 		status := Status{State: state}
 		if run != nil {
@@ -195,52 +195,6 @@ func (s *Service) remember(key source.Key, status Status, forHowLong time.Durati
 	s.memo[key] = remembered{status: status, until: now.Add(forHowLong)}
 }
 
-// classify applies the four-state rule to a workflow's runs for a commit, and
-// returns the run the state rests on.
-//
-// A run counts only if GitHub reports it as a push run of the index workflow
-// file for this very commit. That binding is all that ties an index to the
-// commit on screen, so it is checked here on the run's own fields and not left
-// to the filters the list was asked with.
-//
-// The first rule that applies decides:
-//
-//  1. at least one run that succeeded: ready, from the newest such run;
-//  2. otherwise at least one run that has not finished: running;
-//  3. otherwise at least one finished run: failed, with the newest run;
-//  4. no run: none.
-func classify(runs []ghclient.WorkflowRun, sha, workflowPath string) (string, *ghclient.WorkflowRun) {
-	var bound []ghclient.WorkflowRun
-	for _, run := range runs {
-		if run.HeadSHA == sha && run.Event == "push" && run.Path == workflowPath {
-			bound = append(bound, run)
-		}
-	}
-	// Newest first. The identifier breaks a tie between runs created in the
-	// same second: GitHub gives later runs larger ones.
-	sort.SliceStable(bound, func(i, j int) bool {
-		if !bound[i].CreatedAt.Equal(bound[j].CreatedAt) {
-			return bound[i].CreatedAt.After(bound[j].CreatedAt)
-		}
-		return bound[i].ID > bound[j].ID
-	})
-
-	for i := range bound {
-		if bound[i].Status == "completed" && bound[i].Conclusion == "success" {
-			return StateReady, &bound[i]
-		}
-	}
-	for i := range bound {
-		if bound[i].Status != "completed" {
-			return StateRunning, &bound[i]
-		}
-	}
-	if len(bound) > 0 {
-		return StateFailed, &bound[0]
-	}
-	return StateNone, nil
-}
-
 // fetch downloads a run's index artifact, decodes it and checks it against the
 // commit. An artifact that cannot be used gives an *unusable error with the
 // reason; any other error means GitHub could not be asked.
@@ -284,7 +238,7 @@ func (s *Service) fetch(ctx context.Context, gh GitHub, repo ghclient.Repo, runI
 		return nil, &unusable{"the index is larger than the workspace is set to read"}
 	}
 
-	raw, problem := unzipIndex(archive, s.cfg.IndexBytes)
+	raw, problem := scipfetch.Unzip(archive, s.cfg.IndexBytes)
 	if problem != "" {
 		return nil, &unusable{problem}
 	}
@@ -303,41 +257,4 @@ func (s *Service) fetch(ctx context.Context, gh GitHub, repo ghclient.Repo, runI
 		return nil, &unusable{"the index describes no file of this commit"}
 	}
 	return index, nil
-}
-
-// unzipIndex takes the index out of an artifact's zip archive. The archive
-// must hold exactly one file, named index.scip, no larger than limit. It
-// returns the file, or the reason the archive cannot be used.
-func unzipIndex(archive []byte, limit int64) (raw []byte, problem string) {
-	const wrongShape = "the index artifact does not hold exactly one file named " + IndexFile
-	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
-	if err != nil {
-		return nil, "the index artifact is not a zip archive"
-	}
-	var files []*zip.File
-	for _, f := range reader.File {
-		if !f.FileInfo().IsDir() {
-			files = append(files, f)
-		}
-	}
-	if len(files) != 1 || files[0].Name != IndexFile {
-		return nil, wrongShape
-	}
-	if files[0].UncompressedSize64 > uint64(limit) {
-		return nil, "the index is larger than the workspace is set to read"
-	}
-	opened, err := files[0].Open()
-	if err != nil {
-		return nil, "the index artifact could not be read"
-	}
-	defer func() { _ = opened.Close() }()
-	// The size in a zip's directory is a claim. The limit holds whatever it says.
-	raw, err = io.ReadAll(io.LimitReader(opened, limit+1))
-	if err != nil {
-		return nil, "the index artifact could not be read"
-	}
-	if int64(len(raw)) > limit {
-		return nil, "the index is larger than the workspace is set to read"
-	}
-	return raw, ""
 }

@@ -13,8 +13,16 @@ import (
 	"testing"
 )
 
-// serviceDirs are the trees that make up the service's own code.
-var serviceDirs = []string{".", filepath.Join("..", "..", "cmd", "workspace")}
+// serviceDirs are the trees that make up the service's own code. The index
+// decoder and fetch helpers moved out from under internal/workspace so that the
+// CLI could share them; they are still the service's code, and still held to
+// its rules.
+var serviceDirs = []string{
+	".",
+	filepath.Join("..", "..", "cmd", "workspace"),
+	filepath.Join("..", "scip"),
+	filepath.Join("..", "scipfetch"),
+}
 
 // forEachServiceFile parses the imports of every non-test Go file in the service.
 func forEachServiceFile(t *testing.T, visit func(path string, imports []string)) {

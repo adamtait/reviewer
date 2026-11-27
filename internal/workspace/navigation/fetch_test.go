@@ -178,44 +178,6 @@ func TestAReadyIndexIsLoadedOnceAndHeld(t *testing.T) {
 	}
 }
 
-func TestTheFourStates(t *testing.T) {
-	for name, tc := range map[string]struct {
-		runs  []ghclient.WorkflowRun
-		state string
-		runID int64
-	}{
-		"no run at all": {nil, StateNone, 0},
-		"one success":   {[]ghclient.WorkflowRun{run(10, sha, "completed", "success", 5)}, StateReady, 10},
-		"still running": {[]ghclient.WorkflowRun{run(11, sha, "in_progress", "", 1)}, StateRunning, 11},
-		"queued":        {[]ghclient.WorkflowRun{run(11, sha, "queued", "", 1)}, StateRunning, 11},
-		"failed":        {[]ghclient.WorkflowRun{run(12, sha, "completed", "failure", 3)}, StateFailed, 12},
-		"cancelled":     {[]ghclient.WorkflowRun{run(12, sha, "completed", "cancelled", 3)}, StateFailed, 12},
-		// A success wins over a newer run that failed or is still going: the
-		// index it built is of this commit, and that is what was asked for.
-		"a success and a newer failure": {[]ghclient.WorkflowRun{
-			run(13, sha, "completed", "failure", 1), run(10, sha, "completed", "success", 5)}, StateReady, 10},
-		"a success and a newer run in progress": {[]ghclient.WorkflowRun{
-			run(14, sha, "in_progress", "", 0), run(10, sha, "completed", "success", 5)}, StateReady, 10},
-		// Two successes: the newest.
-		"two successes": {[]ghclient.WorkflowRun{
-			run(10, sha, "completed", "success", 5), run(15, sha, "completed", "success", 2)}, StateReady, 15},
-		// A failure and a re-run still going: running, not failed.
-		"a failure and a newer run in progress": {[]ghclient.WorkflowRun{
-			run(12, sha, "completed", "failure", 3), run(16, sha, "in_progress", "", 0)}, StateRunning, 16},
-		"two failures": {[]ghclient.WorkflowRun{
-			run(12, sha, "completed", "failure", 3), run(17, sha, "completed", "failure", 1)}, StateFailed, 17},
-	} {
-		state, bound := classify(tc.runs, sha, workflow)
-		var id int64
-		if bound != nil {
-			id = bound.ID
-		}
-		if state != tc.state || id != tc.runID {
-			t.Errorf("%s: state %q from run %d, want %q from run %d", name, state, id, tc.state, tc.runID)
-		}
-	}
-}
-
 // The binding. An index is accepted only from a run GitHub reports as a push
 // run of the index workflow file for the commit on screen. Each of these runs
 // succeeded, and none may be used.

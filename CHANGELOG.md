@@ -123,6 +123,24 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   `docs/merge-classes.md` is the setup guide: the CODEOWNERS template, the
   ruleset settings, the lint as a required check, the sandbox steps that must
   pass first, the failure policy and the rollback.
+- `reviewer risk --pr N`, the advisory risk record (ADR-0035): one comment,
+  updated in place, and labels from a fixed set (`risk/auth`, `risk/data`,
+  `risk/ci`, `risk/deps`, `risk/infra`, `risk/wide`, `risk/reach`,
+  `risk/history`, `risk/review-config`), each naming a reason to look. It reads
+  the risk map (built-in patterns plus `.review/risk.yaml`), CODEOWNERS, file
+  history and the `review-index.yml` index at the merge base, so a pull request
+  cannot change its own record. It removes only labels its own earlier comment
+  lists, which needs `github.selfLogin` set for a workflow token. It decides
+  nothing and exits 0 after its first API call whatever fails, saying what in
+  the comment; a usage or configuration error exits 2. Drafts are skipped.
+  `--dry-run` prints the comment and the label changes.
+- The action's `mode` input: `review` (the default) or `risk`, which runs
+  `reviewer risk` with the same install steps.
+- `reviewer init` writes a `risk` job into `review.yml`, commented out, with its
+  own permissions (`contents: read`, `pull-requests: write`, `actions: read`),
+  skipping drafts. The workflow's trigger gains `ready_for_review`, so an
+  existing install that re-runs `init --force` also re-reviews a draft when it
+  is marked ready.
 
 ## [0.1.0] - 2026-09-16
 

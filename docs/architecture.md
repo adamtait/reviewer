@@ -98,6 +98,22 @@ A GitHub Action and a local poller, both built unconditionally (ADR-0019). The
 Action runs on `pull_request`, never `pull_request_target`, so a fork's code is
 never run with a token that can write (ADR-0018).
 
+## The risk record is a separate job
+
+`reviewer risk` (ADR-0035) is not a reporter of the review run. It runs as its own
+job, `risk`, beside the review job and in parallel with it, through the same
+action with `mode: risk`, and it holds `actions: read` on top of the review job's
+two permissions so it can download the navigation index (ADR-0034); the review
+job's permissions do not change (ADR-0018). It runs no analyzer and reads nothing
+from the checkout but `.review/config.yaml`: the changed files come from the API, and every
+input that decides a label (the risk map in `.review/risk.yaml`, CODEOWNERS, the
+base branch's history and the index) is read through the API at the merge base,
+so a pull request cannot change its own record. The pure part, deciding which
+labels apply, is `internal/risk`; the command in `cmd/reviewer/riskcmd.go` does the
+reading and writing. It is advisory: it decides nothing about merging, and after
+its first API call every failure becomes a line in its comment and it exits 0
+(ADR-0009).
+
 ## This repository's own CI
 
 Nine jobs, of which one matters to branch protection.

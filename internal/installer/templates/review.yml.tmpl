@@ -4,10 +4,18 @@
 # so the model lane is skipped and the deterministic lane still runs and comments.
 # That is the correct degradation, not a limitation to work around — see ADR-0018
 # in adamtait/reviewer.
+#
+# Permissions are per job and the least each needs. The review job reads the
+# code and writes comments: contents: read and pull-requests: write, set for the
+# whole workflow below. The risk job, commented out at the end, sets its own and
+# adds actions: read. Nothing in either can merge, approve, close or push.
 name: review
 
 on:
   pull_request:
+    # The default three, and ready_for_review, so that the risk job, which skips
+    # drafts, runs when a draft is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -61,3 +69,37 @@ jobs:
           # a subscription. A hosted runner has no such session, so the model lane
           # is skipped here and runs only from a machine where you are logged in.
 {{- end }}
+
+  # The advisory risk record: one comment and risk/ labels saying where to look
+  # first (risk/auth, risk/ci, risk/wide, ...). It never decides or blocks
+  # anything, and exits 0 whatever it finds — see ADR-0035 in adamtait/reviewer.
+  # Uncomment to turn it on.
+  #
+  # It reads its rules from the merge base, never from the pull request:
+  # .review/risk.yaml, CODEOWNERS, and the index review-index.yml builds on
+  # every push, which it needs to say how widely a changed symbol is used
+  # (risk/reach). Without that workflow the comment says reach is not available.
+  #
+  # It runs beside the review, not after it, so it has no `needs:`. actions: read
+  # is for downloading the index; this job holds it and the review job does not.
+  # Set github.selfLogin: github-actions[bot] in .review/config.yaml so it can
+  # remove a label it set that no longer applies; without it, it only adds.
+  #
+  # risk:
+  #   if: github.event.pull_request.draft == false
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #     pull-requests: write
+  #     actions: read
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+  #     - uses: adamtait/reviewer@v{{ .ReviewerVersion }}
+  #       with:
+  #         version: {{ .ReviewerVersion | yaml }}
+  #         checksum: {{ .ReviewerChecksum | yaml }}
+  #         mode: risk
+  #       env:
+  #         GITHUB_TOKEN: ${{ "{{" }} secrets.GITHUB_TOKEN {{ "}}" }}

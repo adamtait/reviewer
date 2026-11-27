@@ -111,7 +111,7 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 		{".review/config.yaml", "what runs, against what, and how it is reported"},
 		{".review/rules/.gitkeep", "where this repository's own rule packs go"},
 		{".review/.gitignore", "keeps local state and your .env out of version control"},
-		{".github/workflows/review.yml", "runs the review on every pull request"},
+		{".github/workflows/review.yml", "runs the review on every pull request, with the advisory risk job commented out"},
 		{".agent/skills/code-review/SKILL.md", "tells an agent when to review and how to read the result"},
 		{".agent/skills/code-review/scripts/review.sh", "the one command the skill runs"},
 		{".review/.env.example", "names the variables the model lane needs, never their values"},
@@ -131,7 +131,7 @@ func BuildPlan(d Detected, pluginVersion string, opts Options) Plan {
 		action, problem := actionFor(d.Root, IndexWorkflowPath, force)
 		p.addProblem(problem)
 		p.Files = append(p.Files, File{Path: IndexWorkflowPath, Action: action,
-			Purpose: "builds a navigation index for the review workspace on every push"})
+			Purpose: "builds a navigation index for the review workspace and the risk job on every push"})
 
 		version, note := pluginVersionFor(pluginVersion)
 		p.DevDependencies = append(p.DevDependencies, Dependency{

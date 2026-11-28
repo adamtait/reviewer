@@ -98,6 +98,16 @@ A GitHub Action and a local poller, both built unconditionally (ADR-0019). The
 Action runs on `pull_request`, never `pull_request_target`, so a fork's code is
 never run with a token that can write (ADR-0018).
 
+On a `pull_request` checkout, `HEAD` is GitHub's test merge commit, and a pull
+request's review is measured from that commit's first parent: the base with every
+pull request below this one already merged in. For an ordinary pull request that is
+the base branch's tip, the same as its merge base. For a pull request in a GitHub
+stack it is what keeps the review to that layer: the event's `base_ref` names the
+stack's trunk, not the branch below, and GitHub builds each layer's test merge
+commit on top of the one below it. An explicit `--base` naming the pull request's
+own base branch or its stack's trunk is read as asking for this; any other
+`--base` wins as given.
+
 ## This repository's own CI
 
 Nine jobs, of which one matters to branch protection.

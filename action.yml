@@ -16,7 +16,11 @@ inputs:
       move a tag.
     required: true
   base:
-    description: The ref to diff against. Defaults to the pull request's base.
+    description: >
+      The branch to diff against. Defaults to the pull request's base. On the
+      default pull_request checkout the review is measured from GitHub's test
+      merge commit, so a pull request in a stack is reviewed on its own, not
+      together with the pull requests below it.
     required: false
     default: ""
   reporter:

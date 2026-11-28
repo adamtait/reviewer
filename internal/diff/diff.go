@@ -231,6 +231,20 @@ func HasCommit(ctx context.Context, root, rev string) bool {
 	return err == nil
 }
 
+// Parents returns the parents of a commit in the local checkout, first parent
+// first: none for a root commit, one for an ordinary commit, two for a merge.
+func Parents(ctx context.Context, root, rev string) ([]string, error) {
+	out, err := git(ctx, root, "rev-list", "--parents", "-n", "1", rev)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("git rev-list printed nothing for %s", rev)
+	}
+	return fields[1:], nil
+}
+
 // TotalLines counts the changed lines across every file, for the run summary.
 func TotalLines(files []File) int {
 	n := 0

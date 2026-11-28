@@ -42,7 +42,8 @@ func review(ctx context.Context, o options, stdout, stderr io.Writer, getenv fun
 
 	run := reporters.Run{Root: cfg.Root, Base: o.base}
 
-	files, base, err := changedFiles(ctx, o, cfg, secrets)
+	files, base, notes, err := changedFiles(ctx, o, cfg, secrets)
+	run.Warnings = append(run.Warnings, notes...)
 	if err != nil {
 		// Without a diff there is nothing to scope to, and reporting every
 		// whole-repository finding is the one thing this tool must not do
@@ -187,44 +188,45 @@ func nothingRanReason(cfg config.Config, offered, unavailable int) string {
 // is absent — a shallow clone, or a branch the poller has never fetched — the
 // API's per-file patches are parsed instead, so a missing `fetch-depth: 0` costs
 // accuracy of context rather than the whole review.
-func changedFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, string, error) {
+//
+// It also returns notes for the run's warnings: things about the choice of base
+// a reader of the review should know.
+func changedFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, string, []string, error) {
 	switch {
 	case o.staged:
 		// The index against HEAD, so HEAD is what the files looked like before.
 		files, err := diff.Staged(ctx, cfg.Root)
-		return files, "", err
+		return files, "", nil, err
 	case o.pr != 0:
 		return pullRequestFiles(ctx, o, cfg, secrets)
 	default:
 		files, err := diff.Changed(ctx, cfg.Root, o.base)
-		return files, o.base, err
+		return files, o.base, nil, err
 	}
 }
 
-func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, string, error) {
+func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets config.Secrets) ([]diff.File, string, []string, error) {
 	client, repo, err := githubClient(cfg, secrets)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	pr, err := client.GetPullRequest(ctx, repo, o.pr)
 	if err != nil {
-		return nil, "", fmt.Errorf("reading pull request %d: %w", o.pr, err)
+		return nil, "", nil, fmt.Errorf("reading pull request %d: %w", o.pr, err)
 	}
 
-	// An explicit --base wins: someone reviewing against a different branch than
-	// GitHub thinks has a reason.
-	base := o.base
-	if base == "" || base == defaultBase {
-		base = pr.Base.SHA
-	}
+	// Parents of HEAD tell whether this checkout is GitHub's test merge commit for
+	// the pull request. Failing to read them only means it is not known to be.
+	parents, _ := diff.Parents(ctx, cfg.Root, "HEAD")
+	base, notes := reviewBase(o.base, pr, parents)
 	if diff.HasCommit(ctx, cfg.Root, base) {
 		files, err := diff.Changed(ctx, cfg.Root, base)
-		return files, base, err
+		return files, base, notes, err
 	}
 
 	files, err := client.ListFiles(ctx, repo, o.pr)
 	if err != nil {
-		return nil, "", fmt.Errorf("listing the files of pull request %d: %w", o.pr, err)
+		return nil, "", notes, fmt.Errorf("listing the files of pull request %d: %w", o.pr, err)
 	}
 	patched := make([]diff.PatchedFile, 0, len(files))
 	for _, f := range files {
@@ -234,7 +236,79 @@ func pullRequestFiles(ctx context.Context, o options, cfg config.Config, secrets
 	// returned: an analyzer that needs previous contents must say it cannot rather
 	// than read them from a ref that is not the one the diff came from.
 	parsed, err := diff.FromPatches(patched)
-	return parsed, "", err
+	return parsed, "", notes, err
+}
+
+// reviewBase decides which commit a pull request's review is measured from.
+//
+// An explicit --base wins, as it always has: someone reviewing against a
+// different branch than GitHub thinks has a reason. The exception is a --base
+// that names the pull request's own base branch, or the trunk of the stack it
+// belongs to, while the checkout is GitHub's test merge commit for it. Then the
+// merge commit's first parent is the same intent stated exactly: the base with
+// every pull request below this one already merged in. It is what a
+// pull_request workflow's default checkout gives, and it matters for stacks:
+// there the event's base_ref names the stack's trunk, so `--base
+// origin/${{ github.base_ref }}` would review every layer below this one too.
+// For a pull request outside a stack the first parent is the base branch tip,
+// and the review covers the same files it always did.
+//
+// Without --base the pull request's base.sha is used, as before, unless the
+// checkout is the test merge commit, for the same reason.
+//
+// parents are HEAD's parents in the local checkout, first parent first.
+func reviewBase(flagBase string, pr ghclient.PullRequest, parents []string) (base string, notes []string) {
+	testMerge := len(parents) == 2 && pr.Head.SHA != "" && parents[1] == pr.Head.SHA
+	unset := flagBase == "" || flagBase == defaultBase
+	trunk := ""
+	if pr.Stack != nil {
+		trunk = pr.Stack.Base.Ref
+	}
+	// Above the bottom of a stack, the pull request's own base is another
+	// pull request's branch, not the trunk.
+	stackedAbove := trunk != "" && pr.Base.Ref != "" && pr.Base.Ref != trunk
+	namesOwnBase := names(flagBase, pr.Base.Ref) || names(flagBase, trunk)
+
+	switch {
+	case testMerge && (unset || namesOwnBase):
+		if stackedAbove && !unset {
+			notes = append(notes, fmt.Sprintf(
+				"pull request %d is stacked on %s; reviewing it from its test merge commit's first parent "+
+					"(%s) rather than %s, which would also review every pull request below it",
+				pr.Number, pr.Base.Ref, short(parents[0]), flagBase))
+		}
+		return parents[0], notes
+	case unset:
+		return pr.Base.SHA, nil
+	default:
+		if stackedAbove && names(flagBase, trunk) {
+			notes = append(notes, fmt.Sprintf(
+				"pull request %d is stacked on %s, and --base %s also reviews every pull request below it; "+
+					"use --base origin/%s, or run on the pull_request checkout",
+				pr.Number, pr.Base.Ref, flagBase, pr.Base.Ref))
+		}
+		return flagBase, notes
+	}
+}
+
+// names reports whether a --base value refers to the branch called ref, in
+// any of the spellings a workflow or a person uses for it.
+func names(flagBase, ref string) bool {
+	if ref == "" {
+		return false
+	}
+	switch flagBase {
+	case ref, "origin/" + ref, "refs/heads/" + ref, "refs/remotes/origin/" + ref:
+		return true
+	}
+	return false
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // githubClient builds the client and repository from configuration. Shared by the

@@ -1037,7 +1037,7 @@ func TestAStagedReviewCarriesNoBase(t *testing.T) {
 	repo := testfixture.Build(t, "tiny-ts-repo")
 
 	o := options{staged: true, base: defaultBase, root: repo.Root}
-	files, base, err := changedFiles(context.Background(), o, config.Config{Root: repo.Root}, config.Secrets{})
+	files, base, _, err := changedFiles(context.Background(), o, config.Config{Root: repo.Root}, config.Secrets{})
 	if err != nil {
 		t.Fatal(err)
 	}

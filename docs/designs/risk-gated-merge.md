@@ -121,8 +121,9 @@ anything beyond what GitHub's own settings can enforce waits for an organisation
     pull request touching any other path cannot merge without a code-owner approval.
 *   **G5. No path outside the allowlist loses review, and nothing models or agents read is on
     it.** The CODEOWNERS lint (`reviewer owners check`) is a required check and fails unless the
-    first rule owns `*`, CODEOWNERS owns itself, every unowned rule is a directory, and no path on
-    the never-allowlist (Part 2) is unowned. Check: the lint fails on a branch that adds an unowned
+    first rule owns `*`, CODEOWNERS owns itself, every unowned rule is a directory, every owner is
+    a team, no path on the never-allowlist (Part 2) is unowned, and no symbolic link sits on an
+    unowned path. Check: the lint fails on a branch that adds an unowned
     rule for `.claude/`, or for a directory listed under `guidance:`.
 *   **G5b. Docs-only has a failure policy before it goes live.** An escape is a docs-only merge with
     no review that is later reverted, modified by a fix (Part 3), or flagged in the weekly audit
@@ -254,6 +255,18 @@ document is unverified until the sandbox step named here has run.
     under `docs/guides/`, and (e) edit an owned file; record which can merge without approval.
     Holds up G4 and G5. If code-owner review is not enforced, v1 is `reviewer risk` and
     measurement only.
+    **Answered 2026-11-28, in a scratch repository with a ruleset of 0 approvals and code-owner
+    review required.** With pull requests authored by the Actions bot, so the code owner was not
+    the author: an edit to an owned file, a move out of the allowlist into owned code, and an edit
+    to CODEOWNERS were blocked until the code owner approved; an edit, a delete and a rename
+    inside the allowlist merged with no review; so did a **symlink** inside the allowlist pointing
+    at owned code. A writer's "changes requested" blocked even an allowlist-only pull request, and
+    a new commit dismissed an approval. One more finding: when the author is the **only** code
+    owner of what a pull request changes, GitHub asks for no review at all; with one account as
+    author and owner, every case merged. The lint now fails on symlinks under unowned paths and on
+    owners who are people rather than teams. Not tested: whether a team that includes the author
+    behaves like a lone owner (needs an organisation). See
+    `docs/designs/trials/risk-gated-merge-baseline.md`.
 *   **Q2. Does any organisation ruleset already set a minimum approval count on these
     repositories?** Holds up G4. If so, the docs-only class needs an org owner too.
 *   **Q3. Can the risk job add and remove labels with `pull-requests: write`?** Sandbox step: a
@@ -508,8 +521,11 @@ This repository supplies two pieces of support:
 
 *   **`reviewer owners check`**, a structural CODEOWNERS lint in the style of `reviewer rules
     test`. It fails (exit 1) unless the file parses with no unsupported syntax, the first rule is
-    `*` with an owner, CODEOWNERS owns itself, every rule with no owner is a directory, and no
-    never-allowlist path is unowned. It reads the never-allowlist from `.review/config.yaml` and
+    `*` with an owner, CODEOWNERS owns itself, every rule with no owner is a directory, every
+    owner is a team rather than a person, no never-allowlist path is unowned, and no symbolic link
+    sits on an unowned path (Q1 found GitHub merges one there with no review, and asks for no review
+    when the author is a pull request's only code owner). It reads the never-allowlist from
+    `.review/config.yaml` and
     from a list compiled into the binary. It is a check, not a review, so the exit-1 precedent of
     `rules test` applies (`cmd/reviewer/flags.go:230-239`), not ADR-0009. The ruleset requires it.
 *   **`docs/merge-classes.md`**, a setup guide: the CODEOWNERS template, the ruleset settings, the
@@ -911,7 +927,9 @@ with goal or question numbers.
 | Risk | Effect | Mitigation or acceptance |
 | --- | --- | --- |
 | CODEOWNERS is wrong | A path loses review with no visible sign | The CODEOWNERS lint is a required check (G5) |
-| Deletes, renames, symlinks under the allowlist | They merge unreviewed | Accepted (G4); counted by `outcomes` as the native count; covered by the G5b audit |
+| Deletes and renames under the allowlist | They merge unreviewed (confirmed, Q1) | Accepted (G4); counted by `outcomes` as the native count; covered by the G5b audit |
+| A symlink under the allowlist pointing at owned code | It merges unreviewed (confirmed, Q1); a tool or docs site that follows it reads owned files | The lint fails on a symlink on an unowned path; it runs on the pull request's own tree |
+| The author is the only code owner of what a pull request changes | GitHub asks for no review at all (confirmed, Q1); an agent pushing as that person merges unreviewed | The lint fails on any owner who is a person; owners must be teams. Whether a team that includes the author behaves the same is untested |
 | A file models or agents read is on the allowlist | Unreviewed text steers later reviews or agents | The never-allowlist, enforced by the lint (Part 2, CUJ 4) |
 | An allowlisted directory is published | Rendered docs are production content | That directory leaves the allowlist (Q8) |
 | A pull request edits its own risk configuration | Labels it should carry are dropped | The risk map and CODEOWNERS are read from the merge base (G2) |

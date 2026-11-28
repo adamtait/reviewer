@@ -125,9 +125,47 @@ repository) needs a team repository with the index workflow installed.
 
 | Question | Status |
 | --- | --- |
-| Q1. Code-owner review at 0 approvals; deletes, renames and symlinks under unowned paths | Set up, not yet answered. A private scratch repository holds CODEOWNERS owning `*` with one documentation directory unowned, and seven open pull requests: an edit, a delete and a rename inside that directory, a symlink inside it pointing at owned code, an edit to an owned file, a move out of the directory into owned code, and an edit to CODEOWNERS. With no ruleset, all seven are mergeable (the control). Creating the ruleset (0 approvals, code-owner review required) needs a token with Administration: write, which the token used here does not yet have. One account is both author and code owner, and an author cannot approve their own pull request, so "blocked" will mean "needs a code owner"; "changes requested" still needs a second account. |
+| Q1. Code-owner review at 0 approvals; deletes, renames and symlinks under unowned paths | **Answered** (see "Q1 in detail" below): enforced, with two gaps the lint now closes. |
 | Q2. An organisation ruleset with a minimum approval count | Not run: needs the team's organisation. |
 | Q3. Labels with a workflow token holding only `pull-requests: write` | **Answered: yes.** In the scratch repository, a `pull_request` workflow whose only permission was `pull-requests: write` added a label that did not exist (200, label created), listed labels (200), removed it (200), removed it again (404), added and removed it once more (200, 200), deleted the label definition (204) and posted a comment (201). `GET /user` returned 403, so the job cannot learn its own login and `github.selfLogin` must be set, as PR-58 assumes. Same-repository pull requests only; a fork's token is read-only. |
+
+## Q1 in detail
+
+In a private scratch repository: CODEOWNERS owning `*` with one person and one documentation
+directory unowned; a ruleset on `main` with 0 required approvals, code-owner review required and
+stale approvals dismissed on push. The ruleset was confirmed active, and CODEOWNERS had no errors.
+Raising required approvals to 1 made every pull request below blocked, so the rules applied to the
+account reading the merge state; it was set back to 0 for every result here.
+
+**Author is the code owner.** Seven pull requests opened by the one account that is also the only
+code owner (an edit, a delete, a rename and a symlink inside the directory; an edit to an owned
+file; a move out of the directory into owned code; an edit to CODEOWNERS) were all mergeable with
+no review, and GitHub requested no reviewer. When a pull request's author is the only code owner of
+what it changes, GitHub asks for no review.
+
+**Author is not the code owner.** The same cases, opened by the Actions bot (the repository setting
+that lets workflows open pull requests was turned on for this):
+
+| Change | State with no review |
+| --- | --- |
+| Edit a file inside the unowned directory | mergeable |
+| Delete a file inside it | mergeable |
+| Rename a file within it | mergeable |
+| Add a symlink inside it pointing at owned code | mergeable |
+| Edit an owned file | blocked; code owner requested |
+| Move a file out of it into owned code | blocked; code owner requested |
+| Edit CODEOWNERS | blocked; code owner requested |
+
+Then, on the bot's pull requests: a "changes requested" review by the code owner blocked both the
+owned-file pull request and the documentation-only one; the code owner's approval made the
+owned-file pull request mergeable; a new commit dismissed that approval and blocked it again.
+
+**What follows for the design.** Code-owner review is enforced at 0 approvals, so Part 2 works as
+designed, deletes and renames are the accepted risk the design already lists, and GitHub keeps
+"changes requested" and stale-approval dismissal. Two gaps were new, and the lint now fails on
+both: a symbolic link on an unowned path, and any owner who is a person rather than a team (a
+person's agent would merge unreviewed into what that person alone owns). Untested, because it needs
+an organisation: whether a team owner that includes the author behaves like a lone owner.
 
 ## To finish PR-60 on a team repository
 
@@ -135,5 +173,6 @@ repository) needs a team repository with the index workflow installed.
     dismissal, required checks).
 2.  Run the two commands above with `--since 90d` and the proposed allowlist.
 3.  Audit 30 outcome labels by reading the lines, and record the agreement rate.
-4.  Run Q1 to Q3 in a scratch repository the token can administer, with a second account.
+4.  Run Q2 against the team's organisation, and repeat the Q1 author-is-owner case with a team
+    owner that includes the author.
 5.  Add the results as a new section here, with the repository as a letter.

@@ -95,9 +95,10 @@ func (c *REST) UpdateIssueComment(ctx context.Context, repo Repo, id int64, body
 // requests share. Labels already on it are left as they are.
 //
 // A name the repository has no label for yet is created by GitHub, with the
-// colour ededed, and added: checked against github.com with a personal token.
-// Whether a workflow's GITHUB_TOKEN holding only pull-requests: write may do
-// the same is unverified (Q3 in docs/designs/risk-gated-merge.md).
+// colour ededed, and added. A workflow's GITHUB_TOKEN holding only
+// pull-requests: write may do this, and remove labels, on a pull request from
+// the same repository: checked on github.com (Q3 in
+// docs/designs/risk-gated-merge.md). A fork's token is read-only.
 func (c *REST) AddLabels(ctx context.Context, repo Repo, number int, labels []string) error {
 	if len(labels) == 0 {
 		return nil

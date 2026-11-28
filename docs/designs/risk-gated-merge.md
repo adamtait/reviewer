@@ -259,6 +259,9 @@ document is unverified until the sandbox step named here has run.
 *   **Q3. Can the risk job add and remove labels with `pull-requests: write`?** Sandbox step: a
     workflow job with only that permission adds a label that does not yet exist, then removes it.
     Holds up G1 and PR-56. The new writer methods are recorded in ADR-0035 either way.
+    **Answered 2026-11-27: yes** for same-repository pull requests (add, list, remove, re-add and
+    comment all succeeded; removing a missing label returns 404; `GET /user` returns 403). See
+    `docs/designs/trials/risk-gated-merge-baseline.md`.
 *   **Q4. Is a pinned required workflow available on this plan, who can create and bypass it, and
     does it run on `pull_request_review` events?** Holds up every later stage.
 *   **Q5. What exactly counts as a human approval?** Holds up all gate code. The rule in Part 4 is
@@ -875,7 +878,7 @@ with goal or question numbers.
 *   **Security.**
     *   v1 adds no permission to the review job: `contents: read` and `pull-requests: write` stay
         as they are. The new risk job holds those two plus `actions: read`, for the navigation
-        index artifact. Whether labels fit `pull-requests: write` is Q3.
+        index artifact. Labels fit `pull-requests: write` (Q3, answered).
     *   `merge-gate` never checks out, builds or runs pull request content, and reads head files
         only as data from `compare(base_sha...head_sha)`.
     *   The gate binary is installed by version and checksum from an action pinned by commit SHA.

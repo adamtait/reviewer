@@ -173,9 +173,10 @@ GitHub tells a personal token, but not a workflow's `GITHUB_TOKEN`, so set
 `github.selfLogin: github-actions[bot]` in `.review/config.yaml`; without it, it
 only adds labels. `reviewer init` writes the job into `review.yml` commented out,
 with its own permissions (`contents: read`, `pull-requests: write`, and `actions:
-read` for the index) and skipping drafts. Whether a workflow token with only
-`pull-requests: write` may create and remove labels is unverified; if it may not,
-the comment says the label changes failed. See ADR-0035.
+read` for the index) and skipping drafts. A workflow token with only
+`pull-requests: write` may create and remove labels on a pull request from the
+same repository (checked on github.com); a fork's token is read-only, so a fork's
+pull request gets no record. See ADR-0035.
 
 ## Docs-only merges
 

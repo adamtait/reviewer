@@ -102,6 +102,22 @@ Dry runs (`reviewer risk --pr N --dry-run`) against three non-draft pull request
     `risk/infra` and `risk/wide`, each with its reasons, and a warning that file history was read
     for only the 20 most-changed files.
 
+In real GitHub Actions, in the scratch repository: a workflow with `contents: read`,
+`pull-requests: write` and `actions: read` installed `reviewer` from the stack's tip commit and ran
+`reviewer risk` on a same-repository pull request, three times:
+
+1.  **First run.** It posted one comment and added `risk/auth` (a path the repository's own
+    `risk.yaml`, read at the merge base, adds to that label) and `risk/infra` (a Terraform file),
+    each with its reason. It said reach was not available, because the scratch repository has no
+    index workflow.
+2.  **After a commit removed the Terraform file.** It removed `risk/infra`, kept `risk/auth`, and
+    updated the same comment for the new head commit.
+3.  **After a person added `risk/infra` by hand and another commit was pushed.** The label stayed:
+    the tool's own list held only `risk/auth`, so it did not claim the person's label.
+
+`github.selfLogin: github-actions[bot]` was set in the configuration, which is what lets the job
+recognise its own earlier comment when `GET /user` returns 403.
+
 The design's pass bar for reach (available on at least half of 20 pull requests in a TypeScript
 repository) needs a team repository with the index workflow installed.
 

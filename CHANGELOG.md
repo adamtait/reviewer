@@ -29,6 +29,22 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
 
 ## [Unreleased]
 
+### Fixed
+
+- **A pull request in a GitHub stack is reviewed on its own.** For a stacked pull
+  request, the `pull_request` event's `base_ref` is the stack's trunk, not the
+  branch below it, and the Action passed it as `--base`. Each layer was reviewed
+  together with every layer below it, and a finding in a lower layer was posted
+  again on every pull request above. The review is now measured from the first
+  parent of GitHub's test merge commit when the checkout is that commit and
+  `--base` names the pull request's own base branch or its stack's trunk. An
+  ordinary pull request is reviewed exactly as before. Comment threads already
+  posted on upper layers about lower layers' lines stay open, and are not posted
+  again; with `github.resolveStaleThreads` on, the next run resolves them.
+  To pick this up, update the `version:` and the `uses:` ref together. A workflow
+  that calls the binary directly with `--base origin/${{ github.base_ref }}` is
+  fixed by the new binary, with no change to the workflow.
+
 ### Changed
 
 - **The minimum Go version is now 1.26.** Go 1.24 and 1.25 no longer receive

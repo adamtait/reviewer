@@ -57,6 +57,20 @@ type PullRequest struct {
 	// is present when one pull request is read and absent from a list. The
 	// files call stops at 3,000, so this is how a caller knows it was cut short.
 	ChangedFiles int `json:"changed_files"`
+	// Stack is where the pull request sits in a GitHub stack of pull requests,
+	// and nil when it is in none. Within a stack, Base is the branch of the pull
+	// request below, while Stack.Base is the trunk the bottom one targets.
+	Stack *Stack `json:"stack"`
+}
+
+// Stack is a pull request's place in a stack: the stack's number, how many pull
+// requests it holds, this one's position counted from 1 at the bottom, and the
+// trunk the stack merges into.
+type Stack struct {
+	Number   int `json:"number"`
+	Position int `json:"position"`
+	Size     int `json:"size"`
+	Base     Ref `json:"base"`
 }
 
 // RepoInfo is what must be known about a repository before anything of it is

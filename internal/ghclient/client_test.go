@@ -296,6 +296,40 @@ func TestPullRequestCarriesWhatTheWorkspaceShows(t *testing.T) {
 	}
 }
 
+// The stack object is what tells a stacked pull request's own base (the branch
+// below it) apart from the trunk, which is what a pull_request event reports as
+// its base_ref. Shape as GitHub returned it for a pull request in a stack.
+func TestPullRequestCarriesItsStack(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"number":36,"base":{"ref":"web/markdown-preview","sha":"7fc5557"},`+
+			`"stack":{"base":{"ref":"main","sha":"d1fa551"},"id":4230424,"number":38,"position":2,"size":4}}`)
+	})
+	pr, err := c.GetPullRequest(context.Background(), Repo{"o", "r"}, 36)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Stack{Number: 38, Position: 2, Size: 4, Base: Ref{Ref: "main", SHA: "d1fa551"}}
+	if pr.Stack == nil || *pr.Stack != want {
+		t.Errorf("stack = %+v, want %+v", pr.Stack, want)
+	}
+	if pr.Base.Ref != "web/markdown-preview" {
+		t.Errorf("base = %+v; the pull request's own base must stay the branch below it", pr.Base)
+	}
+}
+
+func TestPullRequestOutsideAStackHasNoStack(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"number":27,"base":{"ref":"main","sha":"143d98c"}}`)
+	})
+	pr, err := c.GetPullRequest(context.Background(), Repo{"o", "r"}, 27)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Stack != nil {
+		t.Errorf("stack = %+v, want nil", pr.Stack)
+	}
+}
+
 func TestListOpenPullRequestsStopsAtTheLimit(t *testing.T) {
 	var asked []string
 	var srv *httptest.Server

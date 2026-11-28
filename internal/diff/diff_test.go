@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/adamtait/reviewer/internal/testfixture"
@@ -361,6 +362,39 @@ func TestFromPatches(t *testing.T) {
 	patchless := byPath["logo.png"]
 	if !patchless.Binary || len(patchless.Ranges) != 0 {
 		t.Fatalf("a file with no patch must be unreportable, got %+v", patchless)
+	}
+}
+
+func TestParents(t *testing.T) {
+	repo := testfixture.Build(t, "tiny-ts-repo")
+	git := testfixture.Git(t, repo.Root)
+	ctx := context.Background()
+
+	head := strings.TrimSpace(git("rev-parse", "HEAD"))
+	parents, err := Parents(ctx, repo.Root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parents) != 1 || parents[0] != repo.Base {
+		t.Fatalf("an ordinary commit: parents = %v, want [%s]", parents, repo.Base)
+	}
+
+	// A merge commit, built the way GitHub builds a pull request's test merge:
+	// the base side first, the pull request's head second.
+	git("checkout", "-q", "-b", "side", repo.Base)
+	git("commit", "-q", "--allow-empty", "-m", "side")
+	side := strings.TrimSpace(git("rev-parse", "HEAD"))
+	git("merge", "-q", "--no-ff", "-m", "merge", head)
+	parents, err = Parents(ctx, repo.Root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parents) != 2 || parents[0] != side || parents[1] != head {
+		t.Fatalf("a merge: parents = %v, want [%s %s]", parents, side, head)
+	}
+
+	if _, err := Parents(ctx, repo.Root, "0000000000000000000000000000000000000000"); err == nil {
+		t.Fatal("want an error for an absent commit")
 	}
 }
 

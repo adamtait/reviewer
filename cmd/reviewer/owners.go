@@ -92,6 +92,12 @@ func ownersCheck(o options, stdout io.Writer, getenv func(string) string) error 
 		return errCheckFailed{fmt.Errorf("%s: %w", rel, err)}
 	}
 	violations := lintOwners(rel, file, problems, entries)
+	links, linkErr := symlinkViolations(root, file)
+	violations = append(violations, links...)
+	if linkErr != nil {
+		violations = append(violations, ownersViolation{
+			text: fmt.Sprintf("could not finish looking for symbolic links: %v", linkErr)})
+	}
 	if embedErr != nil {
 		// Never report clean for a scan that did not happen: a //go:embed target
 		// that was not looked for is one that was not checked.
@@ -104,7 +110,8 @@ func ownersCheck(o options, stdout io.Writer, getenv func(string) string) error 
 		count(len(entries), "never-allowlist path", "never-allowlist paths"))
 	if len(violations) == 0 {
 		fmt.Fprintln(stdout, "  passed   `*` is owned first, the file owns itself, every unowned rule is a"+
-			" directory, and no never-allowlist path is unowned")
+			" directory, every owner is a team, no never-allowlist path is unowned, and no symbolic link"+
+			" sits on an unowned path")
 		fmt.Fprintln(stdout, "ok")
 		return nil
 	}
@@ -187,6 +194,25 @@ func lintOwners(rel string, file codeowners.File, problems []error, entries []ne
 		}
 	}
 
+	// A person, rather than a team, must not own anything. When the author of a
+	// pull request is the only code owner of what it changes, GitHub asks for no
+	// review at all, even with code-owner review required: the scratch-repository
+	// run behind Q1 in docs/designs/risk-gated-merge.md showed it. Agents push
+	// with people's tokens, so an individual owner is an unreviewed path for that
+	// person's agent. Whether a team that includes the author behaves the same is
+	// not yet known; a team at least has other members to ask.
+	for _, r := range file.Rules {
+		for _, o := range r.Owners {
+			if individualOwner(o) {
+				out = append(out, ownersViolation{line: r.Line, text: fmt.Sprintf(
+					"%q is owned by %s, a person rather than a team; when a pull request's author is the only code"+
+						" owner of what it changes, GitHub asks for no review, and agents push as people; name a"+
+						" team (@org/team)", r.Pattern, o)})
+				break
+			}
+		}
+	}
+
 	for _, e := range entries {
 		if probe, why, exposed := exposedPath(file, e); exposed {
 			text := fmt.Sprintf("%s (%s) is on the never-allowlist, and %s %s", e.path, e.source, probe, why.text)
@@ -194,6 +220,52 @@ func lintOwners(rel string, file codeowners.File, problems []error, entries []ne
 		}
 	}
 	return out
+}
+
+// individualOwner reports whether a CODEOWNERS owner is a person: a user
+// (`@name`) or an email address, as opposed to a team (`@org/team`).
+func individualOwner(o string) bool {
+	if strings.HasPrefix(o, "@") {
+		return !strings.Contains(o, "/")
+	}
+	return strings.Contains(o, "@")
+}
+
+// symlinkViolations finds symbolic links on paths CODEOWNERS leaves unowned.
+//
+// GitHub merges a new symlink under the allowlist with no review, wherever it
+// points: in the scratch-repository run behind Q1, one added under the unowned
+// documentation directory and pointing at owned code merged that way. A tool
+// that follows links, or a docs site that publishes them, then reads owned
+// files through an unowned path. The lint runs on the pull request's own tree,
+// so a link it adds fails the required check. The walk does not follow links,
+// and skips .git and node_modules, which are not the pull request's content.
+func symlinkViolations(root string, file codeowners.File) ([]ownersViolation, error) {
+	var out []ownersViolation
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if owned, why := ownedBy(file, rel); !owned {
+			target, _ := os.Readlink(path)
+			out = append(out, ownersViolation{line: why.line, text: fmt.Sprintf(
+				"%s is a symbolic link to %q on an unowned path; GitHub merges a link there with no review,"+
+					" wherever it points", rel, target)})
+		}
+		return nil
+	})
+	return out, err
 }
 
 // ownedBy reports whether a path has an owner and, when it has none, why: the

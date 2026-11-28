@@ -357,3 +357,40 @@ func TestOwnersNeedsTheCheckVerb(t *testing.T) {
 		t.Fatalf("want `owners check --root x` parsed, got %+v %v", o, err)
 	}
 }
+
+// When a pull request's author is the only code owner of what it changes,
+// GitHub asks for no review, even with code-owner review required (Q1 in the
+// design, observed in a scratch repository). A person may not own anything; a
+// team may.
+func TestOwnersCheckRejectsAPersonAsOwner(t *testing.T) {
+	root := ownersRepo(t, map[string]string{
+		".github/CODEOWNERS": "* @alice\n/docs/guides/\n/src/billing/ ops@example.com\nSKILL.md @org/maintainers\n",
+	})
+	out, err := runOwnersCheck(t, root)
+	got := wantFailedCheck(t, out, err, "@alice, a person rather than a team", "ops@example.com, a person")
+	if len(got) != 2 {
+		t.Errorf("want 2 violations, got %d:\n%s", len(got), strings.Join(got, "\n"))
+	}
+}
+
+// GitHub merges a symbolic link added under the unowned allowlist with no
+// review, wherever it points (Q1). The lint runs on the pull request's tree, so
+// such a link fails it. A link on an owned path is someone's to review.
+func TestOwnersCheckRejectsASymlinkOnAnUnownedPath(t *testing.T) {
+	root := ownersRepo(t, map[string]string{
+		".github/CODEOWNERS": templateCodeowners(),
+		"src/index.ts":       "export const answer = 42;\n",
+		"docs/guides/a.md":   "# A\n",
+	})
+	if err := os.Symlink("../../src/index.ts", filepath.Join(root, "docs/guides/link.ts")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("index.ts", filepath.Join(root, "src/alias.ts")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runOwnersCheck(t, root)
+	got := wantFailedCheck(t, out, err, `docs/guides/link.ts is a symbolic link to "../../src/index.ts"`)
+	if len(got) != 1 {
+		t.Errorf("want 1 violation (the owned link is fine), got %d:\n%s", len(got), strings.Join(got, "\n"))
+	}
+}

@@ -110,7 +110,15 @@ exits 1, listing every violation with its CODEOWNERS line, when:
 *   the first rule is not `*` with an owner;
 *   CODEOWNERS does not own itself, or a place where a new CODEOWNERS file would replace it;
 *   a rule with no owners is not a directory;
-*   a path on the never-allowlist resolves unowned.
+*   an owner is a person (`@name` or an email address) rather than a team (`@org/team`): when a
+    pull request's author is the only code owner of what it changes, GitHub asks for no review at
+    all, and agents push with people's tokens;
+*   a path on the never-allowlist resolves unowned;
+*   a symbolic link sits on an unowned path: GitHub merges a new link under the allowlist with no
+    review, wherever it points, and anything that follows it then reads owned files.
+
+The last two were found in a scratch repository (Q1 in the design); the lint runs on the pull
+request's own tree, so a link the pull request adds fails it.
 
 For example, with `docs/guidance/` listed under `guidance:` and added to the allowlist (CUJ 4):
 

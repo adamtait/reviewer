@@ -114,8 +114,9 @@ prints that it cannot pin the plugin rather than pinning to something unpublishe
   a partial read prints what it has and says what it could not read.
 - `reviewer owners check`, a CODEOWNERS lint for the docs-only merge class in
   `docs/designs/risk-gated-merge.md`. It fails unless the first rule owns `*`,
-  CODEOWNERS owns itself, every rule with no owner is a directory, and nothing
-  on the never-allowlist is unowned: agent instruction files, `.claude/`,
+  CODEOWNERS owns itself, every rule with no owner is a directory, every owner
+  is a team rather than a person, no symbolic link sits on an unowned path, and
+  nothing on the never-allowlist is unowned: agent instruction files, `.claude/`,
   `.github/`, `.review/`, `docs/adr/`, the `guidance:` paths and
   `laneB.promptDir`, and every file a `//go:embed` directive names. It lists
   every violation with its CODEOWNERS line. It is a check, not a review, so it
